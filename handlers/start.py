@@ -98,7 +98,7 @@ async def handle_flight_request(message: types.Message):
         # Получаем полные названия городов
         origin_city_name = IATA_TO_CITY.get(f["origin"], f["origin"])
         dest_city_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-        response += f'{i}. ✈️ {origin_city_name} → {dest_city_name} — {price} ₽ — {departure}\n'
+        response += f'{i}. ✈️ {origin_city_name} → {dest_city_name} — от {price} ₽ — {departure}\n'
     
     await message.answer(response)
 
@@ -109,7 +109,7 @@ async def handle_flight_request(message: types.Message):
         origin_name = IATA_TO_CITY.get(f["origin"], f["origin"])
         dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
         link = generate_booking_link(f, f["origin"], dest_iata, date, passengers_code)
-        btn_text = f"✈️ {price} ₽ — {origin_name}→{dest_name}"
+        btn_text = f"✈️ от {price} ₽ — {origin_city_name}→{dest_city_name}"
         keyboard.inline_keyboard.append([
             InlineKeyboardButton(text=btn_text, url=link)
         ])
