@@ -1,5 +1,4 @@
 # handlers/start.py
-import os
 import re
 from datetime import datetime
 from uuid import uuid4
@@ -10,7 +9,6 @@ from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 
 router = Router()
 SEARCH_CACHE = {}
-FIRST_TIME_USERS = set()
 
 def parse_passengers(s: str) -> str:
     if not s:
@@ -52,16 +50,22 @@ def format_user_date(date_str: str) -> str:
     except:
         return date_str
 
+@router.message(F.text == "/start")
+async def cmd_start(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Только туда", callback_data="type_oneway")],
+        [InlineKeyboardButton(text="🔁 Туда-обратно", callback_data="type_roundtrip")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_offers")]
+    ])
+    await message.answer("Выберите тип поиска:", reply_markup=kb)
+
 @router.callback_query(F.data == "type_oneway")
 async def handle_oneway(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer(
         "Отправьте запрос в формате:\n"
         "<code>Город вылета → Город прилёта ДД.ММ</code>\n\n"
-        "Примеры:\n"
-        "<code>Москва → Сочи 10.03</code> (1 взрослый)\n"
-        "<code>Москва → Сочи 10.03 2 взр., 1 реб.</code>\n"
-        "<code>Везде → Сочи 10.03</code> (показать дешёвые из разных городов)",
+        "Пример: <code>Москва → Сочи 10.03</code>",
         parse_mode="HTML"
     )
 
@@ -71,10 +75,7 @@ async def handle_roundtrip(callback: CallbackQuery):
     await callback.message.answer(
         "Отправьте запрос в формате:\n"
         "<code>Город вылета → Город прилёта ДД.ММ – ДД.ММ</code>\n\n"
-        "Примеры:\n"
-        "<code>Москва → Сочи 10.03 – 17.03</code> (1 взрослый)\n"
-        "<code>Москва → Сочи 10.03 – 17.03 2 взр., 1 мл.</code>\n"
-        "<code>Везде → Сочи 10.03 – 17.03</code> (показать дешёвые из разных городов)",
+        "Пример: <code>Москва → Сочи 10.03 – 17.03</code>",
         parse_mode="HTML"
     )
 
@@ -123,6 +124,7 @@ async def handle_hot_offers(callback: CallbackQuery):
     await callback.message.answer(text)
     await callback.message.answer("Выберите рейс:", reply_markup=keyboard)
 
+@router.message()
 async def handle_flight_request(message: Message):
     text = message.text.strip().lower()
 
@@ -139,7 +141,7 @@ async def handle_flight_request(message: Message):
             text, re.IGNORECASE
         )
         if not oneway_match:
-            await message.answer("Неверный формат. Попробуйте:\n<code>Москва → Сочи 10.03</code>", parse_mode="HTML")
+            await message.answer("Неверный формат. Нажмите /start и выберите тип поиска.")
             return
         origin_city, dest_city, depart_date, passengers_part = oneway_match.groups()
         return_date = None
@@ -198,12 +200,12 @@ async def handle_flight_request(message: Message):
         [InlineKeyboardButton(text="✈️ Самое дешёвое", callback_data=f"show_top_{cache_id}")],
         [InlineKeyboardButton(text="📋 Все предложения", callback_data=f"show_all_{cache_id}")]
     ])
-    await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
+    await message.answer("Результаты поиска:", reply_markup=kb)
 
 # === Обработчики кнопок ===
 
-@router.callback_query(F.data.startswith("show_top_"))
-async def show_top_offer(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("show_all_"))
+async def show_all_offers(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = SEARCH_CACHE.get(cache_id)
     if not data:
@@ -216,7 +218,7 @@ async def show_top_offer(callback: CallbackQuery):
     dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
 
     text = f"✅ Самое дешёвое ({data['passenger_desc']}):\n"
-    text += f'✈️ {origin_name} → {dest_name} — {price} ₽ (за 1 взрослого) — {data["display_depart"]}\n'
+    text += f'✈️ {origin_name} → {dest_name} — {price} ₽ — {data["display_depart"]}\n'
     if data["is_roundtrip"] and data["display_return"]:
         text += f'   ↩️ Обратно: {data["display_return"]}\n'
 
@@ -229,79 +231,46 @@ async def show_top_offer(callback: CallbackQuery):
         data["original_return"]
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"✈️ Посмотреть предложение ({price} ₽)", url=link)]
+        [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)]
     ])
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
 
-@router.callback_query(F.data.startswith("show_all_"))
-async def show_all_offers(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("show_top_"))
+async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = SEARCH_CACHE.get(cache_id)
-    if not data: 
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
 
-    flights = sorted(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
+    flights = sorted(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)[:15]
     if not flights:
         await callback.message.answer("Нет рейсов.")
         return
 
-    min_price = flights[0].get("value") or flights[0].get("price") or "?"
+    text = f"📋 Все предложения ({data['passenger_desc']}):\n\n"
+    buttons = []
+    for i, f in enumerate(flights, 1):
+        price = f.get("value") or f.get("price") or "?"
+        origin_name = IATA_TO_CITY.get(f["origin"], f["origin"])
+        dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+        text += f'{i}. {origin_name} → {dest_name} — {price} ₽ — {data["display_depart"]}\n'
+        if data["is_roundtrip"] and data["display_return"]:
+            text += f'   ↩️ Обратно: {data["display_return"]}\n\n'
 
-    origin_iata = flights[0]["origin"]
-    dest_iata = data["dest_iata"]
-    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-    depart_date_disp = data["display_depart"]
-    return_date_disp = data["display_return"]
-
-    d1 = data["original_depart"].replace('.', '')
-    d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
-    route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
-    marker = os.getenv("TRAFFIC_SOURCE")
-    link = f"https://www.aviasales.ru/search/{route}"
-    if marker:
-        link += f"?marker={marker}"
-
-    text = (
-        f"📋 Все предложения ({data['passenger_desc']}):\n\n"
-        f"• Маршрут: <b>{origin_name} → {dest_name}</b>\n"
-        f"• Стоимость от: <b>{min_price} ₽</b>\n"
-        f"• Дата вылета: <b>{depart_date_disp}</b>\n"
-    )
-    if data["is_roundtrip"] and return_date_disp:
-        text += f"• Дата возврата: <b>{return_date_disp}</b>\n"
-    text += (
-        f"• Цены указаны <i>за 1 взрослого</i> (без учета детей/младенцев)\n\n"
-        f"🔗 <a href='{link}'>Перейти на Aviasales — просмотреть все доступные рейсы</a>\n\n"
-        f"💡 Aviasales — поиск авиабилетов онлайн: сравнение цен, прямые и стыковочные рейсы, бронирование без комиссии."
-    )
-
-    await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
-    await callback.answer()
-
-# === Главный обработчик текста ===
-
-@router.message(F.text)
-async def handle_any_message(message: Message):
-    user_id = message.from_user.id
-    if user_id not in FIRST_TIME_USERS:
-        FIRST_TIME_USERS.add(user_id)
-        welcome = (
-            "👋 Привет! Я — бот для поиска авиабилетов.\n\n"
-            "🔍 <b>Как я работаю:</b>\n"
-            "1. Напишите мне маршрут (например): <code>Москва - Сочи 10.03</code>\n"
-            "2. Можете указать пассажиров: <code>2 взр., 1 реб.</code>\n"
-            "3. Получите список билетов и удобную ссылку для бронирования\n\n"
-            "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города.\n\n"
-            "Или выберите тип поиска:"
+        link = generate_booking_link(
+            f,
+            f["origin"],
+            data["dest_iata"],
+            data["original_depart"],
+            "1",
+            data["original_return"]
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✈️ Только туда", callback_data="type_oneway")],
-            [InlineKeyboardButton(text="🔁 Туда-обратно", callback_data="type_roundtrip")],
-            [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_offers")]
-        ])
-        await message.answer(welcome, reply_markup=kb, parse_mode="HTML")
-    else:
-        await handle_flight_request(message)
+        buttons.append([InlineKeyboardButton(text=f"✈️ №{i} — {price} ₽", url=link)])
+
+    # Telegram ограничивает длину сообщения (~4096 символов)
+    await callback.message.answer(text[:4000])
+    if buttons:
+        await callback.message.answer("Бронирование:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
