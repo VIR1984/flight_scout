@@ -5,7 +5,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.flight_search import search_one_way, generate_booking_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 
-
 router = Router()
 
 def parse_passengers(s: str) -> str:

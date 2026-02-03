@@ -45,7 +45,7 @@ def format_avia_link_date(date_str: str) -> str:
     except:
         return "1503"
 
-def generate_booking_link(flight: dict, origin: str, dest: str, date_str: str, passengers_code: str = "1") -> str:
+def generate_booking_link(flight: dict, origin: str, dest: str, date_str: str) -> str:
     marker = os.getenv("TRAFFIC_SOURCE")
-    d = format_avia_link_date(date_str)  # Например: "1503"
-    return f"https://www.aviasales.ru/search/{origin}{d}{dest}{passengers_code}?marker={marker}"
+    d = format_avia_link_date(date_str)  # Например: "1502"
+    return f"https://www.aviasales.ru/search/{origin}{d}{dest}1?marker={marker}"
