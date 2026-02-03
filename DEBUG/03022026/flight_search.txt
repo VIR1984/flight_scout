@@ -24,11 +24,11 @@ def normalize_date(date_str: str) -> str:
 async def search_one_way(origin: str, dest: str, date: str = "15.03") -> List[Dict]:
     url = "https://api.travelpayouts.com/v1/prices/cheap"
     params = {
-        "origin": origin,
-        "destination": dest,
-        "depart_date": normalize_date(date),
-        "currency": "RUB",  # Изменено с USD на RUB
-        "token": os.getenv("API_TOKEN")
+    "origin": origin,
+    "destination": dest,
+    "depart_date": normalize_date(date),  # ← должно быть 2026-02-16
+    "currency": "USD",
+    "token": os.getenv("API_TOKEN")
     }
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as r:

@@ -3,7 +3,8 @@ import re
 from aiogram import Router, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.flight_search import search_one_way, generate_booking_link
-from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
+from utils.cities import CITY_TO_IATA, GLOBAL_HUBS
+
 
 router = Router()
 
@@ -54,34 +55,24 @@ async def handle_flight_request(message: types.Message):
     # Сортируем по цене
     def get_price(flight):
         return flight.get("value") or flight.get("price") or 999999
-    
+
     all_flights.sort(key=get_price)
     top_flights = all_flights[:3]
 
     # Формируем текстовое сообщение без ссылок
-    response = "✅ Найдено:\n"
+    response = "✅ Найдено:\n\n"
     for i, f in enumerate(top_flights, 1):
         price = f.get("value") or f.get("price") or "?"
         airline = f.get("airline", "?")
         departure = f.get("departure_at", "")[:10] if f.get("departure_at") else "?"
-        # Получаем полные названия городов
-        origin_city_name = IATA_TO_CITY.get(f["origin"], f["origin"])
-        dest_city_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-        response += f'{i}. ✈️ {origin_city_name} → {dest_city_name} — {price} ₽ — {departure}\n'
-    
+        response += f'{i}. ✈️ {airline} — ${price} — {departure}\n'
+
     await message.answer(response)
 
     # Отправляем кнопку для первого (самого дешёвого) рейса
     first_flight = top_flights[0]
     link = generate_booking_link(first_flight, first_flight["origin"], dest_iata, date)
-    # Улучшаем текст кнопки
-    price = first_flight.get("value") or first_flight.get("price") or "?"
-    origin_city_name = IATA_TO_CITY.get(first_flight["origin"], first_flight["origin"])
-    dest_city_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-    button_text = f"✈️ {price} ₽ — {origin_city_name} → {dest_city_name}"
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=button_text, url=link)]
+        [InlineKeyboardButton(text="✈️ Забронировать на Aviasales", url=link)]
     ])
     await message.answer("Выберите предложение:", reply_markup=keyboard)
-

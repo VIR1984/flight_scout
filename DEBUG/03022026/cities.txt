@@ -95,4 +95,3 @@ CITY_TO_IATA = {
     "брисбен": "BNE"
 }
 GLOBAL_HUBS = ["MOW", "LED", "IST", "LON", "PAR", "NYC", "DXB", "BKK", "SIN", "FRA"]
-IATA_TO_CITY = {v: k.capitalize() for k, v in CITY_TO_IATA.items()}
