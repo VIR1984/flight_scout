@@ -1,10 +1,11 @@
 # handlers/start.py
 import re
-from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from services.flight_search import search_flights, generate_booking_link, get_hot_offers, normalize_date
+from services.flight_search import search_flights, generate_booking_link, get_hot_offers
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
+
+
 
 router = Router()
 
@@ -38,17 +39,6 @@ def build_passenger_desc(code: str):
     except:
         return ["1 взр."]
 
-def format_user_date(date_str: str) -> str:
-    """Преобразует 'ДД.ММ' → 'ДД.ММ.2026' или 'ДД.ММ.2027', если дата уже прошла (на 03.02.2026)"""
-    try:
-        d, m = map(int, date_str.split('.'))
-        year = 2026
-        if m < 2 or (m == 2 and d < 3):
-            year = 2027
-        return f"{d:02d}.{m:02d}.{year}"
-    except:
-        return date_str
-
 @router.message(F.text == "/start")
 async def cmd_start(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -58,65 +48,49 @@ async def cmd_start(message: Message):
     ])
     await message.answer("Выберите тип поиска:", reply_markup=kb)
 
-@router.callback_query(F.data == "type_oneway")
-async def handle_oneway(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        "Отправьте запрос в формате:\n"
-        "<code>Город вылета → Город прилёта ДД.ММ [пассажиры]</code>\n\n"
-        "Пример: <code>Москва → Сочи 10.03</code>",
-        parse_mode="HTML"
-    )
-
-@router.callback_query(F.data == "type_roundtrip")
-async def handle_roundtrip(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        "Отправьте запрос в формате:\n"
-        "<code>Город вылета → Город прилёта ДД.ММ – ДД.ММ [пассажиры]</code>\n\n"
-        "Пример: <code>Москва → Сочи 10.03 – 17.03</code>",
-        parse_mode="HTML"
-    )
-
 @router.callback_query(F.data == "hot_offers")
 async def handle_hot_offers(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer("Ищу горячие предложения...")
+    
     offers = await get_hot_offers(limit=7)
     if not offers:
         await callback.message.answer("Нет актуальных предложений 😢")
         return
 
-    text = "🔥 Горячие предложения:\n"
+    text = "🔥 Горячие предложения:\n\n"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    
     for item in offers:
         origin = IATA_TO_CITY.get(item["origin"], item["origin"])
         dest = IATA_TO_CITY.get(item["destination"], item["destination"])
         price = item.get("value", "?")
-        departure = item["departure_at"]
-        # В hot_offers — дата из API, но отображаем как DD.MM
-        try:
-            dt = datetime.fromisoformat(departure.replace("Z", "+00:00"))
-            dep_ddmm = f"{dt.day:02d}.{dt.month:02d}"
-        except:
-            dep_ddmm = departure[:10].replace("-", ".")[8:10] + "." + departure[:10].replace("-", ".")[5:7]
-        text += f"• {origin} → {dest} — от {price} ₽ — {dep_ddmm}\n"
-
-        link = f"https://www.aviasales.ru/search/{item['origin']}{departure[5:7]}{departure[8:10]}{item['destination']}1"
+        d_part = departure[5:7] + departure[8:10]  # MMDD
+        link = f"https://www.aviasales.ru/search/{item['origin']}{d_part}{item['destination']}1"
+        
+        text += f"• {origin} → {dest} — от {price} ₽ — {departure}\n"
+        
+        # Ссылка на Aviasales без даты возврата и с 1 взрослым
+        link = f"https://www.aviasales.ru/search/{item['origin']}{item['departure_at'][5:7]}{item['departure_at'][8:10]}{item['destination']}1"
         btn_text = f"✈️ {origin}→{dest} ({price} ₽)"
-        keyboard.inline_keyboard.append([InlineKeyboardButton(text=btn_text, url=link)])
-
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(text=btn_text, url=link)
+        ])
+    
     await callback.message.answer(text)
     await callback.message.answer("Выберите рейс:", reply_markup=keyboard)
+
 
 @router.message()
 async def handle_flight_request(message: Message):
     text = message.text.strip().lower()
 
+    # Попытка распознать round-trip: "город → город дд.мм – дд.мм"
     round_match = re.search(
         r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})\s*[-–]\s*(\d{1,2}\.\d{1,2})\s*(.*)?",
         text, re.IGNORECASE
     )
+
     if round_match:
         origin_city, dest_city, depart_date, return_date, passengers_part = round_match.groups()
         is_roundtrip = True
@@ -149,19 +123,11 @@ async def handle_flight_request(message: Message):
             return
         origins = [orig_iata]
 
-    # Форматируем даты для отображения (как ввёл пользователь)
-    display_depart = format_user_date(depart_date)
-    display_return = format_user_date(return_date) if return_date else None
-
     await message.answer("Ищу билеты...")
+
     all_flights = []
     for orig in origins:
-        flights = await search_flights(
-            orig,
-            dest_iata,
-            normalize_date(depart_date),
-            normalize_date(return_date) if return_date else None
-        )
+        flights = await search_flights(orig, dest_iata, date)  # return_date=None по умолчанию
         for f in flights:
             f["origin"] = orig
         all_flights.extend(flights)
@@ -176,11 +142,12 @@ async def handle_flight_request(message: Message):
     response = f"✅ Найдено ({passenger_desc}):\n"
     for i, f in enumerate(top_flights, 1):
         price = f.get("value") or f.get("price") or "?"
+        departure = f.get("departure_at", "")[:10] if f.get("departure_at") else "?"
         origin_name = IATA_TO_CITY.get(f["origin"], f["origin"])
         dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-        response += f'{i}. ✈️ {origin_name} → {dest_name} — от {price} ₽ — {display_depart}\n'
-        if is_roundtrip and display_return:
-            response += f'   ↩️ Обратно: {display_return}\n'
+        response += f'{i}. ✈️ {origin_name} → {dest_name} — от {price} ₽ — {departure}\n'
+        if is_roundtrip and f.get("return_at"):
+            response += f'   ↩️ Обратно: {f["return_at"][:10]}\n'
 
     await message.answer(response)
 
@@ -190,10 +157,7 @@ async def handle_flight_request(message: Message):
         origin_name = IATA_TO_CITY.get(f["origin"], f["origin"])
         dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
         link = generate_booking_link(f, f["origin"], dest_iata, depart_date, passengers_code, return_date)
-        if is_roundtrip:
-            btn_text = f"✈️ от {price} ₽ — {origin_name}→{dest_name} ({display_depart} – {display_return})"
-        else:
-            btn_text = f"✈️ от {price} ₽ — {origin_name}→{dest_name} ({display_depart})"
+        btn_text = f"✈️ от {price} ₽ — {origin_name}→{dest_name}"
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=btn_text, url=link)])
 
     await message.answer("Выберите предложение:", reply_markup=keyboard)

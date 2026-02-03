@@ -4,8 +4,6 @@ import os
 from typing import List, Dict, Optional
 from datetime import datetime
 
-print("API_TOKEN:", os.getenv("API_TOKEN"))
-
 def normalize_date(date_str: str) -> str:
     try:
         d, m = date_str.split('.')
@@ -19,10 +17,12 @@ def normalize_date(date_str: str) -> str:
 async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
     url = "https://api.travelpayouts.com/v1/prices/cheap"
     params = {
-    "currency": "RUB",
-    "limit": 50,
-    "token": os.getenv("API_TOKEN").strip()  # ← .strip() на всякий случай
-}
+        "origin": origin,
+        "destination": dest,
+        "depart_date": normalize_date(depart_date),
+        "currency": "RUB",
+        "token": os.getenv("API_TOKEN")
+    }
     if return_date:
         params["return_date"] = normalize_date(return_date)
     
@@ -38,8 +38,8 @@ async def get_hot_offers(limit: int = 7) -> List[Dict]:
     url = "https://api.travelpayouts.com/v2/prices/latest"
     params = {
         "currency": "RUB",
-        "limit": limit * 10,
-        "token": os.getenv("API_TOKEN", "").strip()
+        "limit": limit * 5,
+        "token": os.getenv("API_TOKEN")
     }
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as r:
@@ -48,11 +48,8 @@ async def get_hot_offers(limit: int = 7) -> List[Dict]:
                 seen = set()
                 offers = []
                 for item in data.get("data", []):
-                    # !!! Ключевое: используйте item["value"], а не item["price"]
-                    if not item.get("value"):
-                        continue
                     route = f"{item['origin']}-{item['destination']}"
-                    if route not in seen:
+                    if route not in seen and item.get("price"):
                         offers.append(item)
                         seen.add(route)
                         if len(offers) >= limit:
