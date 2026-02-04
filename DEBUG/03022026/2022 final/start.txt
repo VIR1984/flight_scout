@@ -7,11 +7,10 @@ from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from services.flight_search import search_flights, generate_booking_link, get_hot_offers, normalize_date
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
-from utils.redis_client import redis_client
 
 router = Router()
-# УДАЛЕНО: SEARCH_CACHE = {}
-# УДАЛЕНО: FIRST_TIME_USERS = set()
+SEARCH_CACHE = {}
+FIRST_TIME_USERS = set()
 
 def parse_passengers(s: str) -> str:
     if not s:
@@ -84,6 +83,7 @@ async def handle_hot_offers(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer("Ищу горячие предложения...")
     offers = await get_hot_offers(limit=15)
+
     valid_offers = []
     for item in offers:
         if not item.get("departure_at") or not item.get("value"):
@@ -92,15 +92,15 @@ async def handle_hot_offers(callback: CallbackQuery):
             dep_dt = datetime.fromisoformat(item["departure_at"].replace("Z", "+00:00"))
             if dep_dt.date() >= datetime(2026, 2, 3).date():
                 valid_offers.append(item)
-            if len(valid_offers) >= 7:
-                break
+                if len(valid_offers) >= 7:
+                    break
         except:
             continue
-    
+
     if not valid_offers:
         await callback.message.answer("Нет актуальных предложений 😢")
         return
-    
+
     text = "🔥 Горячие предложения:\n"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     for item in valid_offers:
@@ -112,24 +112,24 @@ async def handle_hot_offers(callback: CallbackQuery):
             dep_ddmm = f"{dt.day:02d}.{dt.month:02d}"
         except:
             dep_ddmm = "??"
+
         text += f"• {origin} → {dest} — от {price} ₽ — {dep_ddmm}\n"
-        
+
         mmdd = item["departure_at"][5:7] + item["departure_at"][8:10]
         link = f"https://www.aviasales.ru/search/{item['origin']}{mmdd}{item['destination']}1"
         btn_text = f"✈️ {origin}→{dest} ({price} ₽)"
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=btn_text, url=link)])
-    
+
     await callback.message.answer(text)
     await callback.message.answer("Выберите рейс:", reply_markup=keyboard)
 
 async def handle_flight_request(message: Message):
     text = message.text.strip().lower()
-    
+
     round_match = re.search(
         r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})\s*[-–]\s*(\d{1,2}\.\d{1,2})\s*(.*)?",
         text, re.IGNORECASE
     )
-    
     if round_match:
         origin_city, dest_city, depart_date, return_date, passengers_part = round_match.groups()
         is_roundtrip = True
@@ -144,15 +144,15 @@ async def handle_flight_request(message: Message):
         origin_city, dest_city, depart_date, passengers_part = oneway_match.groups()
         return_date = None
         is_roundtrip = False
-    
+
     dest_iata = CITY_TO_IATA.get(dest_city)
     if not dest_iata:
         await message.answer(f"Не знаю город: {dest_city}")
         return
-    
+
     passengers_code = parse_passengers((passengers_part or "").strip())
     passenger_desc = ", ".join(build_passenger_desc(passengers_code))
-    
+
     if origin_city == "везде":
         origins = GLOBAL_HUBS
     else:
@@ -161,10 +161,10 @@ async def handle_flight_request(message: Message):
             await message.answer(f"Не знаю город: {origin_city}")
             return
         origins = [orig_iata]
-    
+
     display_depart = format_user_date(depart_date)
     display_return = format_user_date(return_date) if return_date else None
-    
+
     await message.answer("Ищу билеты...")
     all_flights = []
     for orig in origins:
@@ -177,14 +177,13 @@ async def handle_flight_request(message: Message):
         for f in flights:
             f["origin"] = orig
         all_flights.extend(flights)
-    
+
     if not all_flights:
         await message.answer("Билеты не найдены 😢")
         return
-    
-    # СОХРАНЕНИЕ В REDIS ВМЕСТО ЛОКАЛЬНОГО СЛОВАРЯ
+
     cache_id = str(uuid4())
-    await redis_client.set_search_cache(cache_id, {
+    SEARCH_CACHE[cache_id] = {
         "flights": all_flights,
         "dest_iata": dest_iata,
         "is_roundtrip": is_roundtrip,
@@ -193,8 +192,8 @@ async def handle_flight_request(message: Message):
         "original_depart": depart_date,
         "original_return": return_date,
         "passenger_desc": passenger_desc
-    })
-    
+    }
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Самое дешёвое", callback_data=f"show_top_{cache_id}")],
         [InlineKeyboardButton(text="📋 Все предложения", callback_data=f"show_all_{cache_id}")]
@@ -206,23 +205,21 @@ async def handle_flight_request(message: Message):
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
-    
-    # ПОЛУЧЕНИЕ ИЗ REDIS
-    data = await redis_client.get_search_cache(cache_id)
+    data = SEARCH_CACHE.get(cache_id)
     if not data:
         await callback.answer("Данные устарели", show_alert=True)
         return
-    
+
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
     dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
-    
+
     text = f"✅ Самое дешёвое ({data['passenger_desc']}):\n"
     text += f'✈️ {origin_name} → {dest_name} — {price} ₽ (за 1 взрослого) — {data["display_depart"]}\n'
     if data["is_roundtrip"] and data["display_return"]:
         text += f'   ↩️ Обратно: {data["display_return"]}\n'
-    
+
     link = generate_booking_link(
         top_flight,
         top_flight["origin"],
@@ -231,7 +228,6 @@ async def show_top_offer(callback: CallbackQuery):
         "1",
         data["original_return"]
     )
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"✈️ Посмотреть предложение ({price} ₽)", url=link)]
     ])
@@ -241,37 +237,35 @@ async def show_top_offer(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("show_all_"))
 async def show_all_offers(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
-    
-    # ПОЛУЧЕНИЕ ИЗ REDIS
-    data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    data = SEARCH_CACHE.get(cache_id)
+    if not data: 
         await callback.answer("Данные устарели", show_alert=True)
         return
-    
+
     flights = sorted(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     if not flights:
         await callback.message.answer("Нет рейсов.")
         return
-    
+
     min_price = flights[0].get("value") or flights[0].get("price") or "?"
+
     origin_iata = flights[0]["origin"]
     dest_iata = data["dest_iata"]
     origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
     depart_date_disp = data["display_depart"]
     return_date_disp = data["display_return"]
-    
+
     d1 = data["original_depart"].replace('.', '')
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
-    
     marker = os.getenv("TRAFFIC_SOURCE")
     link = f"https://www.aviasales.ru/search/{route}"
     if marker:
         link += f"?marker={marker}"
-    
+
     text = (
-        f"📋 Все предложения ({data['passenger_desc']}):\n"
+        f"📋 Все предложения ({data['passenger_desc']}):\n\n"
         f"• Маршрут: <b>{origin_name} → {dest_name}</b>\n"
         f"• Стоимость от: <b>{min_price} ₽</b>\n"
         f"• Дата вылета: <b>{depart_date_disp}</b>\n"
@@ -283,6 +277,7 @@ async def show_all_offers(callback: CallbackQuery):
         f"🔗 <a href='{link}'>Перейти на Aviasales — просмотреть все доступные рейсы</a>\n\n"
         f"💡 Aviasales — поиск авиабилетов онлайн: сравнение цен, прямые и стыковочные рейсы, бронирование без комиссии."
     )
+
     await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
 
@@ -291,11 +286,8 @@ async def show_all_offers(callback: CallbackQuery):
 @router.message(F.text)
 async def handle_any_message(message: Message):
     user_id = message.from_user.id
-    
-    # ПРОВЕРКА ПЕРВОГО ЗАПУСКА ЧЕРЕЗ REDIS
-    is_first = await redis_client.is_first_time_user(user_id)
-    
-    if is_first:
+    if user_id not in FIRST_TIME_USERS:
+        FIRST_TIME_USERS.add(user_id)
         welcome = (
             "👋 Привет! Я — бот для поиска авиабилетов.\n\n"
             "🔍 <b>Как я работаю:</b>\n"
