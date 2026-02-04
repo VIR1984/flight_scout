@@ -1,7 +1,4 @@
 # utils/cities.py
-import re
-from typing import Dict, Tuple, List
-
 CITY_TO_IATA = { # 🇷🇺 Россия
     "москва": "MOW",
     "санкт-петербург": "LED",
@@ -82,6 +79,8 @@ CITY_TO_IATA = { # 🇷🇺 Россия
     "усть-кут": "UKX",
     "ярославль": "IAR",
     "орск": "OSW",
+
+
     # 🌍 СНГ и ближнее зарубежье
     "алматы": "ALA",
     "астана": "NQZ",
@@ -94,6 +93,7 @@ CITY_TO_IATA = { # 🇷🇺 Россия
     "душанбе": "DYU",
     "ашхабад": "ASB",
     "минск": "MSQ",
+
     # 🌎 Европа
     "лондон": "LON",
     "париж": "PAR",
@@ -115,6 +115,7 @@ CITY_TO_IATA = { # 🇷🇺 Россия
     "женева": "GVA",
     "афины": "ATH",
     "стамбул": "IST",
+
     # 🌏 Азия и Ближний Восток
     "дубай": "DXB",
     "абу-даби": "AUH",
@@ -125,7 +126,7 @@ CITY_TO_IATA = { # 🇷🇺 Россия
     "бангкок": "BKK",
     "пхукет": "HKT",
     "сингапур": "SIN",
-    "куала-лумпур": "KUL",
+    "кuala-лумпур": "KUL",
     "хошимин": "SGN",
     "ханой": "HAN",
     "сеул": "SEL",
@@ -136,6 +137,7 @@ CITY_TO_IATA = { # 🇷🇺 Россия
     "гонконг": "HKG",
     "дели": "DEL",
     "мумбаи": "BOM",
+
     # 🇺🇸 Америка
     "нью-йорк": "NYC",
     "лос-анджелес": "LAX",
@@ -151,198 +153,11 @@ CITY_TO_IATA = { # 🇷🇺 Россия
     "сан-паулу": "SAO",
     "рио-де-жанейро": "RIO",
     "буэнос-айрес": "BUE",
+
     # 🌐 Австралия
     "сидней": "SYD",
     "мельбурн": "MEL",
     "брисбен": "BNE"
 }
-
 GLOBAL_HUBS = ["MOW", "LED", "IST", "LON", "PAR", "NYC", "DXB", "BKK", "SIN", "FRA"]
 IATA_TO_CITY = {v: k.capitalize() for k, v in CITY_TO_IATA.items()}
-
-def levenshtein_distance(s1: str, s2: str) -> int:
-    """Расстояние Левенштейна для поиска опечаток"""
-    if len(s1) < len(s2):
-        return levenshtein_distance(s2, s1)
-    if len(s2) == 0:
-        return len(s1)
-    previous_row = range(len(s2) + 1)
-    for i, c1 in enumerate(s1):
-        current_row = [i + 1]
-        for j, c2 in enumerate(s2):
-            insertions = previous_row[j + 1] + 1
-            deletions = current_row[j] + 1
-            substitutions = previous_row[j] + (c1 != c2)
-            current_row.append(min(insertions, deletions, substitutions))
-        previous_row = current_row
-    return previous_row[-1]
-
-def find_similar_city(user_input: str, threshold: int = 2) -> Tuple[bool, str]:
-    """
-    Ищет похожий город с учётом опечаток.
-    Возвращает (найден_ли, исправленное_название)
-    """
-    user_input = user_input.strip().lower()
-    if user_input in CITY_TO_IATA:
-        return True, user_input
-    
-    # Поиск по расстоянию Левенштейна
-    best_match = None
-    best_dist = threshold + 1
-    
-    for city in CITY_TO_IATA.keys():
-        dist = levenshtein_distance(user_input, city)
-        if dist < best_dist:
-            best_dist = dist
-            best_match = city
-    
-    if best_match and best_dist <= threshold:
-        return True, best_match
-    
-    return False, user_input
-
-def smart_parse_route(text: str) -> Dict:
-    """
-    Умный парсер маршрута с обработкой ошибок:
-    - Слитное написание городов
-    - Опечатки
-    - Разные разделители (-, →, >, пробелы)
-    - Запятые и лишние символы
-    """
-    result = {
-        "success": False,
-        "error": "",
-        "origin": "",
-        "dest": "",
-        "depart_date": None,
-        "return_date": None,
-        "passengers": "",
-        "is_cheap_search": False
-    }
-    
-    # Нормализация текста: удаляем лишние символы, оставляем буквы, цифры, дефисы, точки, пробелы
-    text = re.sub(r"[^\w\s\-\.\,]", " ", text.lower())
-    text = re.sub(r"\s+", " ", text).strip()
-    
-    # Обнаружение разделителя между городами
-    # Поддерживаем: "-", " - ", "→", ">", слитное написание (попытка разделить по известным городам)
-    route_part = text
-    passengers_part = ""
-    
-    # Отделяем пассажиров (всё после даты или в конце)
-    passenger_match = re.search(r"(\d+\s*(?:взр|реб|мл|дет|млад)[\w\s\.,]*)$", text)
-    if passenger_match:
-        passengers_part = passenger_match.group(1)
-        route_part = text[:passenger_match.start()].strip()
-    
-    # Попытка найти даты
-    date_matches = re.findall(r"\d{1,2}\.\d{1,2}", route_part)
-    depart_date = date_matches[0] if len(date_matches) > 0 else None
-    return_date = date_matches[1] if len(date_matches) > 1 else None
-    
-    # Удаляем даты из маршрута для дальнейшего парсинга
-    route_clean = re.sub(r"\d{1,2}\.\d{1,2}", "", route_part)
-    route_clean = re.sub(r"\s*-\s*-\s*", " - ", route_clean)  # двойной дефис → одинарный
-    route_clean = re.sub(r"\s+", " ", route_clean).strip()
-    
-    # Попытка разделить по разделителю
-    parts = re.split(r"\s*[-→>]\s*", route_clean)
-    
-    # Если нет разделителя — пробуем слитное написание
-    if len(parts) < 2:
-        # Ищем первый город в начале строки
-        found_origin = None
-        for city in sorted(CITY_TO_IATA.keys(), key=len, reverse=True):
-            if route_clean.startswith(city.replace(" ", "")):
-                found_origin = city
-                break
-        
-        if found_origin:
-            # Остаток — город назначения
-            dest_part = route_clean[len(found_origin.replace(" ", "")):].strip()
-            # Ищем город назначения
-            found_dest = None
-            for city in sorted(CITY_TO_IATA.keys(), key=len, reverse=True):
-                if dest_part.startswith(city.replace(" ", "")):
-                    found_dest = city
-                    break
-            
-            if found_dest:
-                parts = [found_origin, found_dest]
-            else:
-                # Пытаемся найти похожий город
-                success, corrected = find_similar_city(dest_part)
-                if success:
-                    parts = [found_origin, corrected]
-                else:
-                    result["error"] = (
-                        f"❌ Не удалось определить город прибытия: <b>{dest_part}</b>\n"
-                        "Попробуйте написать через дефис: <code>Москва - Сочи</code>"
-                    )
-                    return result
-        else:
-            # Пытаемся найти похожий город отправления
-            success, corrected = find_similar_city(route_clean.split()[0] if route_clean.split() else "")
-            if success:
-                result["error"] = (
-                    f"❌ Возможно опечатка в городе: <b>{route_clean.split()[0]}</b>\n"
-                    f"Может быть, вы имели в виду: <b>{corrected}</b>?\n"
-                    "Пример правильного запроса: <code>Москва - Сочи 10.03</code>"
-                )
-            else:
-                result["error"] = (
-                    "❌ Не удалось распознать маршрут.\n"
-                    "💡 Правильный формат:\n"
-                    "<code>Город вылета - Город прилёта ДД.ММ</code>\n"
-                    "Пример: <code>Москва - Сочи 10.03</code>"
-                )
-            return result
-    
-    if len(parts) < 2:
-        result["error"] = (
-            "❌ Неверный формат маршрута.\n"
-            "💡 Используйте дефис между городами:\n"
-            "<code>Москва - Сочи 10.03</code>"
-        )
-        return result
-    
-    origin_raw = parts[0].strip()
-    dest_raw = parts[1].strip().split()[0] if parts[1].strip() else ""
-    
-    # Проверка города отправления
-    if origin_raw == "везде":
-        origin = "везде"
-    else:
-        success, corrected = find_similar_city(origin_raw)
-        if not success:
-            result["error"] = (
-                f"❌ Неизвестный город отправления: <b>{origin_raw}</b>\n"
-                "Проверьте написание или выберите другой город."
-            )
-            return result
-        origin = corrected
-    
-    # Проверка города прибытия
-    success, corrected = find_similar_city(dest_raw)
-    if not success:
-        result["error"] = (
-            f"❌ Неизвестный город прибытия: <b>{dest_raw}</b>\n"
-            "Проверьте написание или выберите другой город."
-        )
-        return result
-    dest = corrected
-    
-    # Определяем тип поиска
-    is_cheap_search = depart_date is None
-    
-    result.update({
-        "success": True,
-        "origin": origin,
-        "dest": dest,
-        "depart_date": depart_date,
-        "return_date": return_date,
-        "passengers": passengers_part,
-        "is_cheap_search": is_cheap_search
-    })
-    
-    return result
