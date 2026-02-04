@@ -17,14 +17,12 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     is_first = await redis_client.is_first_time_user(user_id)
     welcome = (
-            "👋 Привет! Я — бот для поиска авиабилетов.\n\n"
-            "🔍 <b>Как я работаю:</b>\n"
-            "1. Напишите мне маршрут (например): <code>Москва - Сочи 10.03</code>\n"
-            "2. Можете указать пассажиров: <code>2 взр., 1 реб.</code>\n"
-            "3. Получите список билетов и удобную ссылку для бронирования\n\n"
-            "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города.\n\n"
-            "Или выберите тип поиска:"
-        )
+        "👋 Привет! Я — бот для поиска авиабилетов.\n"
+        "🔍 <b>Как я работаю:</b>\n"
+        "1. Напишите мне маршрут (например): <code>Орск - Пермь 10.03</code>\n"
+        "2. Могут быть рейсы с пересадками — я их тоже покажу!\n"
+        "3. Если API молчит — дам ссылку на Aviasales с актуальными билетами."
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Только туда", callback_data="type_oneway")],
         [InlineKeyboardButton(text="🔁 Туда-обратно", callback_data="type_roundtrip")],
@@ -120,6 +118,7 @@ async def handle_flight_request(message: Message):
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
             link += f"?marker={marker}"
+
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)]
         ])
@@ -148,16 +147,13 @@ async def handle_flight_request(message: Message):
     ])
     await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
 
-# === Обработчики кнопок (show_top_, show_all_) — без изменений ===
-# ... (оставляем как есть из предыдущей версии)
-
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not data:  # ✅ Проверка на None или пустой словарь
         await callback.answer("Данные устарели", show_alert=True)
-        return 
+        return
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
@@ -184,7 +180,7 @@ async def show_top_offer(callback: CallbackQuery):
 async def show_all_offers(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not data:  # ✅ Проверка на None или пустой словарь
         await callback.answer("Данные устарели", show_alert=True)
         return
     flights = sorted(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -201,10 +197,11 @@ async def show_all_offers(callback: CallbackQuery):
     d1 = data["original_depart"].replace('.', '')
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
-    marker = os.getenv("TRAFFIC_SOURCE")
+    marker = os.getenv("TRAFFIC_SOURCE", "")
     link = f"https://www.aviasales.ru/search/{route}"
     if marker:
         link += f"?marker={marker}"
+
     text = (
         f"📋 Все предложения ({data['passenger_desc']}):\n"
         f"• Маршрут: <b>{origin_name} → {dest_name}</b>\n"
