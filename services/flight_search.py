@@ -7,11 +7,14 @@ from utils.logger import logger
 def normalize_date(date_str: str) -> str:
     try:
         d, m = date_str.split('.')
-        day = int(d); month = int(m); year = 2026
+        day = int(d)
+        month = int(m)
+        year = 2026
         if month < 2 or (month == 2 and day < 3):
             year = 2027
         return f"{year}-{month:02d}-{day:02d}"
-    except:
+    except Exception as e:
+        logger.warning(f"Ошибка парсинга даты '{date_str}': {e}")
         return "2026-03-15"
 
 async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
@@ -46,41 +49,15 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
                 logger.error(f"💥 Ошибка HTTP: {r.status}")
             return []
 
-async def get_hot_offers(limit: int = 7) -> List[Dict]:
-    url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
-    params = {
-        "origin": "MOW",
-        "departure_at": "2026-02",
-        "one_way": "true",
-        "currency": "rub",
-        "limit": limit * 3,
-        "unique": "true",
-        "sorting": "price",
-        "direct": "false",
-        "token": os.getenv("API_TOKEN", "").strip()
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as r:
-            if r.status == 200:
-                data = await r.json()
-                if data.get("success"):
-                    seen = set()
-                    offers = []
-                    for item in data.get("data", []):
-                        route = f"{item['origin']}-{item['destination']}"
-                        if route not in seen:
-                            offers.append(item)
-                            seen.add(route)
-                        if len(offers) >= limit:
-                            break
-                    return offers
-    return []
-
 def generate_booking_link(flight: dict, origin: str, dest: str, depart_date: str, passengers_code: str = "1", return_date: Optional[str] = None) -> str:
     link_suffix = flight.get("link", "")
-    marker = os.getenv("TRAFFIC_SOURCE", "")
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     base = "https://www.aviasales.ru"
     full_url = base + link_suffix
+
     if marker:
-        full_url += f"&marker={marker}"
+        if "?" in full_url:
+            full_url += f"&marker={marker}"
+        else:
+            full_url += f"?marker={marker}"
     return full_url
