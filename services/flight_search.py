@@ -2,7 +2,6 @@
 import aiohttp
 import os
 from typing import List, Dict, Optional
-from datetime import datetime
 from utils.logger import logger
 
 def normalize_date(date_str: str) -> str:
@@ -26,6 +25,7 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
         "currency": "rub",
         "limit": 10,
         "sorting": "price",
+        "direct": "false",  # ← явно разрешаем пересадки
         "token": os.getenv("API_TOKEN", "").strip()
     }
     if return_date:
@@ -47,16 +47,16 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
             return []
 
 async def get_hot_offers(limit: int = 7) -> List[Dict]:
-    # Для горячих предложений тоже используем v3, но с origin=MOW и без destination
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
         "origin": "MOW",
-        "departure_at": "2026-02",  # ближайший месяц
+        "departure_at": "2026-02",
         "one_way": "true",
         "currency": "rub",
         "limit": limit * 3,
         "unique": "true",
         "sorting": "price",
+        "direct": "false",
         "token": os.getenv("API_TOKEN", "").strip()
     }
     async with aiohttp.ClientSession() as session:
@@ -71,13 +71,12 @@ async def get_hot_offers(limit: int = 7) -> List[Dict]:
                         if route not in seen:
                             offers.append(item)
                             seen.add(route)
-                            if len(offers) >= limit:
-                                break
+                        if len(offers) >= limit:
+                            break
                     return offers
     return []
 
 def generate_booking_link(flight: dict, origin: str, dest: str, depart_date: str, passengers_code: str = "1", return_date: Optional[str] = None) -> str:
-    # Используем готовую ссылку из API
     link_suffix = flight.get("link", "")
     marker = os.getenv("TRAFFIC_SOURCE", "")
     base = "https://www.aviasales.ru"
