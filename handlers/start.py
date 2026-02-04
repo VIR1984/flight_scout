@@ -12,7 +12,7 @@ from services.flight_search import (
     get_hot_offers,
     normalize_date
 )
-from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY, smart_parse_route
+from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from aiogram.filters import Command
 
@@ -29,7 +29,7 @@ async def cmd_start(message: Message):
         "2. Можно без даты: <code>Москва - Сочи</code> (найду самые дешёвые)\n"
         "3. Укажите пассажиров: <code>2 взр., 1 реб.</code>\n"
         "4. Или <code>везде - Сочи</code> — поиск из всех городов\n\n"
-        "💡 Совет: используйте обычный дефис <code>-</code> между городами"
+        "💡 Используйте обычный дефис <code>-</code> между городами"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Только туда", callback_data="type_oneway")],
@@ -72,10 +72,10 @@ def build_passenger_desc(code: str):
 def format_user_date(date_str: str) -> str:
     try:
         d, m = map(int, date_str.split('.'))
-        year = datetime.now().year
-        if datetime.now().month == 2 and datetime.now().day == 4:
-            year = 2026
-        if m < datetime.now().month or (m == datetime.now().month and d < datetime.now().day):
+        now = datetime.now()
+        year = now.year
+        # Если дата уже прошла в этом году — берём следующий год
+        if m < now.month or (m == now.month and d < now.day):
             year += 1
         return f"{d:02d}.{m:02d}.{year}"
     except:
@@ -173,28 +173,39 @@ async def handle_hot_offers(callback: CallbackQuery):
 async def handle_flight_request(message: Message):
     text = message.text.strip().lower()
     
-    # Умный парсинг маршрута (обрабатывает опечатки, слитные города, разные разделители)
-    route_info = smart_parse_route(text)
-    
-    if not route_info["success"]:
-        await message.answer(route_info["error"], parse_mode="HTML")
+    # Проверка: запрос без даты = поиск дешёвых билетов
+    if re.search(r"[а-яёa-z\s]+[-→>][а-яёa-z\s]+", text) and not re.search(r"\d{1,2}\.\d{1,2}", text):
+        await handle_cheap_request(message)
         return
     
-    origin_city = route_info["origin"]
-    dest_city = route_info["dest"]
-    depart_date = route_info["depart_date"]
-    return_date = route_info["return_date"]
-    passengers_part = route_info["passengers"]
-    is_cheap_search = route_info["is_cheap_search"]
-    
-    # Поиск дешёвых билетов без даты
-    if is_cheap_search:
-        await handle_cheap_request(message, origin_city, dest_city)
-        return
+    round_match = re.search(
+        r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})\s*[-–]\s*(\d{1,2}\.\d{1,2})\s*(.*)?",
+        text, re.IGNORECASE
+    )
+    if round_match:
+        origin_city, dest_city, depart_date, return_date, passengers_part = round_match.groups()
+        is_roundtrip = True
+    else:
+        oneway_match = re.search(
+            r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})\s*(.*)?",
+            text, re.IGNORECASE
+        )
+        if not oneway_match:
+            await message.answer(
+                "Неверный формат. Попробуйте:\n"
+                "<code>Москва - Сочи 10.03</code>\n"
+                "или для дешёвых билетов без даты:\n"
+                "<code>Москва - Сочи</code>",
+                parse_mode="HTML"
+            )
+            return
+        origin_city, dest_city, depart_date, passengers_part = oneway_match.groups()
+        return_date = None
+        is_roundtrip = False
     
     dest_iata = CITY_TO_IATA.get(dest_city)
     if not dest_iata:
-        await message.answer(f"❌ Не знаю город: <b>{dest_city}</b>\nПроверьте написание или выберите другой город.", parse_mode="HTML")
+        await message.answer(f"❌ Не знаю город: <b>{dest_city}</b>", parse_mode="HTML")
         return
     
     passengers_code = parse_passengers((passengers_part or "").strip())
@@ -205,20 +216,20 @@ async def handle_flight_request(message: Message):
     else:
         orig_iata = CITY_TO_IATA.get(origin_city)
         if not orig_iata:
-            await message.answer(f"❌ Не знаю город: <b>{origin_city}</b>\nПроверьте написание или выберите другой город.", parse_mode="HTML")
+            await message.answer(f"❌ Не знаю город: <b>{origin_city}</b>", parse_mode="HTML")
             return
         origins = [orig_iata]
     
-    display_depart = format_user_date(depart_date) if depart_date else "ближайшие даты"
+    display_depart = format_user_date(depart_date)
     display_return = format_user_date(return_date) if return_date else None
     
-    await message.answer("Ищу билеты...")
+    await message.answer("Ищу билеты... ⏳")
     all_flights = []
     for orig in origins:
         flights = await search_flights(
             orig,
             dest_iata,
-            normalize_date(depart_date) if depart_date else None,
+            normalize_date(depart_date),
             normalize_date(return_date) if return_date else None
         )
         for f in flights:
@@ -226,19 +237,25 @@ async def handle_flight_request(message: Message):
         all_flights.extend(flights)
     
     if not all_flights:
-        suggestion = "\n💡 Совет: попробуйте поиск без даты — напишите просто <code>Москва - Сочи</code>, и я найду самые дешёвые билеты на ближайшие даты." if depart_date else ""
-        await message.answer(f"Билеты не найдены 😢{suggestion}", parse_mode="HTML")
+        await message.answer(
+            "Билеты не найдены 😢\n"
+            "💡 Возможные причины:\n"
+            "• Нет рейсов на эту дату\n"
+            "• Попробуйте другой город или дату\n"
+            "• Для поиска самых дешёвых билетов напишите без даты: <code>Москва - Сочи</code>",
+            parse_mode="HTML"
+        )
         return
     
     cache_id = str(uuid4())
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
         "dest_iata": dest_iata,
-        "is_roundtrip": bool(return_date),
+        "is_roundtrip": is_roundtrip,
         "display_depart": display_depart,
         "display_return": display_return,
-        "original_depart": depart_date or "",
-        "original_return": return_date or "",
+        "original_depart": depart_date,
+        "original_return": return_date,
         "passenger_desc": passenger_desc
     })
     
@@ -249,8 +266,24 @@ async def handle_flight_request(message: Message):
     ])
     await message.answer("✅ Отлично! Билеты найдены:", reply_markup=kb)
 
-async def handle_cheap_request(message: Message, origin_city: str, dest_city: str):
-    """Поиск самых дешёвых билетов на ближайшие даты"""
+async def handle_cheap_request(message: Message):
+    """Поиск самых дешёвых билетов на ближайшие даты (без указания даты)"""
+    text = message.text.strip().lower()
+    
+    match = re.search(
+        r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+)",
+        text, re.IGNORECASE
+    )
+    
+    if not match:
+        await message.answer(
+            "Неверный формат. Пример:\n<code>Москва - Сочи</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    origin_city, dest_city = match.groups()
+    
     dest_iata = CITY_TO_IATA.get(dest_city)
     if not dest_iata:
         await message.answer(f"❌ Не знаю город: <b>{dest_city}</b>", parse_mode="HTML")
@@ -265,7 +298,7 @@ async def handle_cheap_request(message: Message, origin_city: str, dest_city: st
             return
         origins = [orig_iata]
     
-    await message.answer("Ищу самые дешёвые билеты на ближайшие 30 дней...")
+    await message.answer("Ищу самые дешёвые билеты на ближайшие 30 дней... ⏳")
     
     all_flights = []
     for orig in origins:
@@ -305,7 +338,7 @@ async def handle_cheap_request(message: Message, origin_city: str, dest_city: st
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
     
@@ -350,7 +383,7 @@ async def show_top_offer(callback: CallbackQuery):
 async def show_all_offers(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
     
@@ -417,7 +450,7 @@ async def show_all_offers(callback: CallbackQuery):
 async def show_direct_flights(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
     
