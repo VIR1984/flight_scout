@@ -148,47 +148,40 @@ async def handle_hot_offers(callback: CallbackQuery):
 
 async def handle_flight_request(message: Message):
     text = message.text.strip().lower()
-    
-    round_match = re.search(
-        r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})\s*[-–]\s*(\d{1,2}\.\d{1,2})\s*(.*)?",
-        text, re.IGNORECASE
+    # Единый паттерн: Город1 [разделитель] Город2 ДД.ММ [– ДД.ММ] [пассажиры]
+    match = re.match(
+        r"^([а-яёa-z\s]+?)\s*[-→>—\s]+\s*([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})(?:\s*[-–]\s*(\d{1,2}\.\d{1,2}))?\s*(.*)$",
+        text,
+        re.IGNORECASE
     )
-    
-    if round_match:
-        origin_city, dest_city, depart_date, return_date, passengers_part = round_match.groups()
-        is_roundtrip = True
-    else:
-        oneway_match = re.search(
-            r"([а-яёa-z\s]+?)(?:\s*[-→>]\s*)([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})\s*(.*)?",
-            text, re.IGNORECASE
-        )
-        if not oneway_match:
-            await message.answer("Неверный формат. Попробуйте:\n<code>Москва → Сочи 10.03</code>", parse_mode="HTML")
-            return
-        origin_city, dest_city, depart_date, passengers_part = oneway_match.groups()
-        return_date = None
-        is_roundtrip = False
-    
-    dest_iata = CITY_TO_IATA.get(dest_city)
-    if not dest_iata:
-        await message.answer(f"Не знаю город: {dest_city}")
+    if not match:
+        await message.answer("Неверный формат. Попробуйте:\n<code>Пекин - Стамбул 10.03</code>", parse_mode="HTML")
         return
-    
-    passengers_code = parse_passengers((passengers_part or "").strip())
-    passenger_desc = ", ".join(build_passenger_desc(passengers_code))
-    
-    if origin_city == "везде":
+
+    origin_city, dest_city, depart_date, return_date, passengers_part = match.groups()
+    is_roundtrip = bool(return_date)
+
+    dest_iata = CITY_TO_IATA.get(dest_city.strip())
+    if not dest_iata:
+        await message.answer(f"Не знаю город прилёта: {dest_city.strip()}")
+        return
+
+    origin_clean = origin_city.strip()
+    if origin_clean == "везде":
         origins = GLOBAL_HUBS
     else:
-        orig_iata = CITY_TO_IATA.get(origin_city)
+        orig_iata = CITY_TO_IATA.get(origin_clean)
         if not orig_iata:
-            await message.answer(f"Не знаю город: {origin_city}")
+            await message.answer(f"Не знаю город вылета: {origin_clean}")
             return
         origins = [orig_iata]
-    
+
+    passengers_code = parse_passengers((passengers_part or "").strip())
+    passenger_desc = ", ".join(build_passenger_desc(passengers_code))
+
     display_depart = format_user_date(depart_date)
     display_return = format_user_date(return_date) if return_date else None
-    
+
     await message.answer("Ищу билеты...")
     all_flights = []
     for orig in origins:
@@ -201,12 +194,11 @@ async def handle_flight_request(message: Message):
         for f in flights:
             f["origin"] = orig
         all_flights.extend(flights)
-    
+
     if not all_flights:
-        await message.answer("Билеты не найдены 😢")
+        await message.answer("Билеты не найдены 😢\nПопробуйте изменить даты или выбрать другой маршрут.")
         return
-    
-    # СОХРАНЕНИЕ В REDIS ВМЕСТО ЛОКАЛЬНОГО СЛОВАРЯ
+
     cache_id = str(uuid4())
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
@@ -218,7 +210,7 @@ async def handle_flight_request(message: Message):
         "original_return": return_date,
         "passenger_desc": passenger_desc
     })
-    
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Самое дешёвое", callback_data=f"show_top_{cache_id}")],
         [InlineKeyboardButton(text="📋 Все предложения", callback_data=f"show_all_{cache_id}")]

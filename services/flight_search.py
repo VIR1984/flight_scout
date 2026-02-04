@@ -3,6 +3,7 @@ import aiohttp
 import os
 from typing import List, Dict, Optional
 from datetime import datetime
+from utils.logger import logger
 
 def normalize_date(date_str: str) -> str:
     try:
@@ -15,11 +16,12 @@ def normalize_date(date_str: str) -> str:
         return "2026-03-15"
 
 async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
+    logger.info(f"🔍 Запрос: {origin} → {dest}, вылет: {depart_date}, возврат: {return_date}")
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
         "origin": origin,
         "destination": dest,
-        "departure_at": depart_date,  # ← обязательно
+        "departure_at": depart_date,
         "one_way": "false" if return_date else "true",
         "currency": "rub",
         "limit": 10,
@@ -31,11 +33,18 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as r:
+            logger.info(f"📡 Ответ API: статус={r.status}")
             if r.status == 200:
                 data = await r.json()
-                if data.get("success"):
+                success = data.get("success")
+                logger.info(f"✅ Успешный ответ: {success}, найдено записей: {len(data.get('data', []))}")
+                if success:
                     return data.get("data", [])
-    return []
+                else:
+                    logger.warning(f"❌ API вернул ошибку: {data.get('message', 'no message')}")
+            else:
+                logger.error(f"💥 Ошибка HTTP: {r.status}")
+            return []
 
 async def get_hot_offers(limit: int = 7) -> List[Dict]:
     # Для горячих предложений тоже используем v3, но с origin=MOW и без destination
