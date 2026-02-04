@@ -49,15 +49,28 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
                 logger.error(f"💥 Ошибка HTTP: {r.status}")
             return []
 
-def generate_booking_link(flight: dict, origin: str, dest: str, depart_date: str, passengers_code: str = "1", return_date: Optional[str] = None) -> str:
-    link_suffix = flight.get("link", "")
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    base = "https://www.aviasales.ru"
-    full_url = base + link_suffix
+def format_avia_link_date(date_str: str) -> str:
+    """Преобразует '10.03' → '1003'"""
+    try:
+        d, m = date_str.split('.')
+        return f"{int(d):02d}{int(m):02d}"
+    except:
+        return "0101"
 
+def generate_booking_link(
+    flight: dict,
+    origin: str,
+    dest: str,
+    depart_date: str,
+    passengers_code: str = "1",
+    return_date: Optional[str] = None
+) -> str:
+    d1 = format_avia_link_date(depart_date)
+    d2 = format_avia_link_date(return_date) if return_date else ""
+    route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    base = "https://www.aviasales.ru/search/"
+    url = f"{base}{route}"
     if marker:
-        if "?" in full_url:
-            full_url += f"&marker={marker}"
-        else:
-            full_url += f"?marker={marker}"
-    return full_url
+        url += f"?marker={marker}"
+    return url
