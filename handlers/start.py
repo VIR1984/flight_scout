@@ -196,7 +196,24 @@ async def handle_flight_request(message: Message):
         all_flights.extend(flights)
 
     if not all_flights:
-        await message.answer("Билеты не найдены 😢\nПопробуйте изменить даты или выбрать другой маршрут.")
+    # Формируем fallback-ссылку на Aviasales
+        origin_iata = origins[0]  # берём первый город из списка (даже если "везде")
+        d1 = depart_date.replace('.', '')
+        d2 = return_date.replace('.', '') if return_date else ''
+        route = f"{origin_iata}{d1}{dest_iata}{d2}1"
+        marker = os.getenv("TRAFFIC_SOURCE", "")
+        link = f"https://www.aviasales.ru/search/{route}"
+        if marker:
+        link += f"?marker={marker}"
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=link)]
+    ])
+        await message.answer(
+        "Билеты не найдены через API 😢\n"
+        "Но вы можете проверить наличие на официальном сайте:",
+        reply_markup=kb
+    )
         return
 
     cache_id = str(uuid4())
