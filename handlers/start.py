@@ -1,7 +1,6 @@
 # handlers/start.py
 import os
 import re
-from datetime import datetime
 from uuid import uuid4
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -19,9 +18,11 @@ async def cmd_start(message: Message):
     welcome = (
         "👋 Привет! Я — бот для поиска авиабилетов.\n"
         "🔍 <b>Как я работаю:</b>\n"
-        "1. Напишите мне маршрут (например): <code>Орск - Пермь 10.03</code>\n"
-        "2. Могут быть рейсы с пересадками — я их тоже покажу!\n"
-        "3. Если API молчит — дам ссылку на Aviasales с актуальными билетами."
+        "1. Напишите мне маршрут (например): <code>Москва - Сочи 10.03</code>\n"
+        "2. Можете указать пассажиров: <code>2 взр., 1 реб.</code>\n"
+        "3. Получите список билетов и удобную ссылку для бронирования\n"
+        "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города.\n"
+        "Или выберите тип поиска:"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Только туда", callback_data="type_oneway")],
@@ -44,7 +45,9 @@ def parse_passengers(s: str) -> str:
 
 def build_passenger_desc(code: str):
     try:
-        ad = int(code[0]); ch = int(code[1]) if len(code) > 1 else 0; inf = int(code[2]) if len(code) > 2 else 0
+        ad = int(code[0])
+        ch = int(code[1]) if len(code) > 1 else 0
+        inf = int(code[2]) if len(code) > 2 else 0
         parts = []
         if ad: parts.append(f"{ad} взр.")
         if ch: parts.append(f"{ch} реб.")
@@ -97,6 +100,7 @@ async def handle_flight_request(message: Message):
     display_return = format_user_date(return_date) if return_date else None
 
     await message.answer("Ищу билеты (включая с пересадками)...")
+
     all_flights = []
     for orig in origins:
         flights = await search_flights(
@@ -118,7 +122,6 @@ async def handle_flight_request(message: Message):
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
             link += f"?marker={marker}"
-
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)]
         ])
@@ -147,21 +150,25 @@ async def handle_flight_request(message: Message):
     ])
     await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
 
+# === ОБЯЗАТЕЛЬНЫЕ ОБРАБОТЧИКИ КНОПОК ===
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:  # ✅ Проверка на None или пустой словарь
+    if not data:
         await callback.answer("Данные устарели", show_alert=True)
         return
+
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
     dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+
     text = f"✅ Самое дешёвое ({data['passenger_desc']}):\n"
     text += f'✈️ {origin_name} → {dest_name} — {price} ₽ (за 1 взрослого) — {data["display_depart"]}\n'
     if data["is_roundtrip"] and data["display_return"]:
         text += f'   ↩️ Обратно: {data["display_return"]}\n'
+
     link = generate_booking_link(
         top_flight,
         top_flight["origin"],
@@ -180,13 +187,15 @@ async def show_top_offer(callback: CallbackQuery):
 async def show_all_offers(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:  # ✅ Проверка на None или пустой словарь
+    if not data:
         await callback.answer("Данные устарели", show_alert=True)
         return
+
     flights = sorted(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     if not flights:
         await callback.message.answer("Нет рейсов.")
         return
+
     min_price = flights[0].get("value") or flights[0].get("price") or "?"
     origin_iata = flights[0]["origin"]
     dest_iata = data["dest_iata"]
@@ -194,10 +203,11 @@ async def show_all_offers(callback: CallbackQuery):
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
     depart_date_disp = data["display_depart"]
     return_date_disp = data["display_return"]
+
     d1 = data["original_depart"].replace('.', '')
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
-    marker = os.getenv("TRAFFIC_SOURCE", "")
+    marker = os.getenv("TRAFFIC_SOURCE")
     link = f"https://www.aviasales.ru/search/{route}"
     if marker:
         link += f"?marker={marker}"
@@ -218,6 +228,7 @@ async def show_all_offers(callback: CallbackQuery):
     await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
 
+# === Обработка обычных сообщений ===
 @router.message(F.text)
 async def handle_any_message(message: Message):
     user_id = message.from_user.id
