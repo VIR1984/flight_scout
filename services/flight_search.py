@@ -25,7 +25,7 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
         "currency": "rub",
         "limit": 10,
         "sorting": "price",
-        "direct": "false",  # ← явно разрешаем пересадки
+        "direct": "false",
         "token": os.getenv("API_TOKEN", "").strip()
     }
     if return_date:

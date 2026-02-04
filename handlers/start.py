@@ -157,7 +157,7 @@ async def show_top_offer(callback: CallbackQuery):
     data = await redis_client.get_search_cache(cache_id)
     if not data:
         await callback.answer("Данные устарели", show_alert=True)
-        return
+        return 
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
