@@ -2,31 +2,38 @@
 import aiohttp
 import os
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def normalize_date(date_str: str) -> str:
     try:
         d, m = date_str.split('.')
-        day = int(d); month = int(m); year = 2026
-        if month < 2 or (month == 2 and day < 3):
-            year = 2027
+        day = int(d); month = int(m); year = datetime.now().year
+        if month < datetime.now().month or (month == datetime.now().month and day < datetime.now().day):
+            year += 1
         return f"{year}-{month:02d}-{day:02d}"
     except:
-        return "2026-03-15"
+        # Если дата не указана — возвращаем ближайшую дату
+        return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
-async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
-    """Поиск рейсов на конкретные даты"""
+async def search_flights(origin: str, dest: str, depart_date: Optional[str] = None, return_date: Optional[str] = None) -> List[Dict]:
+    """Поиск рейсов на конкретные даты (ИСПРАВЛЕНО: требуется полная дата)"""
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+    
+    # Если дата не указана — используем завтрашний день
+    if not depart_date:
+        depart_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    
     params = {
         "origin": origin,
         "destination": dest,
-        "departure_at": depart_date,
+        "departure_at": depart_date,  # ← ИСПРАВЛЕНО: теперь полная дата YYYY-MM-DD
         "one_way": "false" if return_date else "true",
         "currency": "rub",
         "limit": 10,
         "sorting": "price",
         "token": os.getenv("API_TOKEN", "").strip()
     }
+    
     if return_date:
         params["return_at"] = return_date
     
@@ -39,43 +46,43 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
             return []
 
 async def search_cheapest_flights(origin: str, dest: str) -> List[Dict]:
-    """Поиск самых дешёвых билетов на ближайшие 3 месяца (без указания даты)"""
+    """Поиск самых дешёвых билетов на ближайшие 30 дней"""
     all_flights = []
     
-    # Месяцы для поиска: текущий + 2 следующих
-    months = ["2026-02", "2026-03", "2026-04"]
+    # Формируем диапазон дат: сегодня + 30 дней
+    start_date = datetime.now()
+    end_date = start_date + timedelta(days=30)
+    departure_range = f"{start_date.strftime('%Y-%m-%d')},{end_date.strftime('%Y-%m-%d')}"
+    
+    url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+    params = {
+        "origin": origin,
+        "destination": dest,
+        "departure_at": departure_range,  # ← диапазон дат
+        "one_way": "true",
+        "currency": "rub",
+        "limit": 20,
+        "sorting": "price",
+        "token": os.getenv("API_TOKEN", "").strip()
+    }
     
     async with aiohttp.ClientSession() as session:
-        for month in months:
-            url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
-            params = {
-                "origin": origin,
-                "destination": dest,
-                "departure_at": month,  # поиск по всему месяцу
-                "one_way": "true",
-                "currency": "rub",
-                "limit": 5,
-                "sorting": "price",
-                "token": os.getenv("API_TOKEN", "").strip()
-            }
-            
-            async with session.get(url, params=params) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    if data.get("success"):
-                        flights = data.get("data", [])
-                        all_flights.extend(flights)
-    
-    # Сортируем по цене и возвращаем топ-10
-    all_flights.sort(key=lambda f: f.get("value") or f.get("price") or 999999)
-    return all_flights[:10]
+        async with session.get(url, params=params) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data.get("success"):
+                    flights = data.get("data", [])
+                    # Сортируем по цене и возвращаем топ-15
+                    flights.sort(key=lambda f: f.get("value") or f.get("price") or 999999)
+                    return flights[:15]
+            return []
 
 async def get_hot_offers(limit: int = 7) -> List[Dict]:
     """Горячие предложения из Москвы"""
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
         "origin": "MOW",
-        "departure_at": "2026-02",
+        "departure_at": (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d") + "," + (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
         "one_way": "true",
         "currency": "rub",
         "limit": limit * 3,
