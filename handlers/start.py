@@ -4,7 +4,7 @@ import re
 from uuid import uuid4
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from services.flight_search import search_flights, generate_booking_link, get_hot_offers, normalize_date
+from services.flight_search import search_flights, generate_booking_link, normalize_date
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from aiogram.filters import Command
@@ -13,23 +13,15 @@ router = Router()
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    user_id = message.from_user.id
-    is_first = await redis_client.is_first_time_user(user_id)
     welcome = (
         "👋 Привет! Я — бот для поиска авиабилетов.\n"
         "🔍 <b>Как я работаю:</b>\n"
         "1. Напишите мне маршрут (например): <code>Москва - Сочи 10.03</code>\n"
         "2. Можете указать пассажиров: <code>2 взр., 1 реб.</code>\n"
         "3. Получите список билетов и удобную ссылку для бронирования\n"
-        "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города.\n"
-        "Или выберите тип поиска:"
+        "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города."
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Только туда", callback_data="type_oneway")],
-        [InlineKeyboardButton(text="🔁 Туда-обратно", callback_data="type_roundtrip")],
-        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_offers")]
-    ])
-    await message.answer(welcome, reply_markup=kb, parse_mode="HTML")
+    await message.answer(welcome, parse_mode="HTML")
 
 def parse_passengers(s: str) -> str:
     if not s: return "1"
@@ -150,7 +142,8 @@ async def handle_flight_request(message: Message):
     ])
     await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
 
-# === ОБЯЗАТЕЛЬНЫЕ ОБРАБОТЧИКИ КНОПОК ===
+
+# === Обработчики кнопок результатов ===
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
@@ -182,6 +175,7 @@ async def show_top_offer(callback: CallbackQuery):
     ])
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("show_all_"))
 async def show_all_offers(callback: CallbackQuery):
@@ -228,12 +222,7 @@ async def show_all_offers(callback: CallbackQuery):
     await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
 
-# === Обработка обычных сообщений ===
+
 @router.message(F.text)
 async def handle_any_message(message: Message):
-    user_id = message.from_user.id
-    is_first = await redis_client.is_first_time_user(user_id)
-    if is_first:
-        await cmd_start(message)
-    else:
-        await handle_flight_request(message)
+    await handle_flight_request(message)
