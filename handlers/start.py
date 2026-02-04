@@ -203,9 +203,14 @@ async def show_all_offers(callback: CallbackQuery):
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    base_sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+
     link = f"https://www.aviasales.ru/search/{route}"
-    if marker:
-        link += f"?marker={marker}"
+
+    if marker.isdigit():
+        sub_id = f"{base_sub_id}_{callback.from_user.id}"
+        link += f"?marker={marker}&sub_id={sub_id}"
 
     text = (
         f"📋 Все предложения ({data['passenger_desc']}):\n"
