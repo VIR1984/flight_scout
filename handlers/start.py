@@ -17,12 +17,40 @@ async def cmd_start(message: Message):
         "👋 Привет! Я — бот для поиска авиабилетов.\n"
         "🔍 <b>Как я работаю:</b>\n"
         "1. Напишите мне маршрут (например): <code>Москва - Сочи 10.03</code>\n"
-        "2. Можете указать пассажиров: <code>2 взр., 1 реб.</code>\n"
-        "3. Получите список билетов и удобную ссылку для бронирования\n"
+        "2. Или маршрут туда - обратно (например): <code>Москва - Сочи 10.03 - 15.03 </code>\n"
+        "3. Можете указать пассажиров (например): <code> Москва - Сочи 10.03 - 15.03 2 взр., 1 реб.</code>\n"
+        "4. Получите список билетов и удобную ссылку для бронирования\n"
         "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города."
     )
-    await message.answer(welcome, parse_mode="HTML")
 
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Только туда", callback_data="hint_oneway")],
+        [InlineKeyboardButton(text="🔁 Туда-обратно", callback_data="hint_roundtrip")]
+    ])
+    await message.answer(welcome, reply_markup=kb, parse_mode="HTML")
+
+# === Обработчики подсказок (вместо реального поиска) ===
+@router.callback_query(F.data == "hint_oneway")
+async def hint_oneway(callback: CallbackQuery):
+    await callback.message.answer(
+        "📌 Пример запроса «только туда»:\n"
+        "<code>Москва - Сочи 10.03</code>\n\n"
+        "Напишите свой маршрут — и я найду билеты!",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "hint_roundtrip")
+async def hint_roundtrip(callback: CallbackQuery):
+    await callback.message.answer(
+        "📌 Пример запроса «туда-обратно»:\n"
+        "<code>Москва - Сочи 10.03 - 15.03</code>\n\n"
+        "Напишите свой маршрут — и я найду билеты!",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+# --- Остальной код без изменений ---
 def parse_passengers(s: str) -> str:
     if not s: return "1"
     if s.isdigit(): return s
@@ -142,8 +170,7 @@ async def handle_flight_request(message: Message):
     ])
     await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
 
-
-# === Обработчики кнопок результатов ===
+# === Обработчики результатов (оставлены как есть) ===
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
@@ -175,7 +202,6 @@ async def show_top_offer(callback: CallbackQuery):
     ])
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith("show_all_"))
 async def show_all_offers(callback: CallbackQuery):
@@ -221,7 +247,6 @@ async def show_all_offers(callback: CallbackQuery):
     )
     await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
-
 
 @router.message(F.text)
 async def handle_any_message(message: Message):
