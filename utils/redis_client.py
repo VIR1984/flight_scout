@@ -1,95 +1,76 @@
+# utils/redis_client.py
 import os
 import json
+import logging
 from typing import Optional, Dict, Any
+from redis import asyncio as redis  # redis 4.6 async
 
-from redis import asyncio as aioredis
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 class RedisClient:
-    def __init__(self) -> None:
-        self.client: aioredis.Redis | None = None
+    def __init__(self):
+        self.client: Optional[redis.Redis] = None
         self.prefix = "flight_bot:"
 
-    # ===================== CONNECTION =====================
+    async def connect(self):
+        """Подключение к Redis"""
+        redis_url = os.getenv("REDIS_URL")
+        if not redis_url:
+            logger.warning("REDIS_URL не задан — Redis отключён")
+            return
 
-    async def connect(self) -> None:
-        """
-        Подключение к Redis (поддерживает redis:// и rediss://)
-        """
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        try:
+            # ⚡ Для rediss:// SSL включается автоматически
+            self.client = redis.from_url(
+                redis_url,
+                decode_responses=True,
+            )
+            await self.client.ping()
+            logger.info("✓ Redis подключён")
+        except Exception as e:
+            logger.error(f"Ошибка подключения к Redis: {e}")
+            self.client = None
 
-        self.client = aioredis.from_url(
-            redis_url,
-            decode_responses=True,
-            ssl_cert_reqs=None,   # безопасно для cloud / rediss://
-            max_connections=20
-        )
-
-        await self.client.ping()
-        print("✓ Redis подключен")
-
-    async def close(self) -> None:
-        """
-        Корректное закрытие соединения и пула
-        """
+    async def close(self):
+        """Закрытие соединения"""
         if self.client:
-            await self.client.aclose()
-            await self.client.connection_pool.disconnect()
+            await self.client.close()
 
-    # ===================== SEARCH CACHE =====================
+    def is_enabled(self) -> bool:
+        return self.client is not None
 
-    async def get_search_cache(
-        self,
-        cache_id: str
-    ) -> Optional[Dict[str, Any]]:
-        key = f"{self.prefix}search:{cache_id}"
-        data = await self.client.get(key)
+    # ===== Кэш поиска =====
+    async def get_search_cache(self, cache_id: str) -> Optional[Dict[str, Any]]:
+        if not self.client:
+            return None
+        data = await self.client.get(f"{self.prefix}search:{cache_id}")
         return json.loads(data) if data else None
 
-    async def set_search_cache(
-        self,
-        cache_id: str,
-        data: Dict[str, Any],
-        ttl: int = 3600
-    ) -> None:
-        key = f"{self.prefix}search:{cache_id}"
+    async def set_search_cache(self, cache_id: str, data: Dict[str, Any], ttl: int = 3600):
+        if not self.client:
+            return
         await self.client.setex(
-            key,
+            f"{self.prefix}search:{cache_id}",
             ttl,
-            json.dumps(data, ensure_ascii=False)
+            json.dumps(data, ensure_ascii=False),
         )
 
-    async def delete_search_cache(self, cache_id: str) -> None:
-        key = f"{self.prefix}search:{cache_id}"
-        await self.client.delete(key)
+    async def delete_search_cache(self, cache_id: str):
+        if self.client:
+            await self.client.delete(f"{self.prefix}search:{cache_id}")
 
-    # ===================== FIRST TIME USER =====================
-
+    # ===== Первый запуск пользователя =====
     async def is_first_time_user(self, user_id: int) -> bool:
-        """
-        True — если пользователь первый раз
-        False — если уже был
-        """
+        if not self.client:
+            return True
         key = f"{self.prefix}first_time_users"
-        user_id_str = str(user_id)
-
-        exists = await self.client.sismember(key, user_id_str)
+        exists = await self.client.sismember(key, str(user_id))
         if not exists:
-            await self.client.sadd(key, user_id_str)
-
+            await self.client.sadd(key, str(user_id))
         return not exists
 
-    # ===================== MONITORING =====================
 
-    async def get_search_cache_count(self) -> int:
-        """
-        Количество активных кэшей поиска
-        (для отладки / мониторинга)
-        """
-        keys = await self.client.keys(f"{self.prefix}search:*")
-        return len(keys)
-
-
-# ===================== SINGLETON =====================
-
+# Singleton
 redis_client = RedisClient()
