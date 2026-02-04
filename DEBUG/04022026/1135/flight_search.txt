@@ -15,12 +15,11 @@ def normalize_date(date_str: str) -> str:
         return "2026-03-15"
 
 async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
-    """Поиск рейсов на конкретные даты"""
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
         "origin": origin,
         "destination": dest,
-        "departure_at": depart_date,
+        "departure_at": depart_date,  # ← обязательно
         "one_way": "false" if return_date else "true",
         "currency": "rub",
         "limit": 10,
@@ -29,53 +28,21 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
     }
     if return_date:
         params["return_at"] = return_date
-    
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as r:
             if r.status == 200:
                 data = await r.json()
                 if data.get("success"):
                     return data.get("data", [])
-            return []
-
-async def search_cheapest_flights(origin: str, dest: str) -> List[Dict]:
-    """Поиск самых дешёвых билетов на ближайшие 3 месяца (без указания даты)"""
-    all_flights = []
-    
-    # Месяцы для поиска: текущий + 2 следующих
-    months = ["2026-02", "2026-03", "2026-04"]
-    
-    async with aiohttp.ClientSession() as session:
-        for month in months:
-            url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
-            params = {
-                "origin": origin,
-                "destination": dest,
-                "departure_at": month,  # поиск по всему месяцу
-                "one_way": "true",
-                "currency": "rub",
-                "limit": 5,
-                "sorting": "price",
-                "token": os.getenv("API_TOKEN", "").strip()
-            }
-            
-            async with session.get(url, params=params) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    if data.get("success"):
-                        flights = data.get("data", [])
-                        all_flights.extend(flights)
-    
-    # Сортируем по цене и возвращаем топ-10
-    all_flights.sort(key=lambda f: f.get("value") or f.get("price") or 999999)
-    return all_flights[:10]
+    return []
 
 async def get_hot_offers(limit: int = 7) -> List[Dict]:
-    """Горячие предложения из Москвы"""
+    # Для горячих предложений тоже используем v3, но с origin=MOW и без destination
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
         "origin": "MOW",
-        "departure_at": "2026-02",
+        "departure_at": "2026-02",  # ближайший месяц
         "one_way": "true",
         "currency": "rub",
         "limit": limit * 3,
@@ -83,7 +50,6 @@ async def get_hot_offers(limit: int = 7) -> List[Dict]:
         "sorting": "price",
         "token": os.getenv("API_TOKEN", "").strip()
     }
-    
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as r:
             if r.status == 200:
@@ -96,13 +62,13 @@ async def get_hot_offers(limit: int = 7) -> List[Dict]:
                         if route not in seen:
                             offers.append(item)
                             seen.add(route)
-                        if len(offers) >= limit:
-                            break
+                            if len(offers) >= limit:
+                                break
                     return offers
-            return []
+    return []
 
 def generate_booking_link(flight: dict, origin: str, dest: str, depart_date: str, passengers_code: str = "1", return_date: Optional[str] = None) -> str:
-    """Генерация ссылки для бронирования"""
+    # Используем готовую ссылку из API
     link_suffix = flight.get("link", "")
     marker = os.getenv("TRAFFIC_SOURCE", "")
     base = "https://www.aviasales.ru"
