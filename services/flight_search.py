@@ -3,6 +3,7 @@ import aiohttp
 import os
 from typing import List, Dict, Optional
 from utils.logger import logger
+from datetime import datetime
 
 def normalize_date(date_str: str) -> str:
     """Приводит дату к формату ГГГГ-ММ-ДД на основе текущей даты"""
