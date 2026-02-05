@@ -9,6 +9,7 @@ from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from aiogram.filters import Command
 
+
 router = Router()
 
 @router.message(Command("start"))
@@ -331,45 +332,3 @@ async def handle_unwatch(callback: CallbackQuery):
 async def handle_any_message(message: Message):
     await handle_flight_request(message)
  
-# === ТЕСТОВАЯ КНОПКА ДЛЯ СИМУЛЯЦИИ ПАДЕНИЯ ЦЕНЫ ===
-@router.message(Command("test_drop"))
-async def test_price_drop(message: Message):
-    # Создаём тестовое отслеживание
-    watch_key = await redis_client.save_price_watch(
-        user_id=message.from_user.id,
-        origin="MOW",
-        dest="AER",
-        depart_date="15.03",
-        return_date=None,
-        current_price=10000,  # Текущая цена 10 000 ₽
-        passengers="1"
-    )
-    
-    # Сразу "падаем" цену до 5000 ₽ через симуляцию
-    await message.answer(
-        "✅ Тестовое отслеживание создано!\n"
-        "💰 Исходная цена: 10 000 ₽\n"
-        "📉 Симулируем падение цены до 5 000 ₽ через 10 секунд..."
-    )
-    
-    # Ждём 10 секунд и отправляем уведомление вручную
-    await asyncio.sleep(10)
-    
-    booking_link = "https://www.aviasales.ru/search/MOW1503AER1?marker=12345&sub_id=telegram_123456789"
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Забронировать за 5 000 ₽", url=booking_link)],
-        [InlineKeyboardButton(text="❌ Больше не следить", callback_data=f"unwatch_{watch_key}")]
-    ])
-    
-    await message.answer(
-        "🎉 <b>ЦЕНА УПАЛА!</b>\n\n"
-        "📍 Маршрут: Москва → Сочи\n"
-        "📅 Вылет: 15.03.2026\n"
-        "💰 Старая цена: 10 000 ₽\n"
-        "💰 Новая цена: 5 000 ₽\n"
-        "💸 Экономия: 5 000 ₽ (50.0%)\n\n"
-        "🚀 Бронируйте быстро, пока цена не выросла!",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
