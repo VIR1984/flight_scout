@@ -176,7 +176,9 @@ async def show_top_offer(callback: CallbackQuery):
         data["original_return"]
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"✈️ Посмотреть предложение ({price} ₽)", url=link)]
+        [InlineKeyboardButton(text=f"✈️ Посмотреть предложение ({price} ₽)", url=link)],
+        [InlineKeyboardButton(text="👀 Следить за ценой", 
+                         callback_data=f"watch_{cache_id}_{price}")]
     ])
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
@@ -229,7 +231,99 @@ async def show_all_offers(callback: CallbackQuery):
         f"🔗 <a href='{link}'>Перейти на Aviasales — просмотреть все доступные рейсы</a>\n"
         f"💡 Включая рейсы с пересадками!"
     )
-    await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="👀 Следить за ценой", 
+                         callback_data=f"watch_all_{cache_id}")],
+    [InlineKeyboardButton(text="✈️ Все предложения на Aviasales", url=link)]
+])
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+    await callback.answer()
+    
+# === Отслеживание цен ===
+@router.callback_query(F.data.startswith("watch_"))
+async def handle_watch_price(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    
+    if parts[1] == "all":  # watch_all_{cache_id}
+        cache_id = parts[2]
+        data = await redis_client.get_search_cache(cache_id)
+        if not data:
+            await callback.answer("Данные устарели", show_alert=True)
+            return
+        
+        # Берем минимальную цену из всех предложений
+        min_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
+        price = min_flight.get("value") or min_flight.get("price")
+        
+        # Сохраняем отслеживание
+        await redis_client.save_price_watch(
+            user_id=callback.from_user.id,
+            origin=min_flight["origin"],
+            dest=data["dest_iata"],
+            depart_date=data["original_depart"],
+            return_date=data["original_return"],
+            current_price=price,
+            passengers="1"
+        )
+        
+        origin_name = IATA_TO_CITY.get(min_flight["origin"], min_flight["origin"])
+        dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+        
+        await callback.message.answer(
+            f"✅ <b>Отлично! Я буду следить за ценами</b>\n\n"
+            f"📍 Маршрут: {origin_name} → {dest_name}\n"
+            f"📅 Вылет: {data['display_depart']}\n"
+            f"{'📅 Возврат: ' + data['display_return'] + chr(10) if data.get('display_return') else ''}"
+            f"💰 Текущая цена: {price} ₽\n\n"
+            f"📲 Пришлю уведомление, если цена упадёт! 📉"
+        )
+    
+    else:  # watch_{cache_id}_{price}
+        cache_id = parts[1]
+        price = int(parts[2])
+        data = await redis_client.get_search_cache(cache_id)
+        if not data:
+            await callback.answer("Данные устарели", show_alert=True)
+            return
+        
+        top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
+        
+        await redis_client.save_price_watch(
+            user_id=callback.from_user.id,
+            origin=top_flight["origin"],
+            dest=data["dest_iata"],
+            depart_date=data["original_depart"],
+            return_date=data["original_return"],
+            current_price=price,
+            passengers="1"
+        )
+        
+        origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
+        dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+        
+        await callback.message.answer(
+            f"✅ <b>Я слежу за ценами!</b>\n\n"
+            f"📍 Маршрут: {origin_name} → {dest_name}\n"
+            f"📅 Вылет: {data['display_depart']}\n"
+            f"{'📅 Возврат: ' + data['display_return'] + chr(10) if data.get('display_return') else ''}"
+            f"💰 Текущая цена: {price} ₽\n\n"
+            f"📲 Пришлю уведомление, если цена упадёт 📉"
+        )
+    
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("unwatch_"))
+async def handle_unwatch(callback: CallbackQuery):
+    """Отписаться от отслеживания"""
+    watch_key = callback.data.split("_", 1)[1]
+    
+    # Проверяем, что это отслеживание пользователя
+    if str(callback.from_user.id) in watch_key:
+        await redis_client.remove_watch(callback.from_user.id, watch_key)
+        await callback.message.edit_text("✅ Больше не слежу за этим маршрутом")
+    else:
+        await callback.answer("Это не ваше отслеживание", show_alert=True)
+    
     await callback.answer()
 
 
