@@ -15,7 +15,7 @@ class PriceWatcher:
     def __init__(self, bot: Bot):
         self.bot = bot
         self.running = False
-        self.check_interval = 21600  # 6 часов
+        self.check_interval = 7200  # 2 часа
     
     async def start(self):
         """Запустить периодическую проверку"""
