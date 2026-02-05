@@ -17,8 +17,8 @@ async def cmd_start(message: Message):
         "👋 Привет! Я — бот для поиска авиабилетов.\n"
         "🔍 <b>Как я работаю:</b>\n"
         "1. Напишите мне маршрут (например): <code>Москва - Сочи 10.03</code>\n"
-        "2. Или маршрут туда - обратно (например): <code>Москва - Сочи 10.03 - 15.03 </code>\n"
-        "3. Можете указать пассажиров (например): <code> Москва - Сочи 10.03 - 15.03 2 взр., 1 реб.</code>\n"
+        "2. Или туда-обратно: <code>Москва - Сочи 10.03 - 15.03</code>\n"
+        "3. Можете указать пассажиров: <code>2 взр., 1 реб.</code>\n"
         "4. Получите список билетов и удобную ссылку для бронирования\n"
         "💡 Совет: используйте <code>Везде - Сочи 10.03</code>, чтобы найти самый дешёвый вылет из любого города."
     )
@@ -111,7 +111,7 @@ async def handle_flight_request(message: Message):
         d1 = depart_date.replace('.', '')
         d2 = return_date.replace('.', '') if return_date else ''
         route = f"{origin_iata}{d1}{dest_iata}{d2}1"
-        marker = os.getenv("TRAFFIC_SOURCE", "")
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
             link += f"?marker={marker}"
@@ -202,7 +202,7 @@ async def show_all_offers(callback: CallbackQuery):
     d1 = data["original_depart"].replace('.', '')
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
-    marker = os.getenv("TRAFFIC_SOURCE")
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     link = f"https://www.aviasales.ru/search/{route}"
     if marker:
         link += f"?marker={marker}"

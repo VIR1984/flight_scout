@@ -68,9 +68,14 @@ def generate_booking_link(
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
     route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+
     base = "https://www.aviasales.ru/search/"
     url = f"{base}{route}"
-    if marker:
-        url += f"?marker={marker}"
+
+    if marker.isdigit():
+        url += f"?marker={marker}&sub_id={sub_id}"
+
     return url
