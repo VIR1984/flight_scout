@@ -85,10 +85,8 @@ async def handle_flight_request(message: Message):
     passenger_desc = ", ".join(build_passenger_desc(passengers_code))
 
     origin_clean = origin_city.strip()
-    
-    # 🔑 ИСПРАВЛЕНО: ограничение хабов до 5
     if origin_clean == "везде":
-        origins = GLOBAL_HUBS[:5]  # ← ТОЛЬКО 5 ХАБОВ
+        origins = GLOBAL_HUBS
     else:
         orig_iata = CITY_TO_IATA.get(origin_clean)
         if not orig_iata:
@@ -101,12 +99,8 @@ async def handle_flight_request(message: Message):
 
     await message.answer("Ищу билеты (включая с пересадками)...")
 
-    # 🔑 ИСПРАВЛЕНО: задержка между запросами
     all_flights = []
-    for i, orig in enumerate(origins):
-        if i > 0:
-            await asyncio.sleep(1)  # ← 1 СЕКУНДА МЕЖДУ ЗАПРОСАМИ
-        
+    for orig in origins:
         flights = await search_flights(
             orig,
             dest_iata,
@@ -115,7 +109,6 @@ async def handle_flight_request(message: Message):
         )
         for f in flights:
             f["origin"] = orig
-        all_flights.extend(flights)
         all_flights.extend(flights)
 
     if not all_flights:

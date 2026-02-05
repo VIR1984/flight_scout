@@ -21,7 +21,7 @@ async def main():
     except Exception as e:
         logger.error(f"Ошибка подключения к Redis: {e}")
         logger.info("Продолжаю работу без кэширования...")
-        
+        sys.exit(1)
     
     # Инициализация бота
     bot = Bot(

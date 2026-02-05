@@ -5,20 +5,17 @@ from typing import List, Dict, Optional
 from utils.logger import logger
 
 def normalize_date(date_str: str) -> str:
-    """Приводит дату к формату ГГГГ-ММ-ДД на основе текущей даты"""
-    day, month = map(int, date_str.split('.'))
-    now = datetime.now()
-    current_year = now.year
-    current_month = now.month
-    current_day = now.day
-    
-    # Если дата уже прошла в этом году — берём следующий год
-    if (month < current_month) or (month == current_month and day < current_day):
-        year = current_year + 1
-    else:
-        year = current_year
-    
-    return f"{year}-{month:02d}-{day:02d}"
+    try:
+        d, m = date_str.split('.')
+        day = int(d)
+        month = int(m)
+        year = 2026
+        if month < 2 or (month == 2 and day < 3):
+            year = 2027
+        return f"{year}-{month:02d}-{day:02d}"
+    except Exception as e:
+        logger.warning(f"Ошибка парсинга даты '{date_str}': {e}")
+        return "2026-03-15"
 
 async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
     logger.info(f"🔍 Запрос: {origin} → {dest}, вылет: {depart_date}, возврат: {return_date}")
@@ -38,7 +35,7 @@ async def search_flights(origin: str, dest: str, depart_date: str, return_date: 
         params["return_at"] = return_date
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
+        async with session.get(url, params=params) as r:
             logger.info(f"📡 Ответ API: статус={r.status}")
             if r.status == 200:
                 data = await r.json()
