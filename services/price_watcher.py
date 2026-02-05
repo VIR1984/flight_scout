@@ -1,14 +1,14 @@
-# services/price_watcher.py
+# services/price_watcher.py — НАЧАЛО ФАЙЛА
 import asyncio
 import json
 import time
+from datetime import datetime  # ← Для нормализации дат
 from typing import Dict, Optional
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.flight_search import search_flights, generate_booking_link, normalize_date
 from utils.redis_client import redis_client
-from utils.logger import 
-from datetime import datetime
+from utils.logger import logger  # ← ИСПРАВЛЕНО: добавлено имя 'logger'
 
 class PriceWatcher:
     """Фоновый сервис для отслеживания падения цен"""
