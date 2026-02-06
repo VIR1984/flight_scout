@@ -163,7 +163,7 @@ async def handle_flight_request(message: Message):
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not data: 
         await callback.answer("Данные устарели", show_alert=True)
         return
 
@@ -205,19 +205,8 @@ async def show_top_offer(callback: CallbackQuery):
     show_transfer_button = data["dest_iata"] in SUPPORTED_TRANSFER_AIRPORTS
 
     if show_transfer_button:
-        # Генерируем партнёрскую ссылку на ПОИСК трансферов (без конкретного адреса)
-        transfer_date = normalize_date(data["original_depart"])
-        marker = os.getenv("TRAFFIC_SOURCE", "").strip() or "700812"
-        sub_id = f"telegram_{callback.from_user.id}"
-        
-        # Прямая ссылка на поиск трансферов из аэропорта
-        transfer_link = (
-            f"https://gettransfer.com/ru/search?"
-            f"origin={data['dest_iata']}&"
-            f"date={transfer_date}&"
-            f"marker={marker}&"
-            f"sub_id={sub_id}"
-        )
+        # Используем фиксированную партнёрскую ссылку из .env
+        transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
         
         # Названия аэропортов для красивого сообщения
         airport_names = {

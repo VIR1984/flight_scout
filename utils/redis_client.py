@@ -79,13 +79,13 @@ class RedisClient:
         depart_date: str,
         return_date: Optional[str],
         current_price: int,
-        passengers: str = "1"
+        passengers: str = "1",
+        threshold: int = 5  # ← НОВЫЙ ПАРАМЕТР (0 = любое снижение, 5 = >5%)
     ) -> str:
         """Сохранить отслеживание цены. Возвращает ключ"""
         key = f"{self.prefix}watch:{user_id}:{origin}:{dest}:{depart_date}"
         if return_date:
             key += f":{return_date}"
-        
         data = {
             "origin": origin,
             "dest": dest,
@@ -94,34 +94,29 @@ class RedisClient:
             "current_price": current_price,
             "passengers": passengers,
             "user_id": user_id,
+            "threshold": threshold,  # ← СОХРАНЯЕМ ПОРОГ
             "created_at": int(time.time())
         }
-        
         await self.client.setex(key, 86400 * 30, json.dumps(data, ensure_ascii=False))  # 30 дней
         await self.client.sadd(f"{self.prefix}user:watches:{user_id}", key)
-        
         return key
 
     async def get_user_watches(self, user_id: int) -> List[Dict[str, Any]]:
         """Получить все отслеживания пользователя"""
         if not self.client:
             return []
-        
         keys = await self.client.smembers(f"{self.prefix}user:watches:{user_id}")
         watches = []
-        
         for key in keys:
             data = await self.client.get(key)
             if data:
                 watches.append(json.loads(data))
-        
         return watches
 
     async def remove_watch(self, user_id: int, watch_key: str):
         """Удалить отслеживание"""
         if not self.client:
             return
-        
         await self.client.delete(watch_key)
         await self.client.srem(f"{self.prefix}user:watches:{user_id}", watch_key)
 
@@ -129,15 +124,12 @@ class RedisClient:
         """Получить все ключи отслеживаний для фоновой проверки"""
         if not self.client:
             return []
-        
         pattern = f"{self.prefix}watch:*"
         cursor = "0"
         keys = []
-        
         while cursor != 0:
             cursor, batch = await self.client.scan(cursor=cursor, match=pattern, count=100)
             keys.extend(batch)
-        
         return keys
 
 # Singleton
