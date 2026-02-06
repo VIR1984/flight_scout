@@ -153,11 +153,44 @@ async def handle_flight_request(message: Message):
         "passenger_desc": passenger_desc
     })
 
+    # Расчет минимальной цены
+    min_price = min([f.get("value") or f.get("price") or 999999 for f in all_flights])
+    total_flights = len(all_flights)
+
+    # Формируем информативное сообщение
+    text = (
+        f"✅ <b>Билеты найдены!</b>\n"
+        f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
+        f"📅 <b>Дата вылета:</b> {data['display_depart']}\n"
+        f"📅 <b>Дата возврата:</b> ' + data['display_return'] if data['is_roundtrip'] and data['display_return'] else ''}\n"
+        f"👥 <b>Пассажиры:</b> {data['passenger_desc']}\n\n"
+        f"💰 <b>Самая низкая цена:</b> {min_price} ₽\n"
+        f"📊 <b>Всего вариантов:</b> {total_flights}\n\n"
+        f"Выберите, как хотите посмотреть билеты:"
+    )
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Самое дешёвое", callback_data=f"show_top_{cache_id}")],
-        [InlineKeyboardButton(text="📋 Все предложения", callback_data=f"show_all_{cache_id}")]
+        [
+            InlineKeyboardButton(
+                text=f"✈️ Самый дешёвый вариант ({min_price} ₽)",
+                callback_data=f"show_top_{cache_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"📋 Все варианты ({total_flights})",
+                callback_data=f"show_all_{cache_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📉 Следить за ценой",
+                callback_data=f"watch_all_{cache_id}"
+            )
+        ]
     ])
-    await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
+
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 # === Обработчики кнопок результатов ===
 @router.callback_query(F.data.startswith("show_top_"))
