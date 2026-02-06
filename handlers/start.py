@@ -319,27 +319,10 @@ async def handle_watch_price(callback: CallbackQuery):
         depart_date = data["original_depart"]
         return_date = data["original_return"]
     
-    # Сохраняем контекст для выбора порога
-    context_key = f"watch_context:{callback.from_user.id}"
-    await redis_client.client.setex(
-        context_key,
-        300,  # 5 минут
-        json.dumps({
-            "user_id": callback.from_user.id,
-            "origin": origin,
-            "dest": dest,
-            "depart_date": depart_date,
-            "return_date": return_date,
-            "current_price": price,
-            "passengers": "1",
-            "cache_id": cache_id
-        }, ensure_ascii=False)
-    )
-    
-    # Кнопки выбора порога
+    # Кнопки выбора порога (используем : как разделитель!)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📉 Любое снижение цены", callback_data=f"set_threshold_0_{context_key}")],
-        [InlineKeyboardButton(text="📉 Снижение >5%", callback_data=f"set_threshold_5_{context_key}")],
+        [InlineKeyboardButton(text="📉 Любое снижение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="📉 Снижение >5%", callback_data=f"set_threshold:5:{cache_id}:{price}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_watch")]
     ])
     
@@ -354,40 +337,43 @@ async def handle_watch_price(callback: CallbackQuery):
     )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("set_threshold_"))
+@router.callback_query(F.data.startswith("set_threshold:"))
 async def handle_set_threshold(callback: CallbackQuery):
-    _, threshold_str, context_key = callback.data.split("_", 2)
+    # Формат: set_threshold:{threshold}:{cache_id}:{price}
+    _, threshold_str, cache_id, price_str = callback.data.split(":", 3)
     threshold = int(threshold_str)
+    price = int(price_str)
     
-    context_data = await redis_client.client.get(context_key)
-    if not context_data:
-        await callback.answer("Время выбора истекло", show_alert=True)
+    data = await redis_client.get_search_cache(cache_id)
+    if not data:
+        await callback.answer("Данные устарели", show_alert=True)
         return
     
-    watch_data = json.loads(context_data)
+    top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
+    origin = top_flight["origin"]
+    dest = data["dest_iata"]
     
-    # Сохраняем отслеживание с порогом
+    # Сохраняем с порогом
     await redis_client.save_price_watch(
-        user_id=watch_data["user_id"],
-        origin=watch_data["origin"],
-        dest=watch_data["dest"],
-        depart_date=watch_data["depart_date"],
-        return_date=watch_data["return_date"],
-        current_price=watch_data["current_price"],
-        passengers=watch_data["passengers"],
-        threshold=threshold  # ← НОВЫЙ ПАРАМЕТР
+        user_id=callback.from_user.id,
+        origin=origin,
+        dest=dest,
+        depart_date=data["original_depart"],
+        return_date=data["original_return"],
+        current_price=price,
+        passengers="1",
+        threshold=threshold  # ← ПЕРЕДАЁМ ПОРОГ
     )
     
-    origin_name = IATA_TO_CITY.get(watch_data["origin"], watch_data["origin"])
-    dest_name = IATA_TO_CITY.get(watch_data["dest"], watch_data["dest"])
-    data = await redis_client.get_search_cache(watch_data["cache_id"])
+    origin_name = IATA_TO_CITY.get(origin, origin)
+    dest_name = IATA_TO_CITY.get(dest, dest)
     
     await callback.message.edit_text(
         f"✅ <b>Отлично! Я буду следить за ценами</b>\n"
         f"📍 Маршрут: {origin_name} → {dest_name}\n"
         f"📅 Вылет: {data['display_depart']}\n"
         f"{'📅 Возврат: ' + data['display_return'] + chr(10) if data.get('display_return') else ''}"
-        f"💰 Текущая цена: {watch_data['current_price']} ₽\n"
+        f"💰 Текущая цена: {price} ₽\n"
         f"📉 Уведомлять при снижении: {'любом' if threshold == 0 else '>5%'}\n"
         f"📲 Пришлю уведомление, если цена упадёт!"
     )
@@ -397,7 +383,7 @@ async def handle_set_threshold(callback: CallbackQuery):
 async def handle_cancel_watch(callback: CallbackQuery):
     await callback.message.edit_text("❌ Отслеживание отменено")
     await callback.answer()
-    
+   
     
 # === Трансферы ===
 @router.callback_query(F.data.startswith("ask_transfer_"))
