@@ -1,40 +1,83 @@
 # handlers/start.py
-import json
 import asyncio
 import os
 import re
 from uuid import uuid4
-from typing import Dict, Any
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.fsm.context import FSMContext
 from services.flight_search import search_flights, generate_booking_link, normalize_date
-from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from aiogram.filters import Command
-from handlers.flight_wizard import router as wizard_router, get_start_kb
 
 router = Router()
 
-# Храним контекст трансфера для каждого пользователя
-transfer_context: Dict[int, Dict[str, Any]] = {}
+class FlightStates:
+    """Состояния для пошагового мастера (без использования FSM для простоты)"""
+    AWAITING_ORIGIN = "awaiting_origin"
+    AWAITING_DEST = "awaiting_dest"
+    AWAITING_DATE = "awaiting_date"
+    AWAITING_RETURN_DATE = "awaiting_return_date"
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     welcome = (
         "👋 Привет! Я — ваш личный помощник по поиску авиабилетов!\n\n"
-        "✈️ <b>Как со мной работать:</b>\n"
-        "• Нажмите кнопку ниже для пошагового поиска через кнопки 🎯\n"
-        "• Или напишите запрос в формате:\n"
-        "  <code>Город - Город ДД.ММ</code>\n\n"
-        "📌 Примеры текстового запроса:\n"
-        "• <code>Москва - Сочи 10.03</code>\n"
-        "• <code>Москва - Сочи 10.03 - 15.03</code>\n"
-        "• <code>Везде - Стамбул 10.03</code>\n\n"
-        "Удачи в путешествиях! 🌍✈️"
+        "Выберите удобный способ поиска:\n"
+        "• ✈️ <b>Пошаговый поиск</b> — отвечайте кнопками, без сложных форматов\n"
+        "• ℹ️ <b>Продвинутый ввод</b> — быстрый текстовый запрос для опытных пользователей"
     )
-    await message.answer(welcome, parse_mode="HTML", reply_markup=get_start_kb())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Начать пошаговый поиск", callback_data="start_wizard")],
+        [InlineKeyboardButton(text="ℹ️ Как писать запросы (справка)", callback_data="show_help")]
+    ])
+    await message.answer(welcome, parse_mode="HTML", reply_markup=kb)
 
+@router.callback_query(F.data == "show_help")
+async def show_help(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    help_text = (
+        "ℹ️ <b>Как писать запросы в текстовом формате</b>\n\n"
+        "📌 Базовый формат:\n"
+        "<code>Город - Город ДД.ММ</code>\n\n"
+        "✅ Примеры:\n"
+        "• <code>Москва - Сочи 10.03</code>\n"
+        "• <code>Москва - Сочи 10.03 - 15.03</code> (туда-обратно)\n"
+        "• <code>Москва - Бангкок 20.03 2 взр., 1 реб.</code>\n"
+        "• <code>Везде - Стамбул 10.03</code> (поиск из всех городов)\n\n"
+        "💡 Советы:\n"
+        "• Города можно писать на русском или английском\n"
+        "• Дата всегда в формате <b>ДД.ММ</b> (день.месяц)\n"
+        "• Пробелы и дефисы между городами не важны:\n"
+        "  <code>Москва-Сочи</code>, <code>Москва → Сочи</code>, <code>Москва Сочи</code> — всё работает!"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Начать пошаговый поиск", callback_data="start_wizard")],
+        [InlineKeyboardButton(text="↩️ Вернуться в меню", callback_data="back_to_start")]
+    ])
+    await callback.message.edit_text(help_text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_start")
+async def back_to_start(callback: CallbackQuery, state: FSMContext):
+    await cmd_start(callback.message, state)
+    await callback.answer()
+
+@router.callback_query(F.data == "start_wizard")
+async def start_wizard(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(FlightStates.AWAITING_ORIGIN)
+    await callback.message.answer(
+        "📍 <b>Шаг 1: Город отправления</b>\n\n"
+        "Напишите город, из которого летите:\n"
+        "• Москва\n• Пекин\n• Стамбул\n• Дубай\n• Бангкок\n"
+        "(или любой другой город)",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+# === Вспомогательные функции ===
 def parse_passengers(s: str) -> str:
     if not s: return "1"
     if s.isdigit(): return s
@@ -56,9 +99,9 @@ def build_passenger_desc(code: str):
         if ad: parts.append(f"{ad} взр.")
         if ch: parts.append(f"{ch} реб.")
         if inf: parts.append(f"{inf} мл.")
-        return ", ".join(parts) if parts else "1 взр."
+        return parts or ["1 взр."]
     except:
-        return "1 взр."
+        return ["1 взр."]
 
 def format_user_date(date_str: str) -> str:
     try:
@@ -69,50 +112,36 @@ def format_user_date(date_str: str) -> str:
     except:
         return date_str
 
-async def handle_flight_request(message: Message):
-    text = message.text.strip().lower()
-    match = re.match(
-        r"^([а-яёa-z\s]+?)\s*[-→>—\s]+\s*([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})(?:\s*[-–]\s*(\d{1,2}\.\d{1,2}))?\s*(.*)?$",
-        text, re.IGNORECASE
-    )
-    if not match:
-        await message.answer("Неверный формат. Пример:\n<code>Орск - Пермь 10.03</code>", parse_mode="HTML")
-        return
-
-    origin_city, dest_city, depart_date, return_date, passengers_part = match.groups()
+async def handle_flight_request(message: Message, origin_city, dest_city, depart_date, return_date=None, passengers_part=""):
     is_roundtrip = bool(return_date)
     dest_iata = CITY_TO_IATA.get(dest_city.strip())
     if not dest_iata:
-        await message.answer(f"Не знаю город прилёта: {dest_city.strip()}")
+        await message.answer(f"❌ Не знаю город прилёта: {dest_city.strip()}\nПопробуйте написать по-другому или нажмите /start для пошагового поиска")
         return
 
     passengers_code = parse_passengers((passengers_part or "").strip())
-    passenger_desc = build_passenger_desc(passengers_code)
-    origin_clean = origin_city.strip()
+    passenger_desc = ", ".join(build_passenger_desc(passengers_code))
 
-    # Определение пункта вылета
+    origin_clean = origin_city.strip()
     if origin_clean == "везде":
         origins = GLOBAL_HUBS[:5]
-        origin_name = "Везде"
     else:
         orig_iata = CITY_TO_IATA.get(origin_clean)
         if not orig_iata:
-            await message.answer(f"Не знаю город вылета: {origin_clean}")
+            await message.answer(f"❌ Не знаю город вылета: {origin_clean}\nПопробуйте написать по-другому или нажмите /start для пошагового поиска")
             return
         origins = [orig_iata]
-        origin_name = IATA_TO_CITY.get(orig_iata, origin_clean.capitalize())
 
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
     display_depart = format_user_date(depart_date)
     display_return = format_user_date(return_date) if return_date else None
 
     await message.answer("Ищу билеты (включая с пересадками)...")
 
-    # Запросы к API с задержкой
     all_flights = []
     for i, orig in enumerate(origins):
         if i > 0:
             await asyncio.sleep(1)
+        
         flights = await search_flights(
             orig,
             dest_iata,
@@ -154,183 +183,189 @@ async def handle_flight_request(message: Message):
         "passenger_desc": passenger_desc
     })
 
-    # Расчет минимальной цены
-    min_price = min([f.get("value") or f.get("price") or 999999 for f in all_flights])
-    total_flights = len(all_flights)
-
-    # Формируем информативное сообщение
-    text = (
-        f"✅ <b>Билеты найдены!</b>\n"
-        f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
-        f"📅 <b>Дата вылета:</b> {display_depart}\n"
-    )
-    if is_roundtrip and display_return:
-        text += f"📅 <b>Дата возврата:</b> {display_return}\n"
-    text += (
-        f"👥 <b>Пассажиры:</b> {passenger_desc}\n\n"
-        f"💰 <b>Самая низкая цена от:</b> {min_price} ₽/чел.\n"
-        f"📊 <b>Всего вариантов:</b> {total_flights}\n\n"
-        f"Выберите, как хотите посмотреть билеты:"
-    )
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=f"✈️ Самый дешёвый ({min_price} ₽)",
-                callback_data=f"show_top_{cache_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"📋 Все варианты ({total_flights})",
-                callback_data=f"show_all_{cache_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📉 Следить за ценой",
-                callback_data=f"watch_all_{cache_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="↩️ В главное меню",
-                callback_data="main_menu"
-            )
-        ]
+        [InlineKeyboardButton(text="✈️ Самое дешёвое", callback_data=f"show_top_{cache_id}")],
+        [InlineKeyboardButton(text="📋 Все предложения", callback_data=f"show_all_{cache_id}")]
     ])
+    await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
 
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+# === Обработчики состояний ===
+@router.message(F.text, state=FlightStates.AWAITING_ORIGIN)
+async def process_origin(message: Message, state: FSMContext):
+    city = message.text.strip().lower()
+    iata = CITY_TO_IATA.get(city)
+    if not iata:
+        await message.answer(f"❌ Не знаю город «{city}». Попробуйте: Москва, Пекин, Стамбул, Дубай, Бангкок")
+        return
+    
+    await state.update_data(origin_city=city, origin_iata=iata)
+    await state.set_state(FlightStates.AWAITING_DEST)
+    await message.answer(
+        f"📍 <b>Шаг 2: Город прибытия</b>\n\n"
+        f"🛫 Вылет из: <b>{IATA_TO_CITY.get(iata, city).title()}</b>\n"
+        "Напишите город, куда летите:",
+        parse_mode="HTML"
+    )
+
+@router.message(F.text, state=FlightStates.AWAITING_DEST)
+async def process_dest(message: Message, state: FSMContext):
+    city = message.text.strip().lower()
+    iata = CITY_TO_IATA.get(city)
+    data = await state.get_data()
+    if not iata:
+        await message.answer(f"❌ Не знаю город «{city}». Попробуйте: Сочи, Пхукет, Дубай, Бангкок")
+        return
+    if data.get("origin_iata") == iata:
+        await message.answer("❌ Город отправления и прибытия не могут совпадать. Выберите другой город:")
+        return
+    
+    await state.update_data(dest_city=city, dest_iata=iata)
+    await state.set_state(FlightStates.AWAITING_DATE)
+    await message.answer(
+        f"📍 <b>Шаг 3: Дата вылета</b>\n\n"
+        f"🛫 {IATA_TO_CITY.get(data['origin_iata'], data['origin_city']).title()} → "
+        f"{IATA_TO_CITY.get(iata, city).title()}\n"
+        "Напишите дату вылета в формате <b>ДД.ММ</b> (например: 15.03)",
+        parse_mode="HTML"
+    )
+
+@router.message(F.text, state=FlightStates.AWAITING_DATE)
+async def process_date(message: Message, state: FSMContext):
+    date_str = message.text.strip()
+    if not re.match(r"^\d{1,2}\.\d{1,2}$", date_str):
+        await message.answer("❌ Неверный формат даты. Пример: <b>15.03</b>", parse_mode="HTML")
+        return
+    
+    await state.update_data(depart_date=date_str)
+    await state.set_state("awaiting_roundtrip")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, нужен обратный", callback_data="roundtrip_yes_simple")],
+        [InlineKeyboardButton(text="❌ Нет, только туда", callback_data="roundtrip_no_simple")]
+    ])
+    await message.answer(
+        f"📍 <b>Шаг 4: Обратный билет?</b>\n\n"
+        f"🛫 Вылет: {date_str}\n"
+        "Нужен ли обратный билет?",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "roundtrip_yes_simple", state="awaiting_roundtrip")
+async def roundtrip_yes_simple(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(FlightStates.AWAITING_RETURN_DATE)
+    await callback.message.edit_text(
+        "📍 <b>Шаг 5: Дата возврата</b>\n\n"
+        "Напишите дату возврата в формате <b>ДД.ММ</b> (например: 20.03)",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "roundtrip_no_simple", state="awaiting_roundtrip")
+async def roundtrip_no_simple(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.clear()
+    await handle_flight_request(
+        callback.message,
+        data['origin_city'],
+        data['dest_city'],
+        data['depart_date']
+    )
+    await callback.answer()
+
+@router.message(F.text, state=FlightStates.AWAITING_RETURN_DATE)
+async def process_return_date(message: Message, state: FSMContext):
+    date_str = message.text.strip()
+    if not re.match(r"^\d{1,2}\.\d{1,2}$", date_str):
+        await message.answer("❌ Неверный формат даты. Пример: <b>20.03</b>", parse_mode="HTML")
+        return
+    
+    data = await state.get_data()
+    await state.clear()
+    await handle_flight_request(
+        message,
+        data['origin_city'],
+        data['dest_city'],
+        data['depart_date'],
+        date_str
+    )
 
 # === Обработчики кнопок результатов ===
 @router.callback_query(F.data.startswith("show_top_"))
-async def show_top_offer(callback: CallbackQuery):
+async def show_top_offer(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
 
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
-    origin_iata = top_flight["origin"]
-    dest_iata = data["dest_iata"]
-    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-    
-    # Форматирование времени
-    def format_datetime(dt_str):
-        try:
-            from datetime import datetime
-            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            return dt.strftime("%H:%M")
-        except:
-            return dt_str.split('T')[1][:5] if 'T' in dt_str else dt_str
-    
-    # Форматирование длительности
-    def format_duration(minutes):
-        if not minutes:
-            return "—"
-        hours = minutes // 60
-        mins = minutes % 60
-        parts = []
-        if hours: parts.append(f"{hours}ч")
-        if mins: parts.append(f"{mins}м")
-        return " ".join(parts) if parts else "—"
-    
-    # Информация о рейсе
-    airline = top_flight.get("airline", "")
-    flight_number = top_flight.get("flight_number", "")
-    departure_time = format_datetime(top_flight.get("departure_at", ""))
-    arrival_time = format_datetime(top_flight.get("return_at", ""))
-    duration = format_duration(top_flight.get("duration", 0))
-    transfers = top_flight.get("transfers", 0)
-    
-    # Названия аэропортов (код + город)
-    AIRPORT_NAMES = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
-    dest_airport = AIRPORT_NAMES.get(dest_iata, dest_iata)
-    
-    # Тип рейса
-    if transfers == 0:
-        transfer_text = "✈️ Прямой рейс"
-    elif transfers == 1:
-        transfer_text = "✈️ 1 пересадка"
-    else:
-        transfer_text = f"✈️ {transfers} пересадки"
+    origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
+    dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
 
-    # Формирование сообщения
-    text = (
-        f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>\n\n"
-        f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>\n"
-        f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-        f"📅 {data['display_depart']}\n"
-        f"⏰ {departure_time} → {arrival_time}\n"
-        f"⏱️ {duration}\n"
-        f"{transfer_text}\n"
-    )
-    
-    if airline or flight_number:
-        airline_name_map = {
-            "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
-            "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
-        }
-        airline_display = airline_name_map.get(airline, airline)
-        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
-        text += f"✈️ {flight_display}\n"
-    
-    text += f"\n💰 <b>Цена от:</b> {price} ₽"
-
-    if data["is_roundtrip"] and data.get("display_return"):
-        text += f"\n↩️ <b>Обратно:</b> {data['display_return']}"
+    text = f"✅ Самое дешёвое ({data['passenger_desc']}):\n"
+    text += f'✈️ {origin_name} → {dest_name} — {price} ₽ (за 1 взрослого) — {data["display_depart"]}\n'
+    if data["is_roundtrip"] and data["display_return"]:
+        text += f'   ↩️ Обратно: {data["display_return"]}\n'
 
     link = generate_booking_link(
         top_flight,
-        origin_iata,
-        dest_iata,
+        top_flight["origin"],
+        data["dest_iata"],
         data["original_depart"],
         "1",
         data["original_return"]
     )
 
-    # Кнопки
-    kb_buttons = [
-        [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
-        [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_{cache_id}_{price}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ]
-    
-    # Добавляем трансфер для курортов
     SUPPORTED_TRANSFER_AIRPORTS = [
         "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
-        "DPS", "MLE", "KIX", "CTS", "DXB", "AUH", "DOH", "AYT", "ADB",
-        "BJV", "DLM", "PMI", "IBZ", "AGP", "RHO", "HER", "CFU", "JMK"
+        "DPS", "MLE", "KIX", "CTS",
+        "DXB", "AUH", "DOH",
+        "AYT", "ADB", "BJV", "DLM",
+        "PMI", "IBZ", "AGP",
+        "RHO", "HER", "CFU", "JMK",
     ]
-    if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
+
+    show_transfer_button = data["dest_iata"] in SUPPORTED_TRANSFER_AIRPORTS
+
+    if show_transfer_button:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        airport_display = AIRPORT_NAMES.get(dest_iata, dest_iata)
-        kb_buttons.insert(1, [
-            InlineKeyboardButton(
-                text=f"🚖 Трансфер в {airport_display}",
-                url=transfer_link
-            )
+        
+        airport_names = {
+            "BKK": "Бангкок", "HKT": "Пхукет", "CNX": "Чиангмай", "DPS": "Бали",
+            "DXB": "Дубай", "AYT": "Анталия", "PMI": "Майорка", "RHO": "Родос",
+            "MLE": "Мальдивы", "SGN": "Хошимин", "DAD": "Дананг", "CXR": "Нячанг",
+            "USM": "Самуи", "REP": "Сиемреап", "PNH": "Пномпень", "KIX": "Осака",
+            "CTS": "Саппоро", "AUH": "Абу-Даби", "DOH": "Доха", "ADB": "Измир",
+            "BJV": "Бодрум", "DLM": "Даламан", "IBZ": "Ибица", "AGP": "Малага",
+            "HER": "Ираклион", "CFU": "Корфу", "JMK": "Миконос"
+        }
+        airport_name = airport_names.get(data["dest_iata"], data["dest_iata"])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
+            [InlineKeyboardButton(text=f"🚖 Трансфер до отеля в {airport_name}", url=transfer_link)],
+            [InlineKeyboardButton(text="👀 Следить за ценой", 
+                                 callback_data=f"watch_{cache_id}_{price}")]
+        ])
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
+            [InlineKeyboardButton(text="👀 Следить за ценой", 
+                                 callback_data=f"watch_{cache_id}_{price}")]
         ])
 
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("show_all_"))
-async def show_all_offers(callback: CallbackQuery):
+async def show_all_offers(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
 
@@ -346,7 +381,6 @@ async def show_all_offers(callback: CallbackQuery):
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
     depart_date_disp = data["display_depart"]
     return_date_disp = data["display_return"]
-
     d1 = data["original_depart"].replace('.', '')
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
@@ -372,280 +406,125 @@ async def show_all_offers(callback: CallbackQuery):
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
-        [InlineKeyboardButton(text="✈️ Все предложения на Aviasales", url=link)],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="👀 Следить за ценой", 
+                             callback_data=f"watch_all_{cache_id}")],
+        [InlineKeyboardButton(text="✈️ Все предложения на Aviasales", url=link)]
     ])
-
     await callback.message.answer(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     await callback.answer()
 
 # === Отслеживание цен ===
 @router.callback_query(F.data.startswith("watch_"))
-async def handle_watch_price(callback: CallbackQuery):
+async def handle_watch_price(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     parts = callback.data.split("_")
-    if parts[1] == "all":  # watch_all_{cache_id}
+    
+    if parts[1] == "all":
         cache_id = parts[2]
         data = await redis_client.get_search_cache(cache_id)
-        if not data:
+        if not 
             await callback.answer("Данные устарели", show_alert=True)
             return
+        
         min_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
         price = min_flight.get("value") or min_flight.get("price")
-        origin = min_flight["origin"]
-        dest = data["dest_iata"]
-        depart_date = data["original_depart"]
-        return_date = data["original_return"]
-    else:  # watch_{cache_id}_{price}
+        
+        await redis_client.save_price_watch(
+            user_id=callback.from_user.id,
+            origin=min_flight["origin"],
+            dest=data["dest_iata"],
+            depart_date=data["original_depart"],
+            return_date=data["original_return"],
+            current_price=price,
+            passengers="1"
+        )
+        
+        origin_name = IATA_TO_CITY.get(min_flight["origin"], min_flight["origin"])
+        dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+        
+        await callback.message.answer(
+            f"✅ <b>Отлично! Я буду следить за ценами</b>\n\n"
+            f"📍 Маршрут: {origin_name} → {dest_name}\n"
+            f"📅 Вылет: {data['display_depart']}\n"
+            f"{'📅 Возврат: ' + data['display_return'] + chr(10) if data.get('display_return') else ''}"
+            f"💰 Текущая цена: {price} ₽\n\n"
+            f"📲 Пришлю уведомление, если цена упадёт! 📉"
+        )
+    
+    else:
         cache_id = parts[1]
         price = int(parts[2])
         data = await redis_client.get_search_cache(cache_id)
-        if not data:
+        if not 
             await callback.answer("Данные устарели", show_alert=True)
             return
+        
         top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
-        origin = top_flight["origin"]
-        dest = data["dest_iata"]
-        depart_date = data["original_depart"]
-        return_date = data["original_return"]
-
-    origin_name = IATA_TO_CITY.get(origin, origin)
-    dest_name = IATA_TO_CITY.get(dest, dest)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📉 Любое изменение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="📉 Изменение на сотни ₽", callback_data=f"set_threshold:100:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="📉 Изменение на тысячи ₽", callback_data=f"set_threshold:1000:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ])
-
-    await callback.message.answer(
-        f"🔔 <b>Выберите условия уведомлений</b>\n"
-        f"📍 Маршрут: {origin_name} → {dest_name}\n"
-        f"📅 Вылет: {data['display_depart']}\n"
-        f"💰 Текущая цена: {price} ₽",
-        reply_markup=kb
-    )
+        
+        await redis_client.save_price_watch(
+            user_id=callback.from_user.id,
+            origin=top_flight["origin"],
+            dest=data["dest_iata"],
+            depart_date=data["original_depart"],
+            return_date=data["original_return"],
+            current_price=price,
+            passengers="1"
+        )
+        
+        origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
+        dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+        
+        await callback.message.answer(
+            f"✅ <b>Я слежу за ценами!</b>\n\n"
+            f"📍 Маршрут: {origin_name} → {dest_name}\n"
+            f"📅 Вылет: {data['display_depart']}\n"
+            f"{'📅 Возврат: ' + data['display_return'] + chr(10) if data.get('display_return') else ''}"
+            f"💰 Текущая цена: {price} ₽\n\n"
+            f"📲 Пришлю уведомление, если цена упадёт 📉"
+        )
+    
     await callback.answer()
 
-@router.callback_query(F.data.startswith("set_threshold:"))
-async def handle_set_threshold(callback: CallbackQuery):
-    _, threshold_str, cache_id, price_str = callback.data.split(":", 3)
-    threshold = int(threshold_str)
-    price = int(price_str)
-
-    data = await redis_client.get_search_cache(cache_id)
-    if not data:
-        await callback.answer("Данные устарели", show_alert=True)
-        return
-
-    top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
-    origin = top_flight["origin"]
-    dest = data["dest_iata"]
-
-    await redis_client.save_price_watch(
-        user_id=callback.from_user.id,
-        origin=origin,
-        dest=dest,
-        depart_date=data["original_depart"],
-        return_date=data["original_return"],
-        current_price=price,
-        passengers="1",
-        threshold=threshold
-    )
-
-    origin_name = IATA_TO_CITY.get(origin, origin)
-    dest_name = IATA_TO_CITY.get(dest, dest)
-
-    if threshold == 0:
-        condition_text = "любом изменении"
-    elif threshold == 100:
-        condition_text = "изменении на сотни ₽"
+@router.callback_query(F.data.startswith("unwatch_"))
+async def handle_unwatch(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    watch_key = callback.data.split("_", 1)[1]
+    
+    if str(callback.from_user.id) in watch_key:
+        await redis_client.remove_watch(callback.from_user.id, watch_key)
+        await callback.message.edit_text("✅ Больше не слежу за этим маршрутом")
     else:
-        condition_text = "изменении на тысячи ₽"
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ])
-
-    response_text = (
-        f"✅ <b>Отлично! Я буду следить за ценами</b>\n"
-        f"📍 Маршрут: {origin_name} → {dest_name}\n"
-        f"📅 Вылет: {data['display_depart']}\n"
-    )
-    if data.get('display_return'):
-        response_text += f"📅 Возврат: {data['display_return']}\n"
-    response_text += (
-        f"💰 Текущая цена: {price} ₽\n"
-        f"📉 Уведомлять при: {condition_text}\n"
-        f"📲 Пришлю уведомление, если цена изменится!"
-    )
-
-    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=kb)
+        await callback.answer("Это не ваше отслеживание", show_alert=True)
+    
     await callback.answer()
 
-@router.callback_query(F.data == "main_menu")
-async def handle_main_menu(callback: CallbackQuery):
-    welcome = (
-        "👋 Привет! Я найду вам дешёвые авиабилеты.\n\n"
-        
-        "📍 <b>Как пользоваться:</b>\n"
-        "<code>Город - Город ДД.ММ</code>\n\n"
-        
-        "📌 <b>Примеры запросов:</b>\n"
-        "• Москва - Сочи 10.03\n"
-        "• Москва - Сочи 10.03 - 15.03\n"
-        "• Москва - Бангкок 20.03 2 взр.\n"
-        "• Везде - Стамбул 10.03\n\n"
-        
-        "💡 <b>Важно:</b>\n"
-        "• Даты в формате ДД.ММ\n"
-        "• Для обратного билета укажите 2 даты\n"
-        "• Можно писать «Везде» вместо города вылета\n\n"
-        
-        "⚡ Просто напишите запрос — и я покажу цены за секунды!"
-    )
-    try:
-        await callback.message.edit_text(welcome, parse_mode="HTML")
-    except Exception:
-        await callback.message.answer(welcome, parse_mode="HTML")
-    await callback.answer()
-
-# === Трансферы ===
-@router.callback_query(F.data.startswith("ask_transfer_"))
-async def handle_ask_transfer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    context = transfer_context.get(user_id)
-    if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
-        return
-
-    airport_iata = context["airport_iata"]
-    airport_names = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    airport_name = airport_names.get(airport_iata, airport_iata)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, покажи варианты", callback_data=f"show_transfer_{user_id}")],
-        [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data=f"decline_transfer_{user_id}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ])
-
-    await callback.message.answer(
-        f"🚖 <b>Нужен трансфер из аэропорта {airport_name}?</b>\n"
-        f"Я могу найти для вас варианты трансфера по лучшим ценам.\n"
-        f"Показать предложения?",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("decline_transfer_"))
-async def handle_decline_transfer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id in transfer_context:
-        del transfer_context[user_id]
-
-    if redis_client.client:
-        decline_key = f"declined_transfer:{user_id}"
-        await redis_client.client.setex(decline_key, 86400 * 7, "1")
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ])
-    await callback.message.edit_text("Хорошо! Если передумаете — просто выполните новый поиск билетов. ✈️", reply_markup=kb)
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("show_transfer_"))
-async def handle_show_transfer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    if redis_client.client:
-        decline_key = f"declined_transfer:{user_id}"
-        declined = await redis_client.client.get(decline_key)
-        if declined:
-            await callback.answer(
-                "Вы недавно отказались от трансферов. Предложения снова появятся через несколько дней.",
-                show_alert=True
-            )
-            return
-
-    context = transfer_context.get(user_id)
-    if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
-        return
-
-    airport_iata = context["airport_iata"]
-    transfer_date = context["transfer_date"]
-    depart_date = context["depart_date"]
-    dest_iata = context["dest_iata"]
-
-    await callback.message.edit_text("Ищу варианты трансфера... 🚖")
-
-    transfers = await search_transfers(
-        airport_iata=airport_iata,
-        transfer_date=transfer_date,
-        adults=1
-    )
-
-    if not transfers:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-        ])
-        await callback.message.edit_text(
-            "К сожалению, трансферы для этого аэропорта временно недоступны. 😢\n"
-            "Попробуйте проверить позже или забронировать на сайте напрямую.",
-            reply_markup=kb
-        )
-        return
-
-    airport_names = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    airport_name = airport_names.get(airport_iata, airport_iata)
-
-    message_text = (
-        f"🚖 <b>Варианты трансфера {depart_date}</b>\n"
-        f"📍 <b>{airport_name}</b> → центр города\n"
-    )
-
-    buttons = []
-    for i, transfer in enumerate(transfers[:3], 1):
-        price = transfer.get("price", 0)
-        vehicle = transfer.get("vehicle", "Economy")
-        duration = transfer.get("duration_minutes", 0)
-        message_text += (
-            f"\n<b>{i}. {vehicle}</b>\n"
-            f"💰 {price} ₽\n"
-            f"⏱️ ~{duration} мин в пути"
-        )
-        transfer_link = generate_transfer_link(
-            transfer_id=str(transfer.get("id", "")),
-            marker=os.getenv("TRAFFIC_SOURCE", ""),
-            sub_id=f"telegram_{user_id}"
-        )
-        buttons.append([
-            InlineKeyboardButton(text=f"🚖 Вариант {i}: {price} ₽", url=transfer_link)
-        ])
-
-    buttons.append([
-        InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")
-    ])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_text(message_text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
-
+# === Обработчик текстовых сообщений (для продвинутого ввода) ===
 @router.message(F.text)
-async def handle_any_message(message: Message):
-    if message.text.startswith("/"):
+async def handle_any_message(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    
+    # Если пользователь в пошаговом мастере — не обрабатываем как текстовый запрос
+    if current_state in [FlightStates.AWAITING_ORIGIN, FlightStates.AWAITING_DEST, FlightStates.AWAITING_DATE, FlightStates.AWAITING_RETURN_DATE]:
         return
-    await handle_flight_request(message)
+    
+    # Очищаем состояние перед обработкой текстового запроса
+    await state.clear()
+    
+    # Обрабатываем как обычный текстовый запрос
+    text = message.text.strip().lower()
+    match = re.match(
+        r"^([а-яёa-z\s]+?)\s*[-→>—\s]+\s*([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})(?:\s*[-–]\s*(\d{1,2}\.\d{1,2}))?\s*(.*)?$",
+        text, re.IGNORECASE
+    )
+    if not match:
+        await message.answer(
+            "❌ Неверный формат запроса.\n"
+            "Нажмите /start и выберите:\n"
+            "• ✈️ Пошаговый поиск — для простого поиска кнопками\n"
+            "• ℹ️ Справка — чтобы узнать правильный формат текстового запроса",
+            parse_mode="HTML"
+        )
+        return
+
+    origin_city, dest_city, depart_date, return_date, passengers_part = match.groups()
+    await handle_flight_request(message, origin_city, dest_city, depart_date, return_date, passengers_part)
