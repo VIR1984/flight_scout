@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.DEBUG)
 load_dotenv()
 
 async def main():
-    # Подключение к Redis
+    # Подключение к Rediss
     try:
         await redis_client.connect()
     except Exception as e:

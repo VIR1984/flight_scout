@@ -3,7 +3,7 @@ from aiogram.fsm.state import State, StatesGroup
 class FlightSearch(StatesGroup):
     """Пошаговый поиск авиабилетов"""
     # Шаг 1: Маршрут
-    route = State()           # Город отправления - город прибытия
+    route = State()           # Город отправления - город прибытияz
     
     # Шаг 2: Дата вылета
     depart_date = State()

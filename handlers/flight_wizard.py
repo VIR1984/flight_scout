@@ -19,7 +19,7 @@ def validate_route(text: str) -> tuple:
     """Парсит маршрут: 'Москва - Сочи' или 'Москва Сочи'"""
     text = text.strip().lower()
     
-    # Разделяем по дефису, стрелке или пробелу
+    # Разделяем по дефису, стрелке или пробелуу
     if any(sym in text for sym in ['-', '→', '—', '>']):
         parts = re.split(r'[-→—>]+', text)
     else:

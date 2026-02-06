@@ -27,7 +27,7 @@ class FlightSearch(StatesGroup):
     infants = State()
     confirm = State()
 
-# ===== Вспомогательные функции =====
+# ===== Вспомогательные функции ======
 def validate_route(text: str) -> tuple:
     """Парсит маршрут: 'Москва - Сочи' или 'Москва Сочи'"""
     text = text.strip().lower()
