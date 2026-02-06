@@ -221,11 +221,37 @@ async def show_top_offer(callback: CallbackQuery):
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
     dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+    
+    # Извлекаем детали рейса
+    airline = top_flight.get("airline", "Неизвестно")
+    flight_number = top_flight.get("flight_number", "")
+    departure_time = top_flight.get("departure_at", "")
+    arrival_time = top_flight.get("return_at", "")
+    duration = top_flight.get("duration", "—")
+    origin_airport = top_flight.get("origin_airport", "")
+    dest_airport = top_flight.get("destination_airport", "")
+    
+    # Форматируем время
+    def format_time(time_str):
+        try:
+            dt = datetime.fromisoformat(time_str)
+            return dt.strftime("%H:%M %d.%m")
+        except:
+            return time_str
 
-    text = f"✅ Самое дешёвое ({data['passenger_desc']}):\n"
-    text += f'✈️ {origin_name} → {dest_name} — {price} ₽ (за 1 взрослого) — {data["display_depart"]}\n'
+    text = (
+        f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>\n\n"
+        f"✈️ <b>{origin_name} → {dest_name}</b>\n"
+        f"📍 {origin_airport} → {dest_airport}\n"
+        f"📅 {data['display_depart']}\n"
+        f"⏰ {format_time(departure_time)} → {format_time(arrival_time)}\n"
+        f"⏱️ {duration}\n"
+        f"✈️ {airline} {flight_number}\n\n"
+        f"💰 <b>Цена:</b> {price} ₽ (за 1 взрослого)\n"
+    )
+    
     if data["is_roundtrip"] and data["display_return"]:
-        text += f'   ↩️ Обратно: {data["display_return"]}\n'
+        text += f"📅 Возврат: {data['display_return']}\n"
 
     link = generate_booking_link(
         top_flight,
@@ -272,7 +298,7 @@ async def show_top_offer(callback: CallbackQuery):
             [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
         ])
 
-    await callback.message.answer(text, reply_markup=kb)
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("show_all_"))
