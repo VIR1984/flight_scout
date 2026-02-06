@@ -1,4 +1,5 @@
 # handlers/start.py
+import json
 import asyncio
 import os
 import re
