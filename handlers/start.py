@@ -162,7 +162,10 @@ async def handle_flight_request(message: Message):
         f"✅ <b>Билеты найдены!</b>\n"
         f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
         f"📅 <b>Дата вылета:</b> {data['display_depart']}\n"
-        f"📅 <b>Дата возврата:</b> ' + data['display_return'] if data['is_roundtrip'] and data['display_return'] else ''}\n"
+    )
+    if data.get('is_roundtrip') and data.get('display_return'):
+        text += f"📅 <b>Дата возврата:</b> {data['display_return']}\n"
+    text += (
         f"👥 <b>Пассажиры:</b> {data['passenger_desc']}\n\n"
         f"💰 <b>Самая низкая цена:</b> {min_price} ₽\n"
         f"📊 <b>Всего вариантов:</b> {total_flights}\n\n"
@@ -172,7 +175,7 @@ async def handle_flight_request(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text=f"✈️ Самый дешёвый вариант ({min_price} ₽)",
+                text=f"✈️ Самый дешёвый ({min_price} ₽)",
                 callback_data=f"show_top_{cache_id}"
             )
         ],
@@ -186,6 +189,12 @@ async def handle_flight_request(message: Message):
             InlineKeyboardButton(
                 text="📉 Следить за ценой",
                 callback_data=f"watch_all_{cache_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="↩️ В главное меню",
+                callback_data="main_menu"
             )
         ]
     ])
