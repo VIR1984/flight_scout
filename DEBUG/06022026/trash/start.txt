@@ -1,37 +1,36 @@
 # handlers/start.py
-import asyncio
+import asyncio 
 import os
 import re
 from uuid import uuid4
-from typing import Dict, Any
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from services.flight_search import search_flights, generate_booking_link, normalize_date
-from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from aiogram.filters import Command
 
+
+
 router = Router()
 
-# Храним контекст трансфера для каждого пользователя
-transfer_context: Dict[int, Dict[str, Any]] = {}
+
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     welcome = (
-        "👋 Привет! Я — ваш личный помощник по поиску авиабилетов!\n"
-        "✈️ <b>Как со мной работать:</b>\n"
-        "📍 Просто напишите маршрут в формате:\n"
-        "   <code>Город - Город ДД.ММ</code>\n"
-        "📌 Примеры:\n"
-        "• <code>Москва - Сочи 10.03</code>\n"
-        "• <code>Москва - Сочи 10.03 - 15.03</code> (туда-обратно)\n"
-        "• <code>Москва - Бангкок 20.03 2 взр., 1 реб.</code>\n"
-        "• <code>Везде - Стамбул 10.03</code> — найду самый дешёвый вылет из любого города!\n"
-        "🕒 Я сразу покажу актуальные цены и помогу перейти к бронированию.\n"
-        "Удачи в путешествиях! 🌍✈️"
-    )
+    "👋 Привет! Я — ваш личный помощник по поиску авиабилетов!\n\n"
+    "✈️ <b>Как со мной работать:</b>\n"
+    "📍 Просто напишите маршрут в формате:\n"
+    "   <code>Город - Город ДД.ММ</code>\n\n"
+    "📌 Примеры:\n"
+    "• <code>Москва - Сочи 10.03</code>\n"
+    "• <code>Москва - Сочи 10.03 - 15.03</code> (туда-обратно)\n"
+    "• <code>Москва - Бангкок 20.03 2 взр., 1 реб.</code>\n"
+    "• <code>Везде - Стамбул 10.03</code> — найду самый дешёвый вылет из любого города!\n\n"
+    "🕒 Я сразу покажу актуальные цены и помогу перейти к бронированию.\n"
+    "Удачи в путешествиях! 🌍✈️"
+)
     await message.answer(welcome, parse_mode="HTML")
 
 def parse_passengers(s: str) -> str:
@@ -90,6 +89,7 @@ async def handle_flight_request(message: Message):
     passenger_desc = ", ".join(build_passenger_desc(passengers_code))
 
     origin_clean = origin_city.strip()
+    
     # 🔑 ИСПРАВЛЕНО: ограничение хабов до 5
     if origin_clean == "везде":
         origins = GLOBAL_HUBS[:5]  # ← ТОЛЬКО 5 ХАБОВ
@@ -119,6 +119,7 @@ async def handle_flight_request(message: Message):
         )
         for f in flights:
             f["origin"] = orig
+        all_flights.extend(flights)
         all_flights.extend(flights)
 
     if not all_flights:
@@ -158,6 +159,7 @@ async def handle_flight_request(message: Message):
     ])
     await message.answer("Отлично! Билеты найдены:", reply_markup=kb)
 
+
 # === Обработчики кнопок результатов ===
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
@@ -185,49 +187,14 @@ async def show_top_offer(callback: CallbackQuery):
         "1",
         data["original_return"]
     )
-
-    # Проверяем, поддерживается ли трансфер для этого аэропорта
-    SUPPORTED_TRANSFER_AIRPORTS = [
-        "SVO", "DME", "VKO", "ZIA",  # Москва
-        "LED",                       # Питер
-        "AER", "KZN", "OVB",         # Крупные хабы
-        "ROV", "KUF", "UFA", "CEK",  # Региональные
-        "TJM", "KJA", "OMS", "BAX",  # Ещё региональные
-        "KRR", "GRV", "MCX", "VOG"   # Юг России
-    ]
-
-    show_transfer_button = data["dest_iata"] in SUPPORTED_TRANSFER_AIRPORTS
-
-    if show_transfer_button:
-        # Сохраняем контекст трансфера для пользователя
-        transfer_context[callback.from_user.id] = {
-            "airport_iata": data["dest_iata"],
-            "transfer_date": normalize_date(data["original_depart"]),
-            "origin_iata": top_flight["origin"],
-            "dest_iata": data["dest_iata"],
-            "depart_date": data["original_depart"],
-            "return_date": data["original_return"],
-            "price": price,
-            "cache_id": cache_id
-        }
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
-            [InlineKeyboardButton(text="🚖 Нужен трансфер из аэропорта?", 
-                                 callback_data=f"ask_transfer_{callback.from_user.id}")],
-            [InlineKeyboardButton(text="👀 Следить за ценой", 
-                                 callback_data=f"watch_{cache_id}_{price}")]
-        ])
-    else:
-        # Обычная клавиатура без трансфера
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
-            [InlineKeyboardButton(text="👀 Следить за ценой", 
-                                 callback_data=f"watch_{cache_id}_{price}")]
-        ])
-
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"✈️ Посмотреть предложение ({price} ₽)", url=link)],
+        [InlineKeyboardButton(text="👀 Следить за ценой", 
+                         callback_data=f"watch_{cache_id}_{price}")]
+    ])
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("show_all_"))
 async def show_all_offers(callback: CallbackQuery):
@@ -249,12 +216,16 @@ async def show_all_offers(callback: CallbackQuery):
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
     depart_date_disp = data["display_depart"]
     return_date_disp = data["display_return"]
+
     d1 = data["original_depart"].replace('.', '')
     d2 = data["original_return"].replace('.', '') if data["original_return"] else ''
     route = f"{origin_iata}{d1}{dest_iata}{d2}1" if data["original_return"] else f"{origin_iata}{d1}{dest_iata}1"
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     base_sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+
     link = f"https://www.aviasales.ru/search/{route}"
+
     if marker.isdigit():
         sub_id = f"{base_sub_id}_{callback.from_user.id}"
         link += f"?marker={marker}&sub_id={sub_id}"
@@ -272,15 +243,14 @@ async def show_all_offers(callback: CallbackQuery):
         f"🔗 <a href='{link}'>Перейти на Aviasales — просмотреть все доступные рейсы</a>\n"
         f"💡 Включая рейсы с пересадками!"
     )
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👀 Следить за ценой", 
-                             callback_data=f"watch_all_{cache_id}")],
-        [InlineKeyboardButton(text="✈️ Все предложения на Aviasales", url=link)]
-    ])
+    [InlineKeyboardButton(text="👀 Следить за ценой", 
+                         callback_data=f"watch_all_{cache_id}")],
+    [InlineKeyboardButton(text="✈️ Все предложения на Aviasales", url=link)]
+])
     await callback.message.answer(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     await callback.answer()
-
+    
 # === Отслеживание цен ===
 @router.callback_query(F.data.startswith("watch_"))
 async def handle_watch_price(callback: CallbackQuery):
@@ -368,193 +338,8 @@ async def handle_unwatch(callback: CallbackQuery):
     
     await callback.answer()
 
-# === Трансферы ===
-@router.callback_query(F.data.startswith("ask_transfer_"))
-async def handle_ask_transfer(callback: CallbackQuery):
-    """Пользователь нажал кнопку 'Нужен трансфер из аэропорта?'"""
-    user_id = callback.from_user.id
-    
-    # Проверяем, есть ли контекст трансфера
-    context = transfer_context.get(user_id)
-    if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
-        return
-    
-    airport_iata = context["airport_iata"]
-    
-    # Название аэропорта для сообщения
-    airport_names = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    
-    airport_name = airport_names.get(airport_iata, airport_iata)
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, покажи варианты", 
-                             callback_data=f"show_transfer_{user_id}")],
-        [InlineKeyboardButton(text="❌ Нет, спасибо", 
-                             callback_data=f"decline_transfer_{user_id}")]
-    ])
-    
-    await callback.message.answer(
-        f"🚖 <b>Нужен трансфер из аэропорта {airport_name}?</b>\n\n"
-        f"Я могу найти для вас варианты трансфера по лучшим ценам.\n"
-        f"Показать предложения?",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-    
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("decline_transfer_"))
-async def handle_decline_transfer(callback: CallbackQuery):
-    """Пользователь отказался от трансфера"""
-    user_id = callback.from_user.id
-    
-    # Удаляем контекст трансфера
-    if user_id in transfer_context:
-        del transfer_context[user_id]
-    
-    # Запоминаем отказ на 7 дней (чтобы не показывать снова)
-    if redis_client.client:
-        decline_key = f"declined_transfer:{user_id}"
-        await redis_client.client.setex(decline_key, 86400 * 7, "1")
-    
-    await callback.message.edit_text(
-        "Хорошо! Если передумаете — просто выполните новый поиск билетов. ✈️"
-    )
-    
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("show_transfer_"))
-async def handle_show_transfer(callback: CallbackQuery):
-    """Пользователь хочет посмотреть варианты трансфера"""
-    user_id = callback.from_user.id
-    
-    # Проверяем, не отказывался ли пользователь ранее (в течение 7 дней)
-    if redis_client.client:
-        decline_key = f"declined_transfer:{user_id}"
-        declined = await redis_client.client.get(decline_key)
-        if declined:
-            await callback.answer(
-                "Вы недавно отказались от трансферов. Предложения снова появятся через несколько дней.",
-                show_alert=True
-            )
-            return
-    
-    # Получаем контекст трансфера
-    context = transfer_context.get(user_id)
-    if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
-        return
-    
-    airport_iata = context["airport_iata"]
-    transfer_date = context["transfer_date"]
-    depart_date = context["depart_date"]
-    dest_iata = context["dest_iata"]
-    
-    await callback.message.edit_text("Ищу варианты трансфера... 🚖")
-    
-    # Ищем трансферы
-    transfers = await search_transfers(
-        airport_iata=airport_iata,
-        transfer_date=transfer_date,
-        adults=1
-    )
-    
-    if not transfers:
-        await callback.message.edit_text(
-            "К сожалению, трансферы для этого аэропорта временно недоступны. 😢\n"
-            "Попробуйте проверить позже или забронировать на сайте напрямую."
-        )
-        return
-    
-    # Название аэропорта для сообщения
-    airport_names = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    
-    airport_name = airport_names.get(airport_iata, airport_iata)
-    
-    message_text = (
-        f"🚖 <b>Варианты трансфера {depart_date}</b>\n\n"
-        f"📍 <b>{airport_name}</b> → центр города\n"
-    )
-    
-    # Кнопки для вариантов
-    buttons = []
-    
-    for i, transfer in enumerate(transfers[:3], 1):
-        price = transfer.get("price", 0)
-        vehicle = transfer.get("vehicle", "Economy")
-        duration = transfer.get("duration_minutes", 0)
-        
-        message_text += (
-            f"\n<b>{i}. {vehicle}</b>\n"
-            f"💰 {price} ₽\n"
-            f"⏱️ ~{duration} мин в пути"
-        )
-        
-        if i < len(transfers[:3]):
-            message_text += "\n"
-        
-        # Кнопка бронирования
-        transfer_link = generate_transfer_link(
-            transfer_id=str(transfer.get("id", "")),
-            marker=os.getenv("TRAFFIC_SOURCE", ""),
-            sub_id=f"telegram_{user_id}"
-        )
-        
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"🚖 Вариант {i}: {price} ₽", 
-                url=transfer_link
-            )
-        ])
-    
-    # Кнопка возврата
-    buttons.append([
-        InlineKeyboardButton(text="↩️ Вернуться к авиабилетам", 
-                            callback_data=f"back_to_flight_{context['cache_id']}")
-    ])
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    
-    await callback.message.edit_text(
-        message_text,
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-    
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("back_to_flight_"))
-async def handle_back_to_flight(callback: CallbackQuery):
-    """Возврат к авиабилетам"""
-    cache_id = callback.data.split("_", 3)[3]
-    data = await redis_client.get_search_cache(cache_id)
-    
-    if not data:
-        await callback.answer("Данные устарели", show_alert=True)
-        return
-    
-    # Показываем тот же авиабилет снова
-    await show_top_offer(callback, cache_id)
-    
-    await callback.answer()
 
 @router.message(F.text)
 async def handle_any_message(message: Message):
-    # Пропускаем команды — они будут обработаны другими хэндлерами
-    if message.text.startswith("/"):
-        return
-    
     await handle_flight_request(message)
+ 
