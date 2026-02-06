@@ -321,9 +321,10 @@ async def handle_watch_price(callback: CallbackQuery):
     
     # Кнопки выбора порога (используем : как разделитель!)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📉 Любое снижение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="📉 Снижение >5%", callback_data=f"set_threshold:5:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_watch")]
+        [InlineKeyboardButton(text="📉 Любое изменение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="📉 Изменение на сотни ₽", callback_data=f"set_threshold:100:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="📉 Изменение на тысячи ₽", callback_data=f"set_threshold:1000:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
     ])
     
     origin_name = IATA_TO_CITY.get(origin, origin)
@@ -362,11 +363,23 @@ async def handle_set_threshold(callback: CallbackQuery):
         return_date=data["original_return"],
         current_price=price,
         passengers="1",
-        threshold=threshold  # ← ПЕРЕДАЁМ ПОРОГ
+        threshold=threshold  # ← ПЕРЕДАЁМ ПОРОГ в рублях
     )
     
     origin_name = IATA_TO_CITY.get(origin, origin)
     dest_name = IATA_TO_CITY.get(dest, dest)
+    
+    # Определяем текст условия
+    if threshold == 0:
+        condition_text = "любом изменении"
+    elif threshold == 100:
+        condition_text = "изменении на сотни ₽"
+    else:  # 1000
+        condition_text = "изменении на тысячи ₽"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+    ])
     
     await callback.message.edit_text(
         f"✅ <b>Отлично! Я буду следить за ценами</b>\n"
@@ -374,14 +387,27 @@ async def handle_set_threshold(callback: CallbackQuery):
         f"📅 Вылет: {data['display_depart']}\n"
         f"{'📅 Возврат: ' + data['display_return'] + chr(10) if data.get('display_return') else ''}"
         f"💰 Текущая цена: {price} ₽\n"
-        f"📉 Уведомлять при снижении: {'любом' if threshold == 0 else '>5%'}\n"
-        f"📲 Пришлю уведомление, если цена упадёт!"
+        f"📉 Уведомлять при: {condition_text}\n"
+        f"📲 Пришлю уведомление, если цена изменится!"
     )
     await callback.answer()
 
-@router.callback_query(F.data == "cancel_watch")
-async def handle_cancel_watch(callback: CallbackQuery):
-    await callback.message.edit_text("❌ Отслеживание отменено")
+@router.callback_query(F.data == "main_menu")
+async def handle_main_menu(callback: CallbackQuery):
+    welcome = (
+        "👋 Привет! Я — ваш личный помощник по поиску авиабилетов!\n"
+        "✈️ <b>Как со мной работать:</b>\n"
+        "📍 Просто напишите маршрут в формате:\n"
+        "   <code>Город - Город ДД.ММ</code>\n"
+        "📌 Примеры:\n"
+        "• <code>Москва - Сочи 10.03</code>\n"
+        "• <code>Москва - Сочи 10.03 - 15.03</code> (туда-обратно)\n"
+        "• <code>Москва - Бангкок 20.03 2 взр., 1 реб.</code>\n"
+        "• <code>Везде - Стамбул 10.03</code> — найду самый дешёвый вылет из любого города!\n"
+        "🕒 Я сразу покажу актуальные цены и помогу перейти к бронированию.\n"
+        "Удачи в путешествиях! 🌍✈️"
+    )
+    await callback.message.edit_text(welcome, parse_mode="HTML")
     await callback.answer()
    
     

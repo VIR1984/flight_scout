@@ -80,7 +80,7 @@ class RedisClient:
         return_date: Optional[str],
         current_price: int,
         passengers: str = "1",
-        threshold: int = 5  # ← НОВЫЙ ПАРАМЕТР (0 = любое снижение, 5 = >5%)
+        threshold: int = 0  # ← НОВЫЙ ПАРАМЕТР (0 = любое, 100 = сотни, 1000 = тысячи)
     ) -> str:
         """Сохранить отслеживание цены. Возвращает ключ"""
         key = f"{self.prefix}watch:{user_id}:{origin}:{dest}:{depart_date}"

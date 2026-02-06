@@ -58,7 +58,7 @@ class PriceWatcher:
         """Проверить одно отслеживание"""
         current_price = watch["current_price"]
         user_id = watch["user_id"]
-        threshold = watch.get("threshold", 5)  # ← ПОРОГ ИЗ ДАННЫХ (0 = любое снижение, 5 = >5%)
+        threshold = watch.get("threshold", 0)  # ← ПОРОГ В РУБЛЯХ (0, 100, 1000)
 
         # Ищем актуальные цены
         flights = await search_flights(
@@ -74,15 +74,15 @@ class PriceWatcher:
         new_min_flight = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
         new_price = new_min_flight.get("value") or new_min_flight.get("price") or current_price
 
-        # Проверяем снижение с учётом порога
-        price_drop = current_price - new_price
-        percent_drop = (price_drop / current_price) * 100 if current_price > 0 else 0
-
-        # ← КОРРЕКТНОЕ УСЛОВИЕ: уведомляем только при снижении ≥ порога
-        if price_drop > 0 and percent_drop >= threshold:
+        # Проверяем изменение с учётом порога в рублях
+        price_change = current_price - new_price
+        abs_change = abs(price_change)
+        
+        # ← УСЛОВИЕ: уведомляем только при изменении ≥ порога
+        if abs_change >= threshold and price_change != 0:
             logger.info(
-                f"📉 Цена упала для пользователя {user_id}: "
-                f"{current_price} ₽ → {new_price} ₽ (-{price_drop} ₽, -{percent_drop:.1f}%)"
+                f"📉 Цена изменилась для пользователя {user_id}: "
+                f"{current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)"
             )
 
             # Генерируем партнерскую ссылку
@@ -99,7 +99,7 @@ class PriceWatcher:
             origin_name = watch["origin"]
             dest_name = watch["dest"]
             message = (
-                f"🎉 <b>Цена упала!</b>\n"
+                f"🎉 <b>Цена изменилась!</b>\n"
                 f"📍 Маршрут: {origin_name} → {dest_name}\n"
                 f"📅 Вылет: {watch['depart_date']}\n"
             )
@@ -109,8 +109,8 @@ class PriceWatcher:
                 f"\n"
                 f"💰 <b>Старая цена:</b> {current_price} ₽\n"
                 f"💰 <b>Новая цена:</b> {new_price} ₽\n"
-                f"💸 <b>Экономия:</b> {price_drop} ₽ ({percent_drop:.1f}%)\n"
-                f"🚀 <b>Бронируйте быстро, пока цена не выросла!</b>"
+                f"{'📉' if price_change > 0 else '📈'} <b>Изменение:</b> {abs(price_change)} ₽\n"
+                f"🚀 <b>Бронируйте быстро!</b>"
             )
 
             # Клавиатура
