@@ -296,7 +296,7 @@ async def show_top_offer(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not 
+    if not data:
         await callback.answer("Данные устарели", show_alert=True)
         return
 
