@@ -163,7 +163,7 @@ async def handle_flight_request(message: Message):
 async def show_top_offer(callback: CallbackQuery):
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
-    if not data:
+    if not 
         await callback.answer("Данные устарели", show_alert=True)
         return
 
@@ -186,35 +186,54 @@ async def show_top_offer(callback: CallbackQuery):
         data["original_return"]
     )
 
-    # Проверяем, поддерживается ли трансфер для этого аэропорта
+    # Проверяем, поддерживается ли трансфер для этого аэропорта (только туристические направления)
     SUPPORTED_TRANSFER_AIRPORTS = [
-        "SVO", "DME", "VKO", "ZIA",  # Москва
-        "LED",                       # Питер
-        "AER", "KZN", "OVB",         # Крупные хабы
-        "ROV", "KUF", "UFA", "CEK",  # Региональные
-        "TJM", "KJA", "OMS", "BAX",  # Ещё региональные
-        "KRR", "GRV", "MCX", "VOG"   # Юг России
+        # 🌴 Юго-Восточная Азия (курорты)
+        "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
+        # 🏝️ Острова и курорты
+        "DPS", "MLE", "KIX", "CTS",
+        # 🕌 Ближний Восток
+        "DXB", "AUH", "DOH",
+        # 🇹🇷 Турция (курорты)
+        "AYT", "ADB", "BJV", "DLM",
+        # 🇪🇸 Испания (курорты)
+        "PMI", "IBZ", "AGP",
+        # 🇬🇷 Греция (острова)
+        "RHO", "HER", "CFU", "JMK",
     ]
 
     show_transfer_button = data["dest_iata"] in SUPPORTED_TRANSFER_AIRPORTS
 
     if show_transfer_button:
-        # Сохраняем контекст трансфера для пользователя
-        transfer_context[callback.from_user.id] = {
-            "airport_iata": data["dest_iata"],
-            "transfer_date": normalize_date(data["original_depart"]),
-            "origin_iata": top_flight["origin"],
-            "dest_iata": data["dest_iata"],
-            "depart_date": data["original_depart"],
-            "return_date": data["original_return"],
-            "price": price,
-            "cache_id": cache_id
+        # Генерируем партнёрскую ссылку на ПОИСК трансферов (без конкретного адреса)
+        transfer_date = normalize_date(data["original_depart"])
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip() or "700812"
+        sub_id = f"telegram_{callback.from_user.id}"
+        
+        # Прямая ссылка на поиск трансферов из аэропорта
+        transfer_link = (
+            f"https://gettransfer.com/ru/search?"
+            f"origin={data['dest_iata']}&"
+            f"date={transfer_date}&"
+            f"marker={marker}&"
+            f"sub_id={sub_id}"
+        )
+        
+        # Названия аэропортов для красивого сообщения
+        airport_names = {
+            "BKK": "Бангкок", "HKT": "Пхукет", "CNX": "Чиангмай", "DPS": "Бали",
+            "DXB": "Дубай", "AYT": "Анталия", "PMI": "Майорка", "RHO": "Родос",
+            "MLE": "Мальдивы", "SGN": "Хошимин", "DAD": "Дананг", "CXR": "Нячанг",
+            "USM": "Самуи", "REP": "Сиемреап", "PNH": "Пномпень", "KIX": "Осака",
+            "CTS": "Саппоро", "AUH": "Абу-Даби", "DOH": "Доха", "ADB": "Измир",
+            "BJV": "Бодрум", "DLM": "Даламан", "IBZ": "Ибица", "AGP": "Малага",
+            "HER": "Ираклион", "CFU": "Корфу", "JMK": "Миконос"
         }
+        airport_name = airport_names.get(data["dest_iata"], data["dest_iata"])
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
-            [InlineKeyboardButton(text="🚖 Нужен трансфер из аэропорта?", 
-                                 callback_data=f"ask_transfer_{callback.from_user.id}")],
+            [InlineKeyboardButton(text=f"🚖 Трансфер до отеля в {airport_name}", url=transfer_link)],
             [InlineKeyboardButton(text="👀 Следить за ценой", 
                                  callback_data=f"watch_{cache_id}_{price}")]
         ])
