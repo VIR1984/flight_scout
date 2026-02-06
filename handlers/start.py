@@ -219,85 +219,116 @@ async def show_top_offer(callback: CallbackQuery):
 
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
-    origin_name = IATA_TO_CITY.get(top_flight["origin"], top_flight["origin"])
-    dest_name = IATA_TO_CITY.get(data["dest_iata"], data["dest_iata"])
+    origin_iata = top_flight["origin"]
+    dest_iata = data["dest_iata"]
+    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
+    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
     
-    # Извлекаем детали рейса
-    airline = top_flight.get("airline", "Неизвестно")
-    flight_number = top_flight.get("flight_number", "")
-    departure_time = top_flight.get("departure_at", "")
-    arrival_time = top_flight.get("return_at", "")
-    duration = top_flight.get("duration", "—")
-    origin_airport = top_flight.get("origin_airport", "")
-    dest_airport = top_flight.get("destination_airport", "")
-    
-    # Форматируем время
-    def format_time(time_str):
+    # Форматирование времени
+    def format_datetime(dt_str):
         try:
-            dt = datetime.fromisoformat(time_str)
-            return dt.strftime("%H:%M %d.%m")
+            from datetime import datetime
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            return dt.strftime("%H:%M")
         except:
-            return time_str
+            return dt_str.split('T')[1][:5] if 'T' in dt_str else dt_str
+    
+    # Форматирование длительности
+    def format_duration(minutes):
+        if not minutes:
+            return "—"
+        hours = minutes // 60
+        mins = minutes % 60
+        parts = []
+        if hours: parts.append(f"{hours}ч")
+        if mins: parts.append(f"{mins}м")
+        return " ".join(parts) if parts else "—"
+    
+    # Информация о рейсе
+    airline = top_flight.get("airline", "")
+    flight_number = top_flight.get("flight_number", "")
+    departure_time = format_datetime(top_flight.get("departure_at", ""))
+    arrival_time = format_datetime(top_flight.get("return_at", ""))
+    duration = format_duration(top_flight.get("duration", 0))
+    transfers = top_flight.get("transfers", 0)
+    
+    # Названия аэропортов (код + город)
+    AIRPORT_NAMES = {
+        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
+        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
+        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
+        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
+        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
+    }
+    origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
+    dest_airport = AIRPORT_NAMES.get(dest_iata, dest_iata)
+    
+    # Тип рейса
+    if transfers == 0:
+        transfer_text = "✈️ Прямой рейс"
+    elif transfers == 1:
+        transfer_text = "✈️ 1 пересадка"
+    else:
+        transfer_text = f"✈️ {transfers} пересадки"
 
+    # Формирование сообщения
     text = (
         f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>\n\n"
-        f"✈️ <b>{origin_name} → {dest_name}</b>\n"
-        f"📍 {origin_airport} → {dest_airport}\n"
+        f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>\n"
+        f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
         f"📅 {data['display_depart']}\n"
-        f"⏰ {format_time(departure_time)} → {format_time(arrival_time)}\n"
+        f"⏰ {departure_time} → {arrival_time}\n"
         f"⏱️ {duration}\n"
-        f"✈️ {airline} {flight_number}\n\n"
-        f"💰 <b>Цена:</b> {price} ₽ (за 1 взрослого)\n"
+        f"{transfer_text}\n"
     )
     
-    if data["is_roundtrip"] and data["display_return"]:
-        text += f"📅 Возврат: {data['display_return']}\n"
+    if airline or flight_number:
+        airline_name_map = {
+            "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
+            "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
+        }
+        airline_display = airline_name_map.get(airline, airline)
+        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
+        text += f"✈️ {flight_display}\n"
+    
+    text += f"\n💰 <b>Цена от:</b> {price} ₽"
+
+    if data["is_roundtrip"] and data.get("display_return"):
+        text += f"\n↩️ <b>Обратно:</b> {data['display_return']}"
 
     link = generate_booking_link(
         top_flight,
-        top_flight["origin"],
-        data["dest_iata"],
+        origin_iata,
+        dest_iata,
         data["original_depart"],
         "1",
         data["original_return"]
     )
 
-    # Проверяем, поддерживается ли трансфер для этого аэропорта
+    # Кнопки
+    kb_buttons = [
+        [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
+        [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_{cache_id}_{price}")],
+        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+    ]
+    
+    # Добавляем трансфер для курортов
     SUPPORTED_TRANSFER_AIRPORTS = [
         "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
-        "DPS", "MLE", "KIX", "CTS",
-        "DXB", "AUH", "DOH",
-        "AYT", "ADB", "BJV", "DLM",
-        "PMI", "IBZ", "AGP",
-        "RHO", "HER", "CFU", "JMK",
+        "DPS", "MLE", "KIX", "CTS", "DXB", "AUH", "DOH", "AYT", "ADB",
+        "BJV", "DLM", "PMI", "IBZ", "AGP", "RHO", "HER", "CFU", "JMK"
     ]
-    show_transfer_button = data["dest_iata"] in SUPPORTED_TRANSFER_AIRPORTS
-
-    if show_transfer_button:
+    if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        airport_names = {
-            "BKK": "Бангкок", "HKT": "Пхукет", "CNX": "Чиангмай", "DPS": "Бали",
-            "DXB": "Дубай", "AYT": "Анталия", "PMI": "Майорка", "RHO": "Родос",
-            "MLE": "Мальдивы", "SGN": "Хошимин", "DAD": "Дананг", "CXR": "Нячанг",
-            "USM": "Самуи", "REP": "Сиемреап", "PNH": "Пномпень", "KIX": "Осака",
-            "CTS": "Саппоро", "AUH": "Абу-Даби", "DOH": "Доха", "ADB": "Измир",
-            "BJV": "Бодрум", "DLM": "Даламан", "IBZ": "Ибица", "AGP": "Малага",
-            "HER": "Ираклион", "CFU": "Корфу", "JMK": "Миконос"
-        }
-        airport_name = airport_names.get(data["dest_iata"], data["dest_iata"])
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
-            [InlineKeyboardButton(text=f"🚖 Трансфер до отеля в {airport_name}", url=transfer_link)],
-            [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_{cache_id}_{price}")],
-            [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-        ])
-    else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
-            [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_{cache_id}_{price}")],
-            [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        airport_display = AIRPORT_NAMES.get(dest_iata, dest_iata)
+        kb_buttons.insert(1, [
+            InlineKeyboardButton(
+                text=f"🚖 Трансфер в {airport_display}",
+                url=transfer_link
+            )
         ])
 
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
