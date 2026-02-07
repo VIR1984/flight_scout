@@ -1045,4 +1045,28 @@ async def handle_any_message(message: Message, state: FSMContext):
         return
     if message.text.startswith("/"):
         return
-    await handle_flight_request(message)
+    await handle_flight_request(message
+
+@router.callback_query(F.data.startswith("unwatch_"))
+async def handle_unwatch(callback: CallbackQuery):
+    """Обработка отмены отслеживания цены"""
+    key = callback.data.split("unwatch_")[1]
+    user_id = callback.from_user.id
+    
+    # Проверка безопасности: ключ должен принадлежать пользователю
+    if f":{user_id}:" not in key:
+        await callback.answer("❌ Это не ваше отслеживание!", show_alert=True)
+        return
+    
+    await redis_client.remove_watch(user_id, key)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+    ])
+    
+    await callback.message.edit_text(
+        "✅ Отслеживание цены остановлено.\n"
+        "Больше не буду присылать уведомления по этому маршруту.",
+        reply_markup=kb
+    )
+    await callback.answer()
