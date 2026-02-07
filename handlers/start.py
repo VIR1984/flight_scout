@@ -228,7 +228,8 @@ async def process_route(message: Message, state: FSMContext):
         await message.answer(
             "❌ Неверный формат маршрута.\n"
             "Попробуйте ещё раз: <code>Москва - Сочи</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         return
     if origin != "везде":
@@ -257,7 +258,7 @@ async def process_route(message: Message, state: FSMContext):
         f"✅ Маршрут: <b>{origin_name} → {dest_name}</b>\n\n"
         "📅 <b>Шаг 2 из 5:</b> Введите дату вылета в формате <code>ДД.ММ</code>\n\n"
         "📌 <b>Пример:</b> 10.03",
-        parse_mode="HTML"
+        parse_mode="HTML",
         reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.depart_date)
@@ -268,7 +269,8 @@ async def process_depart_date(message: Message, state: FSMContext):
         await message.answer(
             "❌ Неверный формат даты.\n"
             "Введите в формате <code>ДД.ММ</code> (например: 10.03)",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
         )
         return
     await state.update_data(depart_date=message.text)
@@ -281,7 +283,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         f"✅ Дата вылета: <b>{message.text}</b>\n\n"
         "🔄 <b>Шаг 3 из 5:</b> Нужен ли обратный билет?",
         parse_mode="HTML",
-        reply_markup=kb
+        reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.need_return)
 
@@ -307,7 +309,7 @@ async def process_return_date(message: Message, state: FSMContext):
         await message.answer(
             "❌ Неверный формат даты.\n"
             "Введите в формате <code>ДД.ММ</code> (например: 15.03)",
-            parse_mode="HTML"
+            parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
@@ -367,7 +369,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
             f"👶 Сколько детей (от 2-11 лет)?\n"
             f"<i>Если у вас младенцы, укажете дальше</i>", 
             parse_mode="HTML",
-            reply_markup=kb
+            reply_markup=CANCEL_KB
         )
         await state.set_state(FlightSearch.children)
     await callback.answer()
