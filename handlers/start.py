@@ -504,7 +504,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         dest_name = data["dest_name"]
         
     elif not is_origin_everywhere and is_dest_everywhere:
-        # Город → Везде
+        # Город → Везде (НОВОЕ)
         origins = [data["origin_iata"]]
         destinations = GLOBAL_HUBS[:5]
         origin_name = data["origin_name"]
@@ -573,6 +573,101 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         "dest_everywhere": is_dest_everywhere
     })
     
+    # === НОВАЯ ЛОГИКА ДЛЯ "ГОРОД → ВЕЗДЕ" ===
+    if is_dest_everywhere:
+        # Собираем уникальные направления с минимальной ценой
+        dest_prices = {}
+        for flight in all_flights:
+            dest_iata = flight.get("destination")
+            price = flight.get("value") or flight.get("price") or 999999
+            if dest_iata not in dest_prices or price < dest_prices[dest_iata]["price"]:
+                dest_prices[dest_iata] = {
+                    "price": price,
+                    "flight": flight,
+                    "origin": flight.get("origin")
+                }
+        
+        # Сортируем по цене и берём топ-3
+        top_dests = sorted(dest_prices.items(), key=lambda x: x[1]["price"])[:3]
+        
+        # Формируем сообщение с топ-3 направлениями
+        text = (
+            f"✅ <b>Топ-3 самых дешёвых направлений из {origin_name}</b>\n"
+            f"📅 Вылет: {display_depart}\n"
+            f"👥 Пассажиры: {data['passenger_desc']}\n\n"
+        )
+        
+        kb_buttons = []
+        for i, (dest_iata, info) in enumerate(top_dests, 1):
+            dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
+            price = info["price"]
+            flight = info["flight"]
+            
+            # Форматируем время
+            departure_time = flight.get("departure_at", "").split('T')[1][:5] if flight.get("departure_at") else "??:??"
+            arrival_time = flight.get("return_at", "").split('T')[1][:5] if flight.get("return_at") else "??:??"
+            
+            text += (
+                f"{i}. <b>{dest_name}</b>\n"
+                f"   💰 {price} ₽\n"
+                f"   ⏰ {departure_time} → {arrival_time}\n\n"
+            )
+            
+            # Генерируем ссылку для бронирования
+            booking_link = flight.get("link") or flight.get("deep_link")
+            if not booking_link or booking_link.startswith('/'):
+                booking_link = generate_booking_link(
+                    flight,
+                    info["origin"],
+                    dest_iata,
+                    data["depart_date"],
+                    data.get("passengers_code", "1"),
+                    data["return_date"]
+                )
+            if not booking_link.startswith(('http://', 'https://')):
+                booking_link = f"https://www.aviasales.ru{booking_link}"
+            
+            marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+            sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+            if marker:
+                booking_link = add_marker_to_url(booking_link, marker, sub_id)
+            
+            kb_buttons.append([
+                InlineKeyboardButton(
+                    text=f"✈️ {dest_name} — {price} ₽",
+                    url=booking_link
+                )
+            ])
+        
+        # Добавляем кнопку "Все варианты на Aviasales"
+        all_variants_link = f"https://www.aviasales.ru/search/{data['origin_iata']}{data['depart_date'].replace('.','')}"
+        if data.get("return_date"):
+            all_variants_link += f"{data['return_date'].replace('.','')}"
+        all_variants_link += f"{data.get('passengers_code', '1')}"
+        if marker:
+            all_variants_link = add_marker_to_url(all_variants_link, marker, sub_id)
+        
+        kb_buttons.append([
+            InlineKeyboardButton(
+                text="🌍 Все направления на Aviasales",
+                url=all_variants_link
+            )
+        ])
+        
+        kb_buttons.append([
+            InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
+        ])
+        kb_buttons.append([
+            InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
+        ])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # === СТАРАЯ ЛОГИКА ДЛЯ ОСТАЛЬНЫХ СЛУЧАЕВ ===
     # Получаем информацию о самом дешёвом варианте
     top_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
@@ -626,10 +721,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         transfer_text = f"✈️ {transfers} пересадки"
     
     # Формируем заголовок в зависимости от типа поиска
-    if data["dest"] == "везде":
-        header = f"✅ <b>Самый дешёвый вариант из {data['origin_name']}:</b>"
-        route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
-    elif data["origin"] == "везде":
+    if data["origin"] == "везде":
         header = f"✅ <b>Самый дешёвый вариант в {data['dest_name']}:</b>"
         route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
     else:
@@ -722,7 +814,6 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await state.clear()
     await callback.answer()
-
 # ===== Ручной ввод =====
 def parse_passengers(s: str) -> str:
     if not s: return "1"
