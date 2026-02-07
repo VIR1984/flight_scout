@@ -259,7 +259,7 @@ async def ask_adults(message_or_callback, state: FSMContext):
         ]
     ])
     
-    text = "👥 <b>Шаг 5 из 5:</b> Сколько взрослых пассажиров?\n(максимум 9 человек)"
+    text = "👥 <b>Шаг 5 из 5:</b> Сколько взрослых пассажиров (от 12 лет)?\n(max. до 9 человек)"
     
     if isinstance(message_or_callback, CallbackQuery):
         await message_or_callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -299,7 +299,8 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
         
         await callback.message.edit_text(
             f"👥 Взрослых: <b>{adults}</b>\n\n"
-            f"👶 Сколько детей? (от 0 до {max_children})",
+            f"👶 Сколько детей (от 2-11 лет)?"
+            f"Если у вас младенцы, укажете дальше",
             parse_mode="HTML",
             reply_markup=kb
         )
@@ -343,7 +344,7 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             f"👥 Взрослых: <b>{adults}</b>\n"
             f"👶 Детей: <b>{children}</b>\n\n"
-            f"🍼 Сколько младенцев? (от 0 до {max_infants}, не больше взрослых)",
+            f"🍼 Сколько младенцев? (младше 2-х лет без места)",
             parse_mode="HTML",
             reply_markup=kb
         )
