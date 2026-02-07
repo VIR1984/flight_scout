@@ -16,6 +16,10 @@ from utils.redis_client import redis_client
 
 router = Router()
 
+CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+])
+
 # ===== FSM States =====
 class FlightSearch(StatesGroup):
     route = State()
@@ -26,6 +30,7 @@ class FlightSearch(StatesGroup):
     children = State()
     infants = State()
     confirm = State()
+
 
 def validate_route(text: str) -> tuple:
     """Парсит маршрут: 'Москва - Сочи' или 'Москва Сочи'"""
@@ -253,6 +258,7 @@ async def process_route(message: Message, state: FSMContext):
         "📅 <b>Шаг 2 из 5:</b> Введите дату вылета в формате <code>ДД.ММ</code>\n\n"
         "📌 <b>Пример:</b> 10.03",
         parse_mode="HTML"
+        reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.depart_date)
 
@@ -302,6 +308,7 @@ async def process_return_date(message: Message, state: FSMContext):
             "❌ Неверный формат даты.\n"
             "Введите в формате <code>ДД.ММ</code> (например: 15.03)",
             parse_mode="HTML"
+            reply_markup=CANCEL_KB
         )
         return
     await state.update_data(return_date=message.text)
