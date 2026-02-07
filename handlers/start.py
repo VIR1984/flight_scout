@@ -513,41 +513,127 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         "passengers_code": data["passenger_code"]
     })
     
-    min_price = min([f.get("value") or f.get("price") or 999999 for f in all_flights])
-    total_flights = len(all_flights)
+    # Получаем информацию о самом дешевом варианте
+    top_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+    price = top_flight.get("value") or top_flight.get("price") or "?"
+    origin_iata = top_flight["origin"]
+    dest_iata = data["dest_iata"]
+    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
+    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
+    
+    def format_datetime(dt_str):
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            return dt.strftime("%H:%M")
+        except:
+            return dt_str.split('T')[1][:5] if 'T' in dt_str else dt_str
+    
+    def format_duration(minutes):
+        if not minutes:
+            return "—"
+        hours = minutes // 60
+        mins = minutes % 60
+        parts = []
+        if hours: parts.append(f"{hours}ч")
+        if mins: parts.append(f"{mins}м")
+        return " ".join(parts) if parts else "—"
+    
+    airline = top_flight.get("airline", "")
+    flight_number = top_flight.get("flight_number", "")
+    departure_time = format_datetime(top_flight.get("departure_at", ""))
+    arrival_time = format_datetime(top_flight.get("return_at", ""))
+    duration = format_duration(top_flight.get("duration", 0))
+    transfers = top_flight.get("transfers", 0)
+    
+    AIRPORT_NAMES = {
+        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
+        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
+        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
+        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
+        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
+    }
+    origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
+    dest_airport = AIRPORT_NAMES.get(dest_iata, dest_iata)
+    
+    if transfers == 0:
+        transfer_text = "✈️ Прямой рейс"
+    elif transfers == 1:
+        transfer_text = "✈️ 1 пересадка"
+    else:
+        transfer_text = f"✈️ {transfers} пересадки"
+    
+    # Формируем полное сообщение с информацией о самом дешевом варианте
     text = (
-        f"✅ <b>Билеты найдены!</b>\n"
-        f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
-        f"📅 <b>Дата вылета:</b> {format_user_date(data['depart_date'])}\n"
+        f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>\n"
+        f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>\n"
+        f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
+        f"📅 {data['display_depart']}\n"
+        f"⏰ {departure_time} → {arrival_time}\n"
+        f"⏱️ {duration}\n"
+        f"{transfer_text}\n"
     )
-    if data.get("need_return") and data.get("return_date"):
-        text += f"📅 <b>Дата возврата:</b> {format_user_date(data['return_date'])}\n"
-    text += (
-        f"👥 <b>Пассажиры:</b> {data['passenger_desc']}\n"
-        f"💰 <b>Самая низкая цена от:</b> {min_price} ₽/чел.\n"
-        f"📊 <b>Всего вариантов:</b> {total_flights}\n\n"
-        f"✈️ Самый дешёвый вариант — {min_price} ₽"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
+    if airline or flight_number:
+        airline_name_map = {
+            "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
+            "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
+        }
+        airline_display = airline_name_map.get(airline, airline)
+        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
+        text += f"✈️ {flight_display}\n"
+    text += f"\n💰 <b>Цена от:</b> {price} ₽"
+    if data["is_roundtrip"] and data.get("display_return"):
+        text += f"\n↩️ <b>Обратно:</b> {data['display_return']}"
+    
+    # Генерируем ссылку для бронирования
+    booking_link = top_flight.get("link") or top_flight.get("deep_link")
+    if booking_link:
+        # Если ссылка относительная (начинается с /), добавляем домен
+        if booking_link.startswith('/'):
+            booking_link = f"https://www.aviasales.ru{booking_link}"
+        # Убираем дублирующийся домен, если он уже есть в ссылке
+        elif booking_link.startswith('www.'):
+            booking_link = f"https://{booking_link}"
+    else:
+        # Fallback: генерируем ссылку на поиск
+        booking_link = generate_booking_link(
+            top_flight,
+            origin_iata,
+            dest_iata,
+            data["original_depart"],
+            data.get("passengers_code", "1"),
+            data["original_return"]
+        )
+    
+    # Дополнительная проверка: убедимся, что ссылка абсолютная
+    if not booking_link.startswith(('http://', 'https://')):
+        booking_link = f"https://www.aviasales.ru{booking_link}"
+    
+    # Формируем клавиатуру
+    kb_buttons = [
+        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],
+        [InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+    ]
+    
+    SUPPORTED_TRANSFER_AIRPORTS = [
+        "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
+        "DPS", "MLE", "KIX", "CTS", "DXB", "AUH", "DOH", "AYT", "ADB",
+        "BJV", "DLM", "PMI", "IBZ", "AGP", "RHO", "HER", "CFU", "JMK"
+    ]
+    if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
+        transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
+        airport_display = AIRPORT_NAMES.get(dest_iata, dest_iata)
+        kb_buttons.insert(1, [
             InlineKeyboardButton(
-                text=f"✈️ Перейти к бронированию ({min_price} ₽)",
-                callback_data=f"show_top_{cache_id}"
+                text=f"🚖 Трансфер в {airport_display}",
+                url=transfer_link
             )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📉 Следить за ценой",
-                callback_data=f"watch_all_{cache_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="↩️ В меню",
-                callback_data="main_menu"
-            )
-        ]
-    ])
+        ])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+    
+    # Отправляем объединенное сообщение
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await state.clear()
     await callback.answer()
@@ -651,56 +737,11 @@ async def handle_flight_request(message: Message):
         "passengers_code": passengers_code
     })
     
-    min_price = min([f.get("value") or f.get("price") or 999999 for f in all_flights])
-    total_flights = len(all_flights)
-    text = (
-        f"✅ <b>Билеты найдены!</b>\n"
-        f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
-        f"📅 <b>Дата вылета:</b> {display_depart}\n"
-    )
-    if is_roundtrip and display_return:
-        text += f"📅 <b>Дата возврата:</b> {display_return}\n"
-    text += (
-        f"👥 <b>Пассажиры:</b> {passenger_desc}\n"
-        f"💰 <b>Самая низкая цена от:</b> {min_price} ₽/чел.\n"
-        f"📊 <b>Всего вариантов:</b> {total_flights}\n\n"
-        f"✈️ Самый дешёвый вариант — {min_price} ₽"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=f"✈️ Перейти к бронированию ({min_price} ₽)",
-                callback_data=f"show_top_{cache_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📉 Следить за ценой",
-                callback_data=f"watch_all_{cache_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="↩️ В главное меню",
-                callback_data="main_menu"
-            )
-        ]
-    ])
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
-
-# ===== Обработчик результата поиска =====
-@router.callback_query(F.data.startswith("show_top_"))
-async def show_top_offer(callback: CallbackQuery):
-    cache_id = callback.data.split("_")[-1]
-    data = await redis_client.get_search_cache(cache_id)
-    if not data:
-        await callback.answer("Данные устарели", show_alert=True)
-        return
-    
-    top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
+    # Получаем информацию о самом дешевом варианте
+    top_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_iata = top_flight["origin"]
-    dest_iata = data["dest_iata"]
+    dest_iata = dest_iata
     origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
     
@@ -746,11 +787,12 @@ async def show_top_offer(callback: CallbackQuery):
     else:
         transfer_text = f"✈️ {transfers} пересадки"
     
+    # Формируем полное сообщение с информацией о самом дешевом варианте
     text = (
-        f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>\n"
+        f"✅ <b>Самый дешёвый вариант ({passenger_desc}):</b>\n"
         f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>\n"
         f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-        f"📅 {data['display_depart']}\n"
+        f"📅 {display_depart}\n"
         f"⏰ {departure_time} → {arrival_time}\n"
         f"⏱️ {duration}\n"
         f"{transfer_text}\n"
@@ -764,10 +806,10 @@ async def show_top_offer(callback: CallbackQuery):
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
         text += f"✈️ {flight_display}\n"
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
-    if data["is_roundtrip"] and data.get("display_return"):
-        text += f"\n↩️ <b>Обратно:</b> {data['display_return']}"
+    if is_roundtrip and display_return:
+        text += f"\n↩️ <b>Обратно:</b> {display_return}"
     
-    # ИСПРАВЛЕНО: обработка относительных ссылок из API
+    # Генерируем ссылку для бронирования
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if booking_link:
         # Если ссылка относительная (начинается с /), добавляем домен
@@ -782,18 +824,19 @@ async def show_top_offer(callback: CallbackQuery):
             top_flight,
             origin_iata,
             dest_iata,
-            data["original_depart"],
-            data.get("passengers_code", "1"),
-            data["original_return"]
+            depart_date,
+            passengers_code,
+            return_date
         )
     
     # Дополнительная проверка: убедимся, что ссылка абсолютная
     if not booking_link.startswith(('http://', 'https://')):
         booking_link = f"https://www.aviasales.ru{booking_link}"
     
+    # Формируем клавиатуру
     kb_buttons = [
         [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],
-        [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_{cache_id}_{price}")],
+        [InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
         [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
     ]
     
@@ -813,8 +856,9 @@ async def show_top_offer(callback: CallbackQuery):
         ])
     
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+    
+    # Отправляем объединенное сообщение
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 # ===== Отслеживание цен =====
 @router.callback_query(F.data.startswith("watch_"))
