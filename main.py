@@ -7,7 +7,6 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 from handlers.start import router as start_router
-from handlers.flight_wizard import router as wizard_router
 from utils.logger import logger
 from utils.redis_client import redis_client
 from services.price_watcher import PriceWatcher
@@ -35,7 +34,7 @@ async def main():
 
     # Регистрация роутеров
     dp.include_router(start_router)
-    dp.include_router(wizard_router)
+    
 
     # Инициализация наблюдателя за ценами
     price_watcher = PriceWatcher(bot)
