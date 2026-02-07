@@ -1,9 +1,13 @@
 # handlers/flight_wizard.py
+"""
+Пошаговый мастер поиска авиабилетов (без дублирования с start.py)
+"""
 import asyncio
 from uuid import uuid4
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import Command
 from states.flight_states import FlightSearch
 from services.flight_search import search_flights, generate_booking_link, normalize_date
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
@@ -18,21 +22,47 @@ from utils.validators import (
 
 router = Router()
 
+# ===== Глобальная команда отмены (работает из любого состояния) =====
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    """Отмена любого активного поиска"""
+    current_state = await state.get_state()
+    if not current_state:
+        await message.answer("ℹ️ Нет активного поиска для отмены.")
+        return
+    
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
+        [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")],
+        [InlineKeyboardButton(text="💡 Ручной ввод", callback_data="manual_input")]
+    ])
+    await message.answer(
+        "❌ Поиск отменён.\n"
+        "Выберите действие:",
+        reply_markup=kb
+    )
+
 # ===== Обработчики шагов пошагового поиска =====
 
 @router.callback_query(F.data == "start_search")
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     """Начало пошагового поиска"""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+    ])
     await callback.message.edit_text(
         "✈️ <b>Начнём поиск билетов!</b>\n"
         "📍 <b>Шаг 1 из 5:</b> Введите маршрут в формате:\n"
         "<code>Город отправления - Город прибытия</code>\n"
         "📌 <b>Примеры:</b>\n"
         "• Москва - Сочи\n"
-        "• СПБ - Бангок\n"
+        "• СПБ - Бангкок (работает!)\n"
+        "• Питер - Стамбул (работает!)\n"
         "• Везде - Стамбул (поиск из всех городов)\n"
         "💡 Можно писать через дефис или через пробел",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=kb
     )
     await state.set_state(FlightSearch.route)
     await callback.answer()
@@ -42,10 +72,14 @@ async def process_route(message: Message, state: FSMContext):
     """Обработка маршрута"""
     origin, dest = validate_route(message.text)
     if not origin or not dest:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
         await message.answer(
             "❌ Неверный формат маршрута.\n"
             "Попробуйте ещё раз: <code>Москва - Сочи</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         return
 
@@ -53,7 +87,15 @@ async def process_route(message: Message, state: FSMContext):
     if origin != "везде":
         orig_iata = CITY_TO_IATA.get(origin)
         if not orig_iata:
-            await message.answer(f"❌ Не знаю город отправления: {origin}\nПопробуйте ещё раз.")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+            ])
+            await message.answer(
+                f"❌ Не знаю город отправления: <b>{origin}</b>\n"
+                "Попробуйте: Москва, СПБ, Питер, Мск, Екб, Нск",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
             return
         origin_name = IATA_TO_CITY.get(orig_iata, origin.capitalize())
     else:
@@ -62,7 +104,15 @@ async def process_route(message: Message, state: FSMContext):
 
     dest_iata = CITY_TO_IATA.get(dest)
     if not dest_iata:
-        await message.answer(f"❌ Не знаю город прибытия: {dest}\nПопробуйте ещё раз.")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
+        await message.answer(
+            f"❌ Не знаю город прибытия: <b>{dest}</b>\n"
+            "Попробуйте другой город",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
         return
     dest_name = IATA_TO_CITY.get(dest_iata, dest.capitalize())
 
@@ -77,11 +127,15 @@ async def process_route(message: Message, state: FSMContext):
     )
 
     # Переходим к дате вылета
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+    ])
     await message.answer(
         f"✅ Маршрут: <b>{origin_name} → {dest_name}</b>\n"
         "📅 <b>Шаг 2 из 5:</b> Введите дату вылета в формате <code>ДД.ММ</code>\n"
         "📌 <b>Пример:</b> 10.03",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=kb
     )
     await state.set_state(FlightSearch.depart_date)
 
@@ -89,10 +143,14 @@ async def process_route(message: Message, state: FSMContext):
 async def process_depart_date(message: Message, state: FSMContext):
     """Обработка даты вылета"""
     if not validate_date(message.text):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
         await message.answer(
             "❌ Неверный формат даты.\n"
             "Введите в формате <code>ДД.ММ</code> (например: 10.03)",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         return
 
@@ -120,10 +178,14 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
     await state.update_data(need_return=need_return)
 
     if need_return:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
         await callback.message.edit_text(
             "📅 <b>Шаг 4 из 5:</b> Введите дату возврата в формате <code>ДД.ММ</code>\n"
             "📌 <b>Пример:</b> 15.03",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         await state.set_state(FlightSearch.return_date)
     else:
@@ -137,10 +199,14 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
 async def process_return_date(message: Message, state: FSMContext):
     """Обработка даты возврата"""
     if not validate_date(message.text):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
         await message.answer(
             "❌ Неверный формат даты.\n"
             "Введите в формате <code>ДД.ММ</code> (например: 15.03)",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         return
 
@@ -427,33 +493,49 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
     """Возврат к редактированию шага"""
     step = callback.data.split("_")[1]
     if step == "route":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
         await callback.message.edit_text(
             "📍 Введите маршрут: <code>Город - Город</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         await state.set_state(FlightSearch.route)
     elif step == "dates":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")]
+        ])
         await callback.message.edit_text(
             "📅 Введите дату вылета: <code>ДД.ММ</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=kb
         )
         await state.set_state(FlightSearch.depart_date)
     elif step == "passengers":
         await ask_adults(callback, state)
     await callback.answer()
 
+# ===== Глобальный обработчик отмены (должен быть зарегистрирован в основном роутере) =====
 @router.callback_query(F.data == "cancel_search")
 async def cancel_search(callback: CallbackQuery, state: FSMContext):
-    """Отмена поиска"""
+    """Глобальный обработчик отмены (работает из любого состояния)"""
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
         [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")],
         [InlineKeyboardButton(text="💡 Ручной ввод", callback_data="manual_input")]
     ])
-    await callback.message.edit_text(
-        "👋 Привет! Я найду вам дешёвые авиабилеты.\n"
-        "Выберите способ поиска:",
-        reply_markup=kb
-    )
+    try:
+        await callback.message.edit_text(
+            "❌ Поиск отменён.\n"
+            "Выберите действие:",
+            reply_markup=kb
+        )
+    except:
+        await callback.message.answer(
+            "❌ Поиск отменён.\n"
+            "Выберите действие:",
+            reply_markup=kb
+        )
     await callback.answer()

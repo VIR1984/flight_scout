@@ -1,4 +1,8 @@
 # handlers/start.py
+"""
+Главный обработчик: меню, ручной ввод, результаты поиска, отслеживание цен, трансферы
+⚠️ ВСЯ логика пошагового поиска вынесена в flight_wizard.py
+"""
 import json
 import asyncio
 import os
@@ -13,13 +17,22 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY, AIRPORT_NAMES
 from utils.redis_client import redis_client
-from utils.validators import validate_route, validate_date, build_passenger_code, build_passenger_desc, format_user_date, parse_passengers
+from utils.validators import (
+    validate_route,
+    validate_date,
+    build_passenger_code,
+    build_passenger_desc,
+    format_user_date,
+    parse_passengers
+)
 
 router = Router()
 
 # ===== Главное меню =====
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    """Стартовое меню бота"""
+    await state.clear()  # Очищаем любое предыдущее состояние
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
         [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")],
@@ -32,9 +45,9 @@ async def cmd_start(message: Message):
     )
 
 @router.callback_query(F.data == "main_menu")
-async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
-    if state:
-        await state.clear()
+async def handle_main_menu(callback: CallbackQuery, state: FSMContext):
+    """Возврат в главное меню"""
+    await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
         [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")],
@@ -56,6 +69,7 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
 
 @router.callback_query(F.data == "show_help")
 async def show_help(callback: CallbackQuery):
+    """Справка по использованию"""
     help_text = (
         "📖 <b>Справка по использованию</b>\n"
         "✈️ <b>Пошаговый поиск (рекомендуется):</b>\n"
@@ -70,8 +84,9 @@ async def show_help(callback: CallbackQuery):
         "\n"
         "📌 <b>Примеры:</b>\n"
         "• <code>Москва - Сочи 10.03</code>\n"
-        "• <code>Москва - Сочи 10.03 - 15.03</code>\n"
-        "• <code>Москва - Бангкок 20.03 2 взр</code>\n"
+        "• <code>СПБ - Бангкок 20.03</code> (работает!)\n"
+        "• <code>Питер - Стамбул 15.03</code> (работает!)\n"
+        "• <code>Мск - Дубай 25.03</code> (работает!)\n"
         "• <code>Везде - Стамбул 10.03</code>\n"
         "\n"
         "💡 <b>Важно:</b>\n"
@@ -87,6 +102,7 @@ async def show_help(callback: CallbackQuery):
 
 @router.callback_query(F.data == "manual_input")
 async def show_manual_input(callback: CallbackQuery):
+    """Справка по ручному вводу"""
     help_text = (
         "✍️ <b>Ручной ввод</b>\n"
         "Можно ввести всё одной строкой:\n"
@@ -96,6 +112,7 @@ async def show_manual_input(callback: CallbackQuery):
         "• <code>Москва - Сочи 10.03</code>\n"
         "• <code>Москва - Сочи 10.03 - 15.03</code>\n"
         "• <code>Москва - Бангкок 20.03 2 взр.</code>\n"
+        "• <code>СПБ - Стамбул 10.03</code> (работает!)\n"
         "• <code>Везде - Стамбул 10.03</code>\n"
         "\n"
         "💡 <b>Формат:</b>\n"
@@ -110,15 +127,19 @@ async def show_manual_input(callback: CallbackQuery):
     await callback.message.edit_text(help_text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
-# ===== Ручной ввод (без дублирования логики) =====
+# ===== Ручной ввод =====
 async def handle_flight_request(message: Message):
+    """Обработка ручного ввода маршрута одной строкой"""
     text = message.text.strip().lower()
     match = re.match(
         r"^([а-яёa-z\s]+?)\s*[-→>—\s]+\s*([а-яёa-z\s]+?)\s+(\d{1,2}\.\d{1,2})(?:\s*[-–]\s*(\d{1,2}\.\d{1,2}))?\s*(.*)?$",
         text, re.IGNORECASE
     )
     if not match:
-        await message.answer("Неверный формат. Пример:\n<code>Орск - Пермь 10.03</code>", parse_mode="HTML")
+        await message.answer(
+            "❌ Неверный формат. Пример:\n<code>Москва - Сочи 10.03</code>",
+            parse_mode="HTML"
+        )
         return
 
     origin_city, dest_city, depart_date, return_date, passengers_part = match.groups()
@@ -126,7 +147,7 @@ async def handle_flight_request(message: Message):
 
     dest_iata = CITY_TO_IATA.get(dest_city.strip())
     if not dest_iata:
-        await message.answer(f"Не знаю город прилёта: {dest_city.strip()}")
+        await message.answer(f"❌ Не знаю город прилёта: <b>{dest_city.strip()}</b>", parse_mode="HTML")
         return
 
     passengers_code = parse_passengers((passengers_part or "").strip())
@@ -139,7 +160,11 @@ async def handle_flight_request(message: Message):
     else:
         orig_iata = CITY_TO_IATA.get(origin_clean)
         if not orig_iata:
-            await message.answer(f"Не знаю город вылета: {origin_clean}")
+            await message.answer(
+                f"❌ Не знаю город вылета: <b>{origin_clean}</b>\n"
+                "Попробуйте: Москва, СПБ, Питер, Мск, Екб, Нск",
+                parse_mode="HTML"
+            )
             return
         origins = [orig_iata]
         origin_name = IATA_TO_CITY.get(orig_iata, origin_clean.capitalize())
@@ -148,7 +173,7 @@ async def handle_flight_request(message: Message):
     display_depart = format_user_date(depart_date)
     display_return = format_user_date(return_date) if return_date else None
 
-    await message.answer("Ищу билеты (включая с пересадками)...")
+    await message.answer("⏳ Ищу билеты (включая с пересадками)...")
     all_flights = []
     for i, orig in enumerate(origins):
         if i > 0:
@@ -173,10 +198,11 @@ async def handle_flight_request(message: Message):
         if marker:
             link += f"?marker={marker}"
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)]
+            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)],
+            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
         ])
         await message.answer(
-            "Билеты не найдены 😢\n"
+            "😔 Билеты не найдены.\n"
             "На Aviasales отображаются рейсы с пересадками — попробуйте:",
             reply_markup=kb
         )
@@ -233,7 +259,7 @@ async def handle_flight_request(message: Message):
         ],
         [
             InlineKeyboardButton(
-                text="↩️ В главное меню",
+                text="↩️ В меню",
                 callback_data="main_menu"
             )
         ]
@@ -243,10 +269,11 @@ async def handle_flight_request(message: Message):
 # ===== Обработчики результатов =====
 @router.callback_query(F.data.startswith("show_top_"))
 async def show_top_offer(callback: CallbackQuery):
+    """Показать самый дешёвый рейс"""
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
     if not data:
-        await callback.answer("Данные устарели", show_alert=True)
+        await callback.answer("⚠️ Данные устарели (более 1 часа)", show_alert=True)
         return
 
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -326,7 +353,7 @@ async def show_top_offer(callback: CallbackQuery):
     kb_buttons = [
         [InlineKeyboardButton(text=f"✈️ Забронировать ({price} ₽)", url=link)],
         [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_{cache_id}_{price}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ]
 
     SUPPORTED_TRANSFER_AIRPORTS = [
@@ -350,10 +377,11 @@ async def show_top_offer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("show_all_"))
 async def show_all_offers(callback: CallbackQuery):
+    """Показать все предложения (ссылка на Aviasales)"""
     cache_id = callback.data.split("_")[-1]
     data = await redis_client.get_search_cache(cache_id)
     if not data:
-        await callback.answer("Данные устарели", show_alert=True)
+        await callback.answer("⚠️ Данные устарели (более 1 часа)", show_alert=True)
         return
 
     flights = sorted(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -396,7 +424,7 @@ async def show_all_offers(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👀 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
         [InlineKeyboardButton(text="✈️ Все предложения на Aviasales", url=link)],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await callback.message.answer(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     await callback.answer()
@@ -404,12 +432,13 @@ async def show_all_offers(callback: CallbackQuery):
 # ===== Отслеживание цен =====
 @router.callback_query(F.data.startswith("watch_"))
 async def handle_watch_price(callback: CallbackQuery):
+    """Начало отслеживания цены"""
     parts = callback.data.split("_")
     if parts[1] == "all":
         cache_id = parts[2]
         data = await redis_client.get_search_cache(cache_id)
         if not data:
-            await callback.answer("Данные устарели", show_alert=True)
+            await callback.answer("⚠️ Данные устарели", show_alert=True)
             return
         min_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
         price = min_flight.get("value") or min_flight.get("price")
@@ -422,7 +451,7 @@ async def handle_watch_price(callback: CallbackQuery):
         price = int(parts[2])
         data = await redis_client.get_search_cache(cache_id)
         if not data:
-            await callback.answer("Данные устарели", show_alert=True)
+            await callback.answer("⚠️ Данные устарели", show_alert=True)
             return
         top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
         origin = top_flight["origin"]
@@ -437,7 +466,7 @@ async def handle_watch_price(callback: CallbackQuery):
         [InlineKeyboardButton(text="📉 Любое изменение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
         [InlineKeyboardButton(text="📉 Изменение на сотни ₽", callback_data=f"set_threshold:100:{cache_id}:{price}")],
         [InlineKeyboardButton(text="📉 Изменение на тысячи ₽", callback_data=f"set_threshold:1000:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await callback.message.answer(
         f"🔔 <b>Выберите условия уведомлений</b>\n"
@@ -450,12 +479,13 @@ async def handle_watch_price(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("set_threshold:"))
 async def handle_set_threshold(callback: CallbackQuery):
+    """Установка порога уведомлений"""
     _, threshold_str, cache_id, price_str = callback.data.split(":", 3)
     threshold = int(threshold_str)
     price = int(price_str)
     data = await redis_client.get_search_cache(cache_id)
     if not data:
-        await callback.answer("Данные устарели", show_alert=True)
+        await callback.answer("⚠️ Данные устарели", show_alert=True)
         return
 
     top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -484,7 +514,7 @@ async def handle_set_threshold(callback: CallbackQuery):
         condition_text = "изменении на тысячи ₽"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     response_text = (
         f"✅ <b>Отлично! Я буду следить за ценами</b>\n"
@@ -503,7 +533,7 @@ async def handle_set_threshold(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("unwatch_"))
 async def handle_unwatch(callback: CallbackQuery):
-    """Обработка отмены отслеживания цены"""
+    """Отмена отслеживания цены"""
     key = callback.data.split("unwatch_")[1]
     user_id = callback.from_user.id
     if f":{user_id}:" not in key:
@@ -512,7 +542,7 @@ async def handle_unwatch(callback: CallbackQuery):
 
     await redis_client.remove_watch(user_id, key)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await callback.message.edit_text(
         "✅ Отслеживание цены остановлено.\n"
@@ -526,10 +556,11 @@ transfer_context: Dict[int, Dict[str, Any]] = {}
 
 @router.callback_query(F.data.startswith("ask_transfer_"))
 async def handle_ask_transfer(callback: CallbackQuery):
+    """Запрос на показ трансферов"""
     user_id = callback.from_user.id
     context = transfer_context.get(user_id)
     if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
+        await callback.answer("⚠️ Данные устарели, выполните поиск заново", show_alert=True)
         return
 
     airport_iata = context["airport_iata"]
@@ -538,7 +569,7 @@ async def handle_ask_transfer(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, покажи варианты", callback_data=f"show_transfer_{user_id}")],
         [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data=f"decline_transfer_{user_id}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await callback.message.answer(
         f"🚖 <b>Нужен трансфер из аэропорта {airport_name}?</b>\n"
@@ -551,6 +582,7 @@ async def handle_ask_transfer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("decline_transfer_"))
 async def handle_decline_transfer(callback: CallbackQuery):
+    """Отказ от трансферов"""
     user_id = callback.from_user.id
     if user_id in transfer_context:
         del transfer_context[user_id]
@@ -558,13 +590,14 @@ async def handle_decline_transfer(callback: CallbackQuery):
         decline_key = f"declined_transfer:{user_id}"
         await redis_client.client.setex(decline_key, 86400 * 7, "1")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await callback.message.edit_text("Хорошо! Если передумаете — просто выполните новый поиск билетов. ✈️", reply_markup=kb)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("show_transfer_"))
 async def handle_show_transfer(callback: CallbackQuery):
+    """Показ трансферов"""
     user_id = callback.from_user.id
     if redis_client.client:
         decline_key = f"declined_transfer:{user_id}"
@@ -578,7 +611,7 @@ async def handle_show_transfer(callback: CallbackQuery):
 
     context = transfer_context.get(user_id)
     if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
+        await callback.answer("⚠️ Данные устарели, выполните поиск заново", show_alert=True)
         return
 
     airport_iata = context["airport_iata"]
@@ -595,7 +628,7 @@ async def handle_show_transfer(callback: CallbackQuery):
 
     if not transfers:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
             "К сожалению, трансферы для этого аэропорта временно недоступны. 😢\n"
@@ -630,19 +663,36 @@ async def handle_show_transfer(callback: CallbackQuery):
         ])
 
     buttons.append([
-        InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")
+        InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.edit_text(message_text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
-# ===== Обработчик текстовых сообщений =====
+# ===== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ =====
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
+    """
+    Обрабатывает все текстовые сообщения.
+    Если есть активное состояние поиска — показывает кнопку отмены.
+    Иначе — обрабатывает как ручной ввод маршрута.
+    """
     current_state = await state.get_state()
     if current_state:
-        await message.answer("Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ Отмена")
+        # Пользователь в середине пошагового поиска — показываем кнопку отмены
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Отменить текущий поиск", callback_data="cancel_search")]
+        ])
+        await message.answer(
+            "⚠️ У вас есть незавершённый поиск.\n"
+            "Пожалуйста, отмените его или завершите:",
+            reply_markup=kb
+        )
         return
+    
+    # Игнорируем команды (обрабатываются отдельными хендлерами)
     if message.text.startswith("/"):
         return
+    
+    # Обрабатываем как ручной ввод маршрута
     await handle_flight_request(message)
