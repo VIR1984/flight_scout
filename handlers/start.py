@@ -27,18 +27,33 @@ class FlightSearch(StatesGroup):
     infants = State()
     confirm = State()
 
-# ===== Вспомогательные функции ======
 def validate_route(text: str) -> tuple:
     """Парсит маршрут: 'Москва - Сочи' или 'Москва Сочи'"""
     text = text.strip().lower()
-    if any(sym in text for sym in ['-', '→', '—', '>', '—']):
-        parts = re.split(r'[-→—>]+', text)
+    
+    # Сначала проверяем разделители с пробелами вокруг (основной случай)
+    if re.search(r'\s+[-→—>]+\s+', text):
+        parts = re.split(r'\s+[-→—>]+\s+', text, maxsplit=1)
+    # Если нет пробелов — пробуем другие варианты разделителей
+    elif any(sym in text for sym in ['→', '—', '>']):
+        parts = re.split(r'[→—>]+', text, maxsplit=1)
     else:
-        parts = text.split()
+        # Просто разбиваем по первому пробелу (для "Москва Сочи")
+        parts = text.split(maxsplit=1)
+    
     if len(parts) < 2:
         return None, None
+    
     origin = parts[0].strip()
     dest = parts[1].strip()
+    
+    # Специальная обработка для "Санкт-Петербург" и подобных
+    # (заменяем обратно на правильное написание с дефисом)
+    origin = origin.replace("санкт петербург", "санкт-петербург")
+    dest = dest.replace("санкт петербург", "санкт-петербург")
+    origin = origin.replace("ростов на дону", "ростов-на-дону")
+    dest = dest.replace("ростов на дону", "ростов-на-дону")
+    
     return origin, dest
 
 def validate_date(date_str: str) -> bool:
@@ -342,7 +357,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
             f"👥 Взрослых: <b>{adults}</b>\n\n"
-            f"👶 Сколько детей (от 2-11 лет)?n\n"
+            f"👶 Сколько детей (от 2-11 лет)?\n"
             f"<i>Если у вас младенцы, укажете дальше</i>", 
             parse_mode="HTML",
             reply_markup=kb
