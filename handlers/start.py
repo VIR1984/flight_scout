@@ -501,12 +501,17 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         return
     
     cache_id = str(uuid4())
+    
+    # Форматируем даты ДО сохранения в кэш и использования в тексте
+    display_depart = format_user_date(data["depart_date"])
+    display_return = format_user_date(data["return_date"]) if data.get("return_date") else None
+    
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
         "dest_iata": dest_iata,
         "is_roundtrip": data.get("need_return", False),
-        "display_depart": format_user_date(data["depart_date"]),
-        "display_return": format_user_date(data["return_date"]) if data.get("return_date") else None,
+        "display_depart": display_depart,  # Сохраняем отформатированные даты
+        "display_return": display_return,
         "original_depart": data["depart_date"],
         "original_return": data["return_date"],
         "passenger_desc": data["passenger_desc"],
@@ -568,7 +573,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>\n"
         f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>\n"
         f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-        f"📅 {data['display_depart']}\n"
+        f"📅 {display_depart}\n"  # ← ИСПРАВЛЕНО: используем переменную display_depart
         f"⏰ {departure_time} → {arrival_time}\n"
         f"⏱️ {duration}\n"
         f"{transfer_text}\n"
@@ -582,8 +587,8 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
         text += f"✈️ {flight_display}\n"
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
-    if data["is_roundtrip"] and data.get("display_return"):
-        text += f"\n↩️ <b>Обратно:</b> {data['display_return']}"
+    if data["is_roundtrip"] and display_return:
+        text += f"\n↩️ <b>Обратно:</b> {display_return}"  # ← ИСПРАВЛЕНО: используем переменную display_return
     
     # Генерируем ссылку для бронирования
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
@@ -600,18 +605,18 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             top_flight,
             origin_iata,
             dest_iata,
-            data["original_depart"],
+            data["depart_date"],
             data.get("passengers_code", "1"),
-            data["original_return"]
+            data["return_date"]
         )
     
     # Дополнительная проверка: убедимся, что ссылка абсолютная
     if not booking_link.startswith(('http://', 'https://')):
         booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    # Формируем клавиатуру
+    # Формируем клавиатуру БЕЗ кнопки "Все варианты"
     kb_buttons = [
-        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],
+        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],  # ← Переименовано
         [InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
         [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ]
@@ -633,7 +638,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     
-    # Отправляем объединенное сообщение
+    # Отправляем ОДНО объединённое сообщение
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await state.clear()
     await callback.answer()
@@ -686,6 +691,8 @@ async def handle_flight_request(message: Message):
         origins = [orig_iata]
         origin_name = IATA_TO_CITY.get(orig_iata, origin_clean.capitalize())
     dest_name = IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
+    
+    # Форматируем даты ДО использования
     display_depart = format_user_date(depart_date)
     display_return = format_user_date(return_date) if return_date else None
     
@@ -725,6 +732,7 @@ async def handle_flight_request(message: Message):
         return
     
     cache_id = str(uuid4())
+    
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
         "dest_iata": dest_iata,
@@ -792,7 +800,7 @@ async def handle_flight_request(message: Message):
         f"✅ <b>Самый дешёвый вариант ({passenger_desc}):</b>\n"
         f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>\n"
         f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-        f"📅 {display_depart}\n"
+        f"📅 {display_depart}\n"  # ← ИСПРАВЛЕНО: используем переменную display_depart
         f"⏰ {departure_time} → {arrival_time}\n"
         f"⏱️ {duration}\n"
         f"{transfer_text}\n"
@@ -807,7 +815,7 @@ async def handle_flight_request(message: Message):
         text += f"✈️ {flight_display}\n"
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
     if is_roundtrip and display_return:
-        text += f"\n↩️ <b>Обратно:</b> {display_return}"
+        text += f"\n↩️ <b>Обратно:</b> {display_return}"  # ← ИСПРАВЛЕНО: используем переменную display_return
     
     # Генерируем ссылку для бронирования
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
@@ -833,9 +841,9 @@ async def handle_flight_request(message: Message):
     if not booking_link.startswith(('http://', 'https://')):
         booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    # Формируем клавиатуру
+    # Формируем клавиатуру БЕЗ кнопки "Все варианты"
     kb_buttons = [
-        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],
+        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],  # ← Переименовано
         [InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
         [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
     ]
@@ -857,7 +865,7 @@ async def handle_flight_request(message: Message):
     
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     
-    # Отправляем объединенное сообщение
+    # Отправляем ОДНО объединённое сообщение
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 # ===== Отслеживание цен =====
