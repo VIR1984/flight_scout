@@ -75,7 +75,7 @@ class PriceWatcher:
                     
                 try:
                     raw_data = await redis_client.client.get(key)
-                    if not raw_
+                    if not raw_:
                         continue
                     
                     watch_data = json.loads(raw_data)
