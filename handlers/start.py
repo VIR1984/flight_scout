@@ -1045,7 +1045,7 @@ async def handle_any_message(message: Message, state: FSMContext):
         return
     if message.text.startswith("/"):
         return
-    await handle_flight_request(message
+    await handle_flight_request(message)
 
 @router.callback_query(F.data.startswith("unwatch_"))
 async def handle_unwatch(callback: CallbackQuery):
