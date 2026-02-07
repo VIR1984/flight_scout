@@ -3,30 +3,27 @@ import aiohttp
 import os
 from typing import List, Dict, Optional
 from utils.logger import logger
-from utils.validators import normalize_date, format_avia_link_date
+from datetime import datetime
 
-async def search_flights(
-    origin: str,
-    dest: str,
-    depart_date: str,
-    return_date: Optional[str] = None
-) -> List[Dict]:
-    """
-    Поиск авиабилетов через Travelpayouts API
+def normalize_date(date_str: str) -> str:
+    """Приводит дату к формату ГГГГ-ММ-ДД на основе текущей даты"""
+    day, month = map(int, date_str.split('.'))
+    now = datetime.now()
+    current_year = now.year
+    current_month = now.month
+    current_day = now.day
     
-    Args:
-        origin: IATA-код города отправления
-        dest: IATA-код города назначения
-        depart_date: дата вылета в формате ГГГГ-ММ-ДД
-        return_date: дата возврата в формате ГГГГ-ММ-ДД (опционально)
-        
-    Returns:
-        Список найденных рейсов
-    """
+    # Если дата уже прошла в этом году — берём следующий год
+    if (month < current_month) or (month == current_month and day < current_day):
+        year = current_year + 1
+    else:
+        year = current_year
+    
+    return f"{year}-{month:02d}-{day:02d}"
+
+async def search_flights(origin: str, dest: str, depart_date: str, return_date: Optional[str] = None) -> List[Dict]:
     logger.info(f"🔍 Запрос: {origin} → {dest}, вылет: {depart_date}, возврат: {return_date}")
-    
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
-    
     params = {
         "origin": origin,
         "destination": dest,
@@ -38,37 +35,31 @@ async def search_flights(
         "direct": "false",
         "token": os.getenv("API_TOKEN", "").strip()
     }
-    
     if return_date:
         params["return_at"] = return_date
-    
+
     async with aiohttp.ClientSession() as session:
-        async with session.get(
-            url,
-            params=params,
-            timeout=aiohttp.ClientTimeout(total=10)
-        ) as r:
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
             logger.info(f"📡 Ответ API: статус={r.status}")
-            
             if r.status == 200:
                 data = await r.json()
                 success = data.get("success")
-                logger.info(
-                    f"✅ Успешный ответ: {success}, "
-                    f"найдено записей: {len(data.get('data', []))}"
-                )
-                
+                logger.info(f"✅ Успешный ответ: {success}, найдено записей: {len(data.get('data', []))}")
                 if success:
                     return data.get("data", [])
                 else:
-                    logger.warning(
-                        f"❌ API вернул ошибку: {data.get('message', 'no message')}"
-                    )
+                    logger.warning(f"❌ API вернул ошибку: {data.get('message', 'no message')}")
             else:
                 logger.error(f"💥 Ошибка HTTP: {r.status}")
-            
             return []
 
+def format_avia_link_date(date_str: str) -> str:
+    """Преобразует '10.03' → '1003'"""
+    try:
+        d, m = date_str.split('.')
+        return f"{int(d):02d}{int(m):02d}"
+    except:
+        return "0101"
 
 def generate_booking_link(
     flight: dict,
@@ -78,32 +69,17 @@ def generate_booking_link(
     passengers_code: str = "1",
     return_date: Optional[str] = None
 ) -> str:
-    """
-    Генерирует партнёрскую ссылку на бронирование билета
-    
-    Args:
-        flight: данные о рейсе
-        origin: IATA-код города отправления
-        dest: IATA-код города назначения
-        depart_date: дата вылета в формате ДД.ММ
-        passengers_code: код пассажиров (например, "1", "21")
-        return_date: дата возврата в формате ДД.ММ (опционально)
-        
-    Returns:
-        Ссылка на Aviasales для бронирования
-    """
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
-    
     route = f"{origin}{d1}{dest}{d2}{passengers_code}"
-    
+
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
+
     base = "https://www.aviasales.ru/search/"
     url = f"{base}{route}"
-    
+
     if marker.isdigit():
         url += f"?marker={marker}&sub_id={sub_id}"
-    
+
     return url
