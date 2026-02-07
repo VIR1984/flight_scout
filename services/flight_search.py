@@ -76,7 +76,8 @@ async def search_flights(
         Список найденных рейсов
     """
     if not AVIASALES_TOKEN:
-        raise ValueError("AVIASALES_TOKEN не установлен в переменных окружения")
+        logger.warning("⚠️ AVIASALES_TOKEN/API_TOKEN не установлен — поиск авиабилетов недоступен")
+        return []
     
     params = {
         "origin": origin,
