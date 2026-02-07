@@ -11,7 +11,7 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.cities import IATA_TO_CITY
-
+from utils.validators import build_passenger_desc
 
 class PriceWatcher:
     """Фоновый сервис для отслеживания изменения цен на авиабилеты"""
@@ -23,7 +23,7 @@ class PriceWatcher:
         self.last_notification: Dict[str, float] = {}  # key → timestamp последнего уведомления
         self.route_cache: Dict[str, tuple] = {}  # кэш результатов поиска для одного маршрута
         self.cache_ttl = 300  # 5 минут кэширования
-    
+
     async def start(self):
         """Запустить периодическую проверку цен"""
         self.running = True
@@ -43,15 +43,16 @@ class PriceWatcher:
             except Exception as e:
                 logger.error(f"❌ Критическая ошибка в наблюдателе: {e}")
                 await asyncio.sleep(300)
-    
+
     async def stop(self):
         """Остановить наблюдателя"""
         self.running = False
         logger.info("⏹️ Наблюдатель за ценами остановлен")
-    
+
     async def check_all_watches(self):
         """Проверить все активные отслеживания"""
         watch_keys = await redis_client.get_all_watch_keys()
+        
         if not watch_keys:
             logger.info("🔍 Нет активных отслеживаний для проверки")
             return
@@ -67,15 +68,16 @@ class PriceWatcher:
         for i in range(0, len(watch_keys), chunk_size):
             if not self.running:
                 break
-                
+            
             chunk = watch_keys[i:i + chunk_size]
+            
             for key in chunk:
                 if not self.running:
                     break
-                    
+                
                 try:
                     raw_data = await redis_client.client.get(key)
-                    if not raw_:
+                    if not raw_data:
                         continue
                     
                     watch_data = json.loads(raw_data)
@@ -93,15 +95,19 @@ class PriceWatcher:
                 except Exception as e:
                     logger.error(f"❌ Ошибка при проверке {key}: {e}")
             
+            # Пауза между чанками
             if i + chunk_size < len(watch_keys) and self.running:
                 await asyncio.sleep(3)
         
         logger.info(
             f"✅ Проверка завершена: всего {len(watch_keys)}, изменений {total_updated}, удалено {total_removed}"
         )
-    
+
     async def check_single_watch(self, watch: Dict, key: str) -> Optional[str]:
-        """Проверить одно отслеживание. Возвращает: True если отправлено уведомление, 'removed' если удалено, иначе False"""
+        """
+        Проверить одно отслеживание.
+        Возвращает: True если отправлено уведомление, 'removed' если удалено, иначе False
+        """
         user_id = watch["user_id"]
         origin = watch["origin"]
         dest = watch["dest"]
@@ -119,6 +125,7 @@ class PriceWatcher:
         
         # Кэширование результатов поиска для одного маршрута
         cache_key = f"{origin}:{dest}:{depart_date}:{return_date or ''}"
+        
         if cache_key in self.route_cache:
             cached_price, cached_time = self.route_cache[cache_key]
             if time.time() - cached_time < self.cache_ttl:
@@ -128,8 +135,9 @@ class PriceWatcher:
                 new_price = await self._fetch_min_price(origin, dest, depart_date, return_date)
         else:
             new_price = await self._fetch_min_price(origin, dest, depart_date, return_date)
-            if new_price:
-                self.route_cache[cache_key] = (new_price, time.time())
+        
+        if new_price:
+            self.route_cache[cache_key] = (new_price, time.time())
         
         if not new_price:
             return False
@@ -165,7 +173,7 @@ class PriceWatcher:
             if "blocked" in str(e).lower() or "user not found" in str(e).lower():
                 await redis_client.remove_watch(user_id, key)
                 logger.info(f"Автоматически удалено отслеживание для заблокировавшего пользователя {user_id}")
-            return "removed"
+                return "removed"
         # === КОНЕЦ ВСТРОЕННОГО ФРАГМЕНТА ===
         
         if success:
@@ -183,7 +191,7 @@ class PriceWatcher:
             await redis_client.remove_watch(user_id, key)
             logger.warning(f"🗑️ Удалено отслеживание для недоступного пользователя {user_id}")
             return "removed"
-    
+
     async def _fetch_min_price(self, origin: str, dest: str, depart_date: str, return_date: Optional[str]) -> Optional[int]:
         """Получить минимальную цену для маршрута"""
         try:
@@ -193,14 +201,17 @@ class PriceWatcher:
                 depart_date=normalize_date(depart_date),
                 return_date=normalize_date(return_date) if return_date else None
             )
+            
             if not flights:
                 return None
+            
             min_flight = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
             return min_flight.get("value") or min_flight.get("price") or None
+            
         except Exception as e:
             logger.error(f"❌ Ошибка при поиске цен {origin}→{dest}: {e}")
             return None
-    
+
     async def _send_price_notification(
         self,
         user_id: int,
@@ -213,11 +224,12 @@ class PriceWatcher:
         try:
             origin_name = IATA_TO_CITY.get(watch["origin"], watch["origin"])
             dest_name = IATA_TO_CITY.get(watch["dest"], watch["dest"])
+            
             emoji = "📉" if price_change > 0 else "📈"
-            passenger_desc = self._format_passengers(watch.get("passengers", "1"))
+            passenger_desc = build_passenger_desc(watch.get("passengers", "1"))
             
             message = (
-                f"{emoji} <b>Цена изменилась!</b>\n\n"
+                f"{emoji} <b>Цена изменилась!</b>\n"
                 f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
                 f"📅 <b>Вылет:</b> {watch['depart_date']}\n"
             )
@@ -229,10 +241,10 @@ class PriceWatcher:
                 message += f"👥 <b>Пассажиры:</b> {passenger_desc}\n"
             
             message += (
-                f"\n"
+                "\n"
                 f"💰 <b>Было:</b> {watch['current_price']} ₽\n"
                 f"💰 <b>Стало:</b> {new_price} ₽\n"
-                f"{emoji} <b>Разница:</b> {abs(price_change)} ₽\n\n"
+                f"{emoji} <b>Разница:</b> {abs(price_change)} ₽\n"
                 f"✈️ <b>Спешите забронировать — цены могут вырасти!</b>"
             )
             
@@ -279,20 +291,3 @@ class PriceWatcher:
         except Exception as e:
             logger.error(f"❌ Неизвестная ошибка при отправке уведомления {user_id}: {e}")
             raise  # Пробрасываем исключение для обработки в check_single_watch
-    
-    @staticmethod
-    def _format_passengers(code: str) -> str:
-        """Форматирует код пассажиров в читаемый вид"""
-        try:
-            adults = int(code[0])
-            children = int(code[1]) if len(code) > 1 else 0
-            infants = int(code[2]) if len(code) > 2 else 0
-            
-            parts = []
-            if adults: parts.append(f"{adults} взр.")
-            if children: parts.append(f"{children} реб.")
-            if infants: parts.append(f"{infants} мл.")
-            
-            return ", ".join(parts) if parts else ""
-        except:
-            return ""
