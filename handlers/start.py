@@ -13,6 +13,7 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 router = Router()
 
@@ -111,6 +112,30 @@ def format_user_date(date_str: str) -> str:
         return f"{d:02d}.{m:02d}.{year}"
     except:
         return date_str
+
+def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
+    """
+    Добавляет маркер и sub_id к ссылке Aviasales.
+    Корректно обрабатывает уже существующие параметры.
+    """
+    if not marker or not url:
+        return url
+    
+    # Парсим URL
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    
+    # Удаляем старые значения маркера и sub_id (на случай дублирования)
+    query_params.pop('marker', None)
+    query_params.pop('sub_id', None)
+    
+    # Добавляем новые значения
+    query_params['marker'] = [marker]
+    query_params['sub_id'] = [sub_id]
+    
+    # Собираем обратно
+    new_query = urlencode(query_params, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
 
 # ===== Главное меню =====
 @router.message(Command("start"))
@@ -496,7 +521,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
-            link += f"?marker={marker}"
+            link = add_marker_to_url(link, marker)
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=link)],
@@ -599,7 +624,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
     
-    # ИСПРАВЛЕНО: используем 'need_return' вместо несуществующего 'is_roundtrip'
+    # === ИСПРАВЛЕНО: используем 'need_return' вместо несуществующего 'is_roundtrip' ===
     if data.get("need_return", False) and display_return:
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     
@@ -625,6 +650,13 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         # Дополнительная проверка: убедимся, что ссылка абсолютная
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
+    
+    # === ИСПРАВЛЕНО: ДОБАВЛЯЕМ МАРКЕР КО ВСЕМ ССЫЛКАМ ===
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    if marker:
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    # ===================================================
     
     # Формируем клавиатуру БЕЗ кнопки "Все варианты"
     kb_buttons = [
@@ -734,7 +766,7 @@ async def handle_flight_request(message: Message):
         marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
-            link += f"?marker={marker}"
+            link = add_marker_to_url(link, marker)
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)],
@@ -857,6 +889,13 @@ async def handle_flight_request(message: Message):
         # Дополнительная проверка: убедимся, что ссылка абсолютная
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
+    
+    # === ИСПРАВЛЕНО: ДОБАВЛЯЕМ МАРКЕР КО ВСЕМ ССЫЛКАМ ===
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    if marker:
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    # ===================================================
     
     # Формируем клавиатуру БЕЗ кнопки "Все варианты"
     kb_buttons = [
