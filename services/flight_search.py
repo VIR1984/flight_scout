@@ -2,8 +2,8 @@ import os
 import asyncio
 import aiohttp
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from utils.logger import logger
 
 # Конфигурация API
 AVIASALES_API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
@@ -36,19 +36,15 @@ def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     """
     if not marker or not url:
         return url
-    
     # Парсим URL
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
-    
     # Удаляем старые значения маркера и sub_id (на случай дублирования)
     query_params.pop('marker', None)
     query_params.pop('sub_id', None)
-    
     # Добавляем новые значения
     query_params['marker'] = [marker]
     query_params['sub_id'] = [sub_id]
-    
     # Собираем обратно
     new_query = urlencode(query_params, doseq=True)
     return urlunparse(parsed._replace(query=new_query))
@@ -100,7 +96,7 @@ async def search_flights(
             async with session.get(AVIASALES_API_URL, params=params, timeout=10) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    print(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
+                    logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
                     return []
                 
                 data = await response.json()
@@ -114,7 +110,6 @@ async def search_flights(
                     # Обработка поля 'link' (если есть)
                     if flight.get("link"):
                         flight["link"] = add_marker_to_url(flight["link"], marker, sub_id)
-                    
                     # Обработка поля 'deep_link' (если есть)
                     if flight.get("deep_link"):
                         flight["deep_link"] = add_marker_to_url(flight["deep_link"], marker, sub_id)
@@ -122,10 +117,10 @@ async def search_flights(
                 return flights
                 
         except asyncio.TimeoutError:
-            print("❌ Таймаут при запросе к Aviasales API")
+            logger.error("❌ Таймаут при запросе к Aviasales API")
             return []
         except Exception as e:
-            print(f"❌ Ошибка при запросе к Aviasales API: {e}")
+            logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
             return []
 
 def generate_booking_link(
@@ -140,7 +135,7 @@ def generate_booking_link(
     Генерирует ссылку для бронирования на Aviasales с маркером.
     
     Args:
-        flight: данные о рейсе из API
+        flight: данные о рейсе из API (не используется, но сохранён для совместимости)
         origin: IATA код вылета
         dest: IATA код прилёта
         depart_date: дата вылета в формате 'ДД.ММ'
@@ -150,8 +145,11 @@ def generate_booking_link(
     Returns:
         Полная ссылка с маркером
     """
+    # Форматируем даты для ссылки: ДД.ММ → ДДММ
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
+    
+    # Формируем маршрут: ORIGDDMMDESTDDMM[PASS]
     route = f"{origin}{d1}{dest}{d2}{passengers_code}"
     base_url = f"https://www.aviasales.ru/search/{route}"
     
