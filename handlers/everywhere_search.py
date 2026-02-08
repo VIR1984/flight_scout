@@ -2,7 +2,7 @@ import json
 import asyncio
 import os
 from typing import Dict, Any, List, Tuple
-from uuid import uuid4  # ← ИМПОРТИРОВАНО
+from uuid import uuid4
 from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -120,7 +120,7 @@ async def process_everywhere_search(
     search_type: str
 ) -> bool:
     """
-    Обрабатывает результаты поиска "везде" и отправляет топ-3 направлений
+    Обрабатывает результаты поиска "везде" и отправляет 1 cheapest + кнопку "Все варианты"
     Возвращает True если поиск успешен, иначе False
     """
     if not all_flights:
@@ -148,108 +148,92 @@ async def process_everywhere_search(
         "dest_everywhere": is_dest_everywhere
     })
     
-    # Формируем топ-3 направлений
+    # Находим ОДИН самый дешёвый вариант
+    cheapest_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+    cheapest_price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
+    cheapest_dest_iata = cheapest_flight.get("destination")
+    cheapest_origin_iata = cheapest_flight.get("origin")
+    
+    cheapest_dest_name = IATA_TO_CITY.get(cheapest_dest_iata, cheapest_dest_iata)
+    cheapest_origin_name = IATA_TO_CITY.get(cheapest_origin_iata, cheapest_origin_iata)
+    
+    # Форматируем время
+    departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
+    arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
+    
+    # Формируем сообщение: только 1 вариант
     if is_dest_everywhere:
-        # Город → Везде: собираем уникальные направления
-        dest_prices = {}
-        for flight in all_flights:
-            dest_iata = flight.get("destination")
-            price = flight.get("value") or flight.get("price") or 999999
-            if dest_iata not in dest_prices or price < dest_prices[dest_iata]["price"]:
-                dest_prices[dest_iata] = {
-                    "price": price,
-                    "flight": flight,
-                    "origin": flight.get("origin")
-                }
-        top_items = sorted(dest_prices.items(), key=lambda x: x[1]["price"])[:3]
-        origin_name = data["origin_name"]
-        title = f"✅ <b>Топ-3 самых дешёвых направлений из {origin_name}</b>"
-        
+        # Город → Везде
+        text = (
+            f"✅ <b>Самый дешёвый вариант из {data['origin_name']}</b>\n"
+            f"📅 Вылет: {display_depart}\n"
+            f"👥 Пассажиры: {data['passenger_desc']}\n\n"
+            f"🛬 <b>{cheapest_dest_name}</b>\n"
+            f"💰 {cheapest_price} ₽\n"
+            f"⏰ {departure_time} → {arrival_time}\n"
+        )
     elif is_origin_everywhere:
-        # Везде → Город: собираем уникальные пункты отправления
-        origin_prices = {}
-        for flight in all_flights:
-            orig_iata = flight.get("origin")
-            price = flight.get("value") or flight.get("price") or 999999
-            if orig_iata not in origin_prices or price < origin_prices[orig_iata]["price"]:
-                origin_prices[orig_iata] = {
-                    "price": price,
-                    "flight": flight,
-                    "destination": flight.get("destination")
-                }
-        top_items = sorted(origin_prices.items(), key=lambda x: x[1]["price"])[:3]
-        dest_name = data["dest_name"]
-        title = f"✅ <b>Топ-3 самых дешёвых вариантов в {dest_name}</b>"
+        # Везде → Город
+        text = (
+            f"✅ <b>Самый дешёвый вариант в {data['dest_name']}</b>\n"
+            f"📅 Вылет: {display_depart}\n"
+            f"👥 Пассажиры: {data['passenger_desc']}\n\n"
+            f"🛫 <b>{cheapest_origin_name}</b>\n"
+            f"💰 {cheapest_price} ₽\n"
+            f"⏰ {departure_time} → {arrival_time}\n"
+        )
     
-    # Формируем сообщение
-    text = (
-        f"{title}\n"
-        f"📅 Вылет: {display_depart}\n"
-        f"👥 Пассажиры: {data['passenger_desc']}\n\n"
-    )
+    # Генерируем ссылку для бронирования самого дешёвого
+    booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
+    if not booking_link or booking_link.startswith('/'):
+        booking_link = generate_booking_link(
+            cheapest_flight,
+            cheapest_origin_iata,
+            cheapest_dest_iata,
+            data["depart_date"],
+            data.get("passengers_code", "1"),
+            data["return_date"]
+        )
+    if not booking_link.startswith(('http://', 'https://')):
+        booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    kb_buttons = []
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
-    for i, (item_iata, info) in enumerate(top_items, 1):
-        item_name = IATA_TO_CITY.get(item_iata, item_iata)
-        price = info["price"]
-        flight = info["flight"]
-        
-        # Форматируем время
-        departure_time = flight.get("departure_at", "").split('T')[1][:5] if flight.get("departure_at") else "??:??"
-        arrival_time = flight.get("return_at", "").split('T')[1][:5] if flight.get("return_at") else "??:??"
-        
-        text += (
-            f"{i}. <b>{item_name}</b>\n"
-            f"   💰 {price} ₽\n"
-            f"   ⏰ {departure_time} → {arrival_time}\n\n"
-        )
-        
-        # Генерируем ссылку для бронирования
-        booking_link = flight.get("link") or flight.get("deep_link")
-        if not booking_link or booking_link.startswith('/'):
-            booking_link = generate_booking_link(
-                flight,
-                info.get("origin") or data["origin_iata"],  # ← ИСПРАВЛЕНО: используем data["origin_iata"]
-                info.get("destination") or data["dest_iata"],  # ← ИСПРАВЛЕНО: используем data["dest_iata"]
-                data["depart_date"],
-                data.get("passengers_code", "1"),
-                data["return_date"]
-            )
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
-        
-        if marker:
-            booking_link = add_marker_to_url(booking_link, marker, sub_id)
-        
-        kb_buttons.append([
-            InlineKeyboardButton(
-                text=f"✈️ {item_name} — {price} ₽",
-                url=booking_link
-            )
-        ])
-    
-    # Добавляем кнопку "Все варианты на Aviasales"
-    if is_dest_everywhere:
-        all_variants_link = f"https://www.aviasales.ru/search/{data['origin_iata']}//{data['depart_date'].replace('.','')}"
-        if data.get("return_date"):
-            all_variants_link += f"{data['return_date'].replace('.','')}"
-        all_variants_link += f"{data.get('passengers_code', '1')}"
-    else:
-        all_variants_link = f"https://www.aviasales.ru/search//{data['dest_iata']}{data['depart_date'].replace('.','')}"
-        if data.get("return_date"):
-            all_variants_link += f"{data['return_date'].replace('.','')}"
-        all_variants_link += f"{data.get('passengers_code', '1')}"
-    
     if marker:
-        all_variants_link = add_marker_to_url(all_variants_link, marker, sub_id)
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    
+    # Формируем клавиатуру: 1 бронирование + "Все варианты" + "Следить"
+    kb_buttons = []
     
     kb_buttons.append([
         InlineKeyboardButton(
-            text="🌍 Все направления на Aviasales",
-            url=all_variants_link
+            text=f"✈️ Забронировать {cheapest_price} ₽",
+            url=booking_link
+        )
+    ])
+    
+    # === КНОПКА "ВСЕ ВАРИАНТЫ" В ФОРМАТЕ MAP ===
+    if is_dest_everywhere:
+        # Город → Везде: origin//depart_date[return_date]passengers
+        map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}//{data['depart_date'].replace('.','')}"
+        if data.get("return_date"):
+            map_link += f"{data['return_date'].replace('.','')}"
+        map_link += f"{data.get('passengers_code', '1')}"
+    else:
+        # Везде → Город: //dest_iata... (не поддерживается напрямую, используем search)
+        # Aviasales не поддерживает //IATA в map, поэтому используем search с //
+        map_link = f"https://www.aviasales.ru/search//{data['dest_iata']}{data['depart_date'].replace('.','')}"
+        if data.get("return_date"):
+            map_link += f"{data['return_date'].replace('.','')}"
+        map_link += f"{data.get('passengers_code', '1')}"
+    
+    if marker:
+        map_link = add_marker_to_url(map_link, marker, sub_id)
+    
+    kb_buttons.append([
+        InlineKeyboardButton(
+            text="🌍 Все направления на карте",
+            url=map_link
         )
     ])
     
@@ -344,101 +328,92 @@ async def handle_everywhere_search_manual(
         "dest_everywhere": is_dest_everywhere
     })
     
-    # Формируем топ-3
+    # Находим ОДИН самый дешёвый вариант
+    cheapest_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+    cheapest_price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
+    cheapest_dest_iata = cheapest_flight.get("destination")
+    cheapest_origin_iata = cheapest_flight.get("origin")
+    
+    cheapest_dest_name = IATA_TO_CITY.get(cheapest_dest_iata, cheapest_dest_iata)
+    cheapest_origin_name = IATA_TO_CITY.get(cheapest_origin_iata, cheapest_origin_iata)
+    
+    # Форматируем время
+    departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
+    arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
+    
+    # Формируем сообщение: только 1 вариант
     if is_dest_everywhere:
-        dest_prices = {}
-        for flight in all_flights:
-            dest_iata = flight.get("destination")
-            price = flight.get("value") or flight.get("price") or 999999
-            if dest_iata not in dest_prices or price < dest_prices[dest_iata]["price"]:
-                dest_prices[dest_iata] = {
-                    "price": price,
-                    "flight": flight,
-                    "origin": flight.get("origin")
-                }
-        top_items = sorted(dest_prices.items(), key=lambda x: x[1]["price"])[:3]
-        title = f"✅ <b>Топ-3 самых дешёвых направлений из {origin_name}</b>"
-    else:
-        origin_prices = {}
-        for flight in all_flights:
-            orig_iata = flight.get("origin")
-            price = flight.get("value") or flight.get("price") or 999999
-            if orig_iata not in origin_prices or price < origin_prices[orig_iata]["price"]:
-                origin_prices[orig_iata] = {
-                    "price": price,
-                    "flight": flight,
-                    "destination": flight.get("destination")
-                }
-        top_items = sorted(origin_prices.items(), key=lambda x: x[1]["price"])[:3]
-        title = f"✅ <b>Топ-3 самых дешёвых вариантов в {dest_name}</b>"
+        # Город → Везде
+        text = (
+            f"✅ <b>Самый дешёвый вариант из {origin_name}</b>\n"
+            f"📅 Вылет: {display_depart}\n"
+            f"👥 Пассажиры: {passenger_desc}\n\n"
+            f"🛬 <b>{cheapest_dest_name}</b>\n"
+            f"💰 {cheapest_price} ₽\n"
+            f"⏰ {departure_time} → {arrival_time}\n"
+        )
+    elif is_origin_everywhere:
+        # Везде → Город
+        text = (
+            f"✅ <b>Самый дешёвый вариант в {dest_name}</b>\n"
+            f"📅 Вылет: {display_depart}\n"
+            f"👥 Пассажиры: {passenger_desc}\n\n"
+            f"🛫 <b>{cheapest_origin_name}</b>\n"
+            f"💰 {cheapest_price} ₽\n"
+            f"⏰ {departure_time} → {arrival_time}\n"
+        )
     
-    text = (
-        f"{title}\n"
-        f"📅 Вылет: {display_depart}\n"
-        f"👥 Пассажиры: {passenger_desc}\n\n"
-    )
+    # Генерируем ссылку для бронирования самого дешёвого
+    booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
+    if not booking_link or booking_link.startswith('/'):
+        booking_link = generate_booking_link(
+            cheapest_flight,
+            cheapest_origin_iata,
+            cheapest_dest_iata,
+            depart_date,
+            passengers_code,
+            return_date
+        )
+    if not booking_link.startswith(('http://', 'https://')):
+        booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    kb_buttons = []
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
-    for i, (item_iata, info) in enumerate(top_items, 1):
-        item_name = IATA_TO_CITY.get(item_iata, item_iata)
-        price = info["price"]
-        flight = info["flight"]
-        
-        departure_time = flight.get("departure_at", "").split('T')[1][:5] if flight.get("departure_at") else "??:??"
-        arrival_time = flight.get("return_at", "").split('T')[1][:5] if flight.get("return_at") else "??:??"
-        
-        text += (
-            f"{i}. <b>{item_name}</b>\n"
-            f"   💰 {price} ₽\n"
-            f"   ⏰ {departure_time} → {arrival_time}\n\n"
-        )
-        
-        booking_link = flight.get("link") or flight.get("deep_link")
-        if not booking_link or booking_link.startswith('/'):
-            # ← ИСПРАВЛЕНО: используем origins[0] и destinations[0] из локальных переменных
-            booking_link = generate_booking_link(
-                flight,
-                info.get("origin") or origins[0],
-                info.get("destination") or destinations[0],
-                depart_date,
-                passengers_code,
-                return_date
-            )
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
-        
-        if marker:
-            booking_link = add_marker_to_url(booking_link, marker, sub_id)
-        
-        kb_buttons.append([
-            InlineKeyboardButton(
-                text=f"✈️ {item_name} — {price} ₽",
-                url=booking_link
-            )
-        ])
-    
-    # Кнопка "Все варианты"
-    if is_dest_everywhere:
-        all_variants_link = f"https://www.aviasales.ru/search/{origins[0]}//{depart_date.replace('.','')}"
-        if return_date:
-            all_variants_link += f"{return_date.replace('.','')}"
-        all_variants_link += passengers_code
-    else:
-        all_variants_link = f"https://www.aviasales.ru/search//{destinations[0]}{depart_date.replace('.','')}"
-        if return_date:
-            all_variants_link += f"{return_date.replace('.','')}"
-        all_variants_link += passengers_code
-    
     if marker:
-        all_variants_link = add_marker_to_url(all_variants_link, marker, sub_id)
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    
+    # Формируем клавиатуру: 1 бронирование + "Все варианты" + "Следить"
+    kb_buttons = []
     
     kb_buttons.append([
         InlineKeyboardButton(
-            text="🌍 Все направления на Aviasales",
-            url=all_variants_link
+            text=f"✈️ Забронировать {cheapest_price} ₽",
+            url=booking_link
+        )
+    ])
+    
+    # === КНОПКА "ВСЕ ВАРИАНТЫ" В ФОРМАТЕ MAP ===
+    if is_dest_everywhere:
+        # Город → Везде: origin//depart_date[return_date]passengers
+        map_link = f"https://www.aviasales.ru/map?params={origins[0]}//{depart_date.replace('.','')}"
+        if return_date:
+            map_link += f"{return_date.replace('.','')}"
+        map_link += f"{passengers_code}"
+    else:
+        # Везде → Город: //dest_iata... (не поддерживается напрямую, используем search)
+        # Aviasales не поддерживает //IATA в map, поэтому используем search с //
+        map_link = f"https://www.aviasales.ru/search//{destinations[0]}{depart_date.replace('.','')}"
+        if return_date:
+            map_link += f"{return_date.replace('.','')}"
+        map_link += f"{passengers_code}"
+    
+    if marker:
+        map_link = add_marker_to_url(map_link, marker, sub_id)
+    
+    kb_buttons.append([
+        InlineKeyboardButton(
+            text="🌍 Все направления на карте",
+            url=map_link
         )
     ])
     
