@@ -984,7 +984,7 @@ async def handle_watch_price(callback: CallbackQuery):
     if parts[1] == "all":
         cache_id = parts[2]
         data = await redis_client.get_search_cache(cache_id)
-        if not 
+        if not data:
             await callback.answer("Данные устарели", show_alert=True)
             return
         
@@ -1014,7 +1014,7 @@ async def handle_watch_price(callback: CallbackQuery):
         cache_id = parts[1]
         price = int(parts[2])
         data = await redis_client.get_search_cache(cache_id)
-        if not 
+        if not data:
             await callback.answer("Данные устарели", show_alert=True)
             return
         top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -1048,7 +1048,7 @@ async def handle_set_threshold(callback: CallbackQuery):
     threshold = int(threshold_str)
     price = int(price_str)
     data = await redis_client.get_search_cache(cache_id)
-    if not 
+    if not data:
         await callback.answer("Данные устарели", show_alert=True)
         return
     
