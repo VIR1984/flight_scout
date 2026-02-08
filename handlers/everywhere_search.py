@@ -1,9 +1,11 @@
+# handlers/everywhere_search.py
 import json
 import asyncio
 import os
 from typing import Dict, Any, List, Tuple
 from uuid import uuid4
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.fsm.context import FSMContext  # ← ЭТОТ ИМПОРТ ОБЯЗАТЕЛЕН
 from services.flight_search import search_flights, generate_booking_link, normalize_date
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
