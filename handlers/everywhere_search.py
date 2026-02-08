@@ -6,12 +6,7 @@ from typing import Dict, Any, List, Tuple
 from uuid import uuid4
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from services.flight_search import (
-    search_flights,
-    generate_booking_link,
-    normalize_date,
-    format_avia_link_date  # ← добавляем импорт функции форматирования даты
-)
+from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -149,7 +144,7 @@ async def process_everywhere_search(
     departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
     arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
     
-    # ИСПРАВЛЕНО: убрано склонение, добавлено слово "город"
+    # Исправлено: убрано склонение, добавлено слово "город"
     if is_dest_everywhere:
         text = (
             f"✅ <b>Самый дешёвый вариант из города {data['origin_name']}</b>\n"
@@ -196,26 +191,20 @@ async def process_everywhere_search(
     ])
     
     # === КНОПКА "ВСЕ НАПРАВЛЕНИЯ" ===
-    # ИСПРАВЛЕНО: используем format_avia_link_date() вместо replace('.', '')
-    d1 = format_avia_link_date(data["depart_date"])
-    passengers = data.get("passengers_code", "1")
-    
+    # УБРАНА ДЛЯ "Везде → Город" (is_origin_everywhere)
+    # ОСТАВЛЕНА ДЛЯ "Город → Везде" (is_dest_everywhere)
     if is_dest_everywhere:
-        # Город → Везде: map?params=ORIGINDDMM[PASS]
+        d1 = format_avia_link_date(data["depart_date"])
+        passengers = data.get("passengers_code", "1")
         map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}{d1}{passengers}"
-    else:
-        # Везде → Город: search//DESTDDMM[PASS]
-        map_link = f"https://www.aviasales.ru/search//{data['dest_iata']}{d1}{passengers}"
-    
-    if marker:
-        map_link = add_marker_to_url(map_link, marker, sub_id)
-    
-    kb_buttons.append([
-        InlineKeyboardButton(
-            text="🌍 Все направления",
-            url=map_link
-        )
-    ])
+        if marker:
+            map_link = add_marker_to_url(map_link, marker, sub_id)
+        kb_buttons.append([
+            InlineKeyboardButton(
+                text="🌍 Все направления",
+                url=map_link
+            )
+        ])
     
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
@@ -314,7 +303,7 @@ async def handle_everywhere_search_manual(
     departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
     arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
     
-    # ИСПРАВЛЕНО: убрано склонение, добавлено слово "город"
+    # Исправлено: убрано склонение, добавлено слово "город"
     if is_dest_everywhere:
         text = (
             f"✅ <b>Самый дешёвый вариант из города {origin_name}</b>\n"
@@ -361,23 +350,19 @@ async def handle_everywhere_search_manual(
     ])
     
     # === КНОПКА "ВСЕ НАПРАВЛЕНИЯ" ===
-    # ИСПРАВЛЕНО: используем format_avia_link_date() вместо replace('.', '')
-    d1 = format_avia_link_date(depart_date)
-    
+    # УБРАНА ДЛЯ "Везде → Город" (is_origin_everywhere)
+    # ОСТАВЛЕНА ДЛЯ "Город → Везде" (is_dest_everywhere)
     if is_dest_everywhere:
+        d1 = format_avia_link_date(depart_date)
         map_link = f"https://www.aviasales.ru/map?params={origins[0]}{d1}{passengers_code}"
-    else:
-        map_link = f"https://www.aviasales.ru/search//{destinations[0]}{d1}{passengers_code}"
-    
-    if marker:
-        map_link = add_marker_to_url(map_link, marker, sub_id)
-    
-    kb_buttons.append([
-        InlineKeyboardButton(
-            text="🌍 Все направления",
-            url=map_link
-        )
-    ])
+        if marker:
+            map_link = add_marker_to_url(map_link, marker, sub_id)
+        kb_buttons.append([
+            InlineKeyboardButton(
+                text="🌍 Все направления",
+                url=map_link
+            )
+        ])
     
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
