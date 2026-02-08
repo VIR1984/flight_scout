@@ -5,11 +5,17 @@ import os
 from typing import Dict, Any, List, Tuple
 from uuid import uuid4
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.fsm.context import FSMContext  # ← ЭТОТ ИМПОРТ ОБЯЗАТЕЛЕН
-from services.flight_search import search_flights, generate_booking_link, normalize_date
+from aiogram.fsm.context import FSMContext
+from services.flight_search import (
+    search_flights,
+    generate_booking_link,
+    normalize_date,
+    format_avia_link_date  # ← добавляем импорт функции форматирования даты
+)
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
 
 def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     if not marker or not url:
@@ -23,6 +29,7 @@ def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     new_query = urlencode(query_params, doseq=True)
     return urlunparse(parsed._replace(query=new_query))
 
+
 def format_user_date(date_str: str) -> str:
     try:
         d, m = map(int, date_str.split('.'))
@@ -32,6 +39,7 @@ def format_user_date(date_str: str) -> str:
         return f"{d:02d}.{m:02d}.{year}"
     except:
         return date_str
+
 
 def build_passenger_desc(code: str) -> str:
     try:
@@ -46,11 +54,12 @@ def build_passenger_desc(code: str) -> str:
     except:
         return "1 взр."
 
+
 async def search_origin_everywhere(
     destination: str,
     dest_iata: str,
     depart_date: str,
-    return_date: str,
+    return_date: str,  # ← не используется
     passengers_code: str,
     passenger_desc: str,
     state: FSMContext
@@ -60,11 +69,12 @@ async def search_origin_everywhere(
     for orig in origins:
         if orig == dest_iata:
             continue
+        # Игнорируем return_date для "везде" — всегда однонаправленный поиск
         flights = await search_flights(
             orig,
             dest_iata,
             normalize_date(depart_date),
-            None  # ← Игнорируем return_date для "везде"
+            None
         )
         flights = [f for f in flights if f.get("destination") == dest_iata]
         for f in flights:
@@ -73,11 +83,12 @@ async def search_origin_everywhere(
         await asyncio.sleep(0.5)
     return all_flights, "origin_everywhere"
 
+
 async def search_destination_everywhere(
     origin: str,
     origin_iata: str,
     depart_date: str,
-    return_date: str,
+    return_date: str,  # ← не используется
     passengers_code: str,
     passenger_desc: str,
     state: FSMContext
@@ -87,11 +98,12 @@ async def search_destination_everywhere(
     for dest in destinations:
         if dest == origin_iata:
             continue
+        # Игнорируем return_date для "везде" — всегда однонаправленный поиск
         flights = await search_flights(
             origin_iata,
             dest,
             normalize_date(depart_date),
-            None  # ← Игнорируем return_date для "везде"
+            None
         )
         for f in flights:
             f["destination"] = dest
@@ -99,20 +111,21 @@ async def search_destination_everywhere(
         await asyncio.sleep(0.5)
     return all_flights, "destination_everywhere"
 
+
 async def process_everywhere_search(
     callback: CallbackQuery,
-    data: Dict[str, Any],  # ← ИСПРАВЛЕНО: добавлено имя параметра 'data'
+    data: Dict[str, Any],
     all_flights: List[Dict],
     search_type: str
 ) -> bool:
     if not all_flights:
         return False
-
+    
     cache_id = str(uuid4())
     display_depart = format_user_date(data["depart_date"])
     is_origin_everywhere = (search_type == "origin_everywhere")
     is_dest_everywhere = (search_type == "destination_everywhere")
-
+    
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
         "dest_iata": data.get("dest_iata"),
@@ -126,37 +139,36 @@ async def process_everywhere_search(
         "origin_everywhere": is_origin_everywhere,
         "dest_everywhere": is_dest_everywhere
     })
-
+    
     cheapest_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
     price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
     origin_iata = cheapest_flight["origin"]
     dest_iata = cheapest_flight.get("destination")
-
     origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-
     departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
     arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
-
+    
+    # ИСПРАВЛЕНО: убрано склонение, добавлено слово "город"
     if is_dest_everywhere:
         text = (
-            f"✅ <b>Самый дешёвый вариант из {data['origin_name']}</b>\n"
+            f"✅ <b>Самый дешёвый вариант из города {data['origin_name']}</b>\n"
             f"📅 Вылет: {display_depart}\n"
-            f"👥 Пассажиры: {data['passenger_desc']}\n\n"
+            f"👥 Пассажиры: {data['passenger_desc']}\n"
             f"🛬 <b>{dest_name}</b>\n"
             f"💰 {price} ₽\n"
             f"⏰ {departure_time} → {arrival_time}\n"
         )
     else:
         text = (
-            f"✅ <b>Самый дешёвый вариант в {data['dest_name']}</b>\n"
+            f"✅ <b>Самый дешёвый вариант в город {data['dest_name']}</b>\n"
             f"📅 Вылет: {display_depart}\n"
-            f"👥 Пассажиры: {data['passenger_desc']}\n\n"
+            f"👥 Пассажиры: {data['passenger_desc']}\n"
             f"🛫 <b>{origin_name}</b>\n"
             f"💰 {price} ₽\n"
             f"⏰ {departure_time} → {arrival_time}\n"
         )
-
+    
     booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
     if not booking_link or booking_link.startswith('/'):
         booking_link = generate_booking_link(
@@ -169,61 +181,61 @@ async def process_everywhere_search(
         )
     if not booking_link.startswith(('http://', 'https://')):
         booking_link = f"https://www.aviasales.ru{booking_link}"
-
+    
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
         booking_link = add_marker_to_url(booking_link, marker, sub_id)
-
+    
     kb_buttons = []
-
     kb_buttons.append([
         InlineKeyboardButton(
             text=f"✈️ Забронировать {price} ₽",
             url=booking_link
         )
     ])
-
+    
     # === КНОПКА "ВСЕ НАПРАВЛЕНИЯ" ===
+    # ИСПРАВЛЕНО: используем format_avia_link_date() вместо replace('.', '')
+    d1 = format_avia_link_date(data["depart_date"])
+    passengers = data.get("passengers_code", "1")
+    
     if is_dest_everywhere:
         # Город → Везде: map?params=ORIGINDDMM[PASS]
-        d1 = data["depart_date"].replace('.', '')
-        passengers = data.get("passengers_code", "1")
         map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}{d1}{passengers}"
     else:
         # Везде → Город: search//DESTDDMM[PASS]
-        d1 = data["depart_date"].replace('.', '')
-        passengers = data.get("passengers_code", "1")
         map_link = f"https://www.aviasales.ru/search//{data['dest_iata']}{d1}{passengers}"
-
+    
     if marker:
         map_link = add_marker_to_url(map_link, marker, sub_id)
-
+    
     kb_buttons.append([
         InlineKeyboardButton(
             text="🌍 Все направления",
             url=map_link
         )
     ])
-
+    
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
     ])
     kb_buttons.append([
         InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
     ])
-
+    
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
     return True
+
 
 async def handle_everywhere_search_manual(
     message: Message,
     origin_city: str,
     dest_city: str,
     depart_date: str,
-    return_date: str,
+    return_date: str,  # ← не используется
     passengers_code: str,
     is_origin_everywhere: bool,
     is_dest_everywhere: bool
@@ -238,7 +250,7 @@ async def handle_everywhere_search_manual(
             return False
         origins = [orig_iata]
         origin_name = IATA_TO_CITY.get(orig_iata, origin_city.strip().capitalize())
-
+    
     if is_dest_everywhere:
         destinations = GLOBAL_HUBS[:5]
         dest_name = "Везде"
@@ -249,22 +261,23 @@ async def handle_everywhere_search_manual(
             return False
         destinations = [dest_iata]
         dest_name = IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
-
+    
     passenger_desc = build_passenger_desc(passengers_code)
     display_depart = format_user_date(depart_date)
-
+    
     await message.answer("Ищу билеты (включая с пересадками)...")
-
+    
     all_flights = []
     for orig in origins:
         for dest in destinations:
             if orig == dest:
                 continue
+            # Игнорируем return_date для "везде"
             flights = await search_flights(
                 orig,
                 dest,
                 normalize_date(depart_date),
-                None  # ← Игнорируем return_date
+                None
             )
             if not is_dest_everywhere and dest == dest_iata:
                 flights = [f for f in flights if f.get("destination") == dest]
@@ -273,10 +286,10 @@ async def handle_everywhere_search_manual(
                 f["destination"] = dest
             all_flights.extend(flights)
             await asyncio.sleep(0.5)
-
+    
     if not all_flights:
         return False
-
+    
     cache_id = str(uuid4())
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
@@ -291,37 +304,36 @@ async def handle_everywhere_search_manual(
         "origin_everywhere": is_origin_everywhere,
         "dest_everywhere": is_dest_everywhere
     })
-
+    
     cheapest_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
     price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
     origin_iata = cheapest_flight["origin"]
     dest_iata = cheapest_flight.get("destination")
-
     origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
     dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-
     departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
     arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
-
+    
+    # ИСПРАВЛЕНО: убрано склонение, добавлено слово "город"
     if is_dest_everywhere:
         text = (
-            f"✅ <b>Самый дешёвый вариант из {origin_name}</b>\n"
+            f"✅ <b>Самый дешёвый вариант из города {origin_name}</b>\n"
             f"📅 Вылет: {display_depart}\n"
-            f"👥 Пассажиры: {passenger_desc}\n\n"
+            f"👥 Пассажиры: {passenger_desc}\n"
             f"🛬 <b>{dest_name}</b>\n"
             f"💰 {price} ₽\n"
             f"⏰ {departure_time} → {arrival_time}\n"
         )
     else:
         text = (
-            f"✅ <b>Самый дешёвый вариант в {dest_name}</b>\n"
+            f"✅ <b>Самый дешёвый вариант в город {dest_name}</b>\n"
             f"📅 Вылет: {display_depart}\n"
-            f"👥 Пассажиры: {passenger_desc}\n\n"
+            f"👥 Пассажиры: {passenger_desc}\n"
             f"🛫 <b>{origin_name}</b>\n"
             f"💰 {price} ₽\n"
             f"⏰ {departure_time} → {arrival_time}\n"
         )
-
+    
     booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
     if not booking_link or booking_link.startswith('/'):
         booking_link = generate_booking_link(
@@ -334,46 +346,46 @@ async def handle_everywhere_search_manual(
         )
     if not booking_link.startswith(('http://', 'https://')):
         booking_link = f"https://www.aviasales.ru{booking_link}"
-
+    
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
         booking_link = add_marker_to_url(booking_link, marker, sub_id)
-
+    
     kb_buttons = []
-
     kb_buttons.append([
         InlineKeyboardButton(
             text=f"✈️ Забронировать {price} ₽",
             url=booking_link
         )
     ])
-
+    
     # === КНОПКА "ВСЕ НАПРАВЛЕНИЯ" ===
+    # ИСПРАВЛЕНО: используем format_avia_link_date() вместо replace('.', '')
+    d1 = format_avia_link_date(depart_date)
+    
     if is_dest_everywhere:
-        d1 = depart_date.replace('.', '')
         map_link = f"https://www.aviasales.ru/map?params={origins[0]}{d1}{passengers_code}"
     else:
-        d1 = depart_date.replace('.', '')
         map_link = f"https://www.aviasales.ru/search//{destinations[0]}{d1}{passengers_code}"
-
+    
     if marker:
         map_link = add_marker_to_url(map_link, marker, sub_id)
-
+    
     kb_buttons.append([
         InlineKeyboardButton(
             text="🌍 Все направления",
             url=map_link
         )
     ])
-
+    
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
     ])
     kb_buttons.append([
         InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")
     ])
-
+    
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
     return True

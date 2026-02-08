@@ -255,21 +255,36 @@ async def process_route(message: Message, state: FSMContext):
 async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
-            "❌ Неверный формат даты.\n"
+            "❌ Неверный формат даты.
+"
             "Введите в формате <code>ДД.ММ</code> (например: 10.03)",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
+    
     await state.update_data(depart_date=message.text)
+    
+    data = await state.get_data()
+    is_origin_everywhere = data["origin"] == "везде"
+    is_dest_everywhere = data["dest"] == "везде"
+    
+    # Для поиска "Везде" сразу переходим к пассажирам
+    if is_origin_everywhere or is_dest_everywhere:
+        await state.update_data(need_return=False, return_date=None)
+        await ask_adults(message, state)
+        return
+    
+    # Для обычного поиска спрашиваем про обратный билет
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, нужен", callback_data="need_return_yes")],
         [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="need_return_no")],
         [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await message.answer(
-        f"✅ Дата вылета: <b>{message.text}</b>\n"
-        "🔄 <b>Шаг 3 из 5:</b> Нужен ли обратный билет?",
+        f"✅ Дата вылета: <b>{message.text}</b>
+"
+        "🔄 Нужен ли обратный билет?",
         parse_mode="HTML",
         reply_markup=kb
     )
