@@ -255,8 +255,7 @@ async def process_route(message: Message, state: FSMContext):
 async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
-            "❌ Неверный формат даты.
-"
+            "❌ Неверный формат даты."
             "Введите в формате <code>ДД.ММ</code> (например: 10.03)",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
@@ -282,8 +281,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await message.answer(
-        f"✅ Дата вылета: <b>{message.text}</b>
-"
+        f"✅ Дата вылета: <b>{message.text}</b>"
         "🔄 Нужен ли обратный билет?",
         parse_mode="HTML",
         reply_markup=kb
