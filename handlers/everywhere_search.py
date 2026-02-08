@@ -75,7 +75,7 @@ async def search_origin_everywhere(
         for f in flights:
             f["origin"] = orig
         all_flights.extend(flights)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.2)
     return all_flights, "origin_everywhere"
 
 
@@ -103,7 +103,7 @@ async def search_destination_everywhere(
         for f in flights:
             f["destination"] = dest
         all_flights.extend(flights)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.2)
     return all_flights, "destination_everywhere"
 
 
