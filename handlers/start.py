@@ -911,11 +911,10 @@ async def handle_flight_request(message: Message):
     ]
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        airport_display = AIRPORT_NAMES.get(dest_iata, dest_iata)
         kb_buttons.insert(1, [
-            InlineKeyboardButton(
-                text=f"🚖 Трансфер в {airport_display}",
-                url=transfer_link
+           InlineKeyboardButton(
+              text=f"🚖 Трансфер в {dest_name}",  
+              url=transfer_link
             )
         ])
     
