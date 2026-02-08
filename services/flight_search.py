@@ -1,4 +1,3 @@
-# services/flight_search.py
 import os
 import asyncio
 import aiohttp
@@ -94,6 +93,12 @@ async def search_flights(
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(AVIASALES_API_URL, params=params, timeout=10) as response:
+                if response.status == 429:
+                    # Превышен лимит запросов
+                    logger.warning("⚠️ Достигнут лимит API Aviasales (429). Ждём 60 секунд...")
+                    await asyncio.sleep(60)
+                    return []  # или можно повторить запрос рекурсивно с защитой от зацикливания
+                
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
@@ -124,28 +129,37 @@ async def search_flights(
             return []
 
 def generate_booking_link(
-    flight: dict,
+    flight: Dict,
     origin: str,
     dest: str,
     depart_date: str,
     passengers_code: str = "1",
     return_date: Optional[str] = None
 ) -> str:
+    """
+    Генерирует ссылку для бронирования на Aviasales с маркером.
+    Формат: ORIGDDMMDESTDDMM[PASS] для туда/обратно
+    Формат: ORIGDDMMDEST[PASS] для в одну сторону
+    """
+    # Форматируем даты для ссылки: ДД.ММ → ДДММ
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
-    route = f"{origin}{d1}{dest}{d2}{passengers_code}"
-
+    
+    # Формируем маршрут: ORIGDDMMDESTDDMM[PASS] или ORIGDDMMDEST[PASS]
+    if return_date:
+        route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    else:
+        route = f"{origin}{d1}{dest}{passengers_code}"
+    
+    base_url = f"https://www.aviasales.ru/search/{route}"
+    
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-
-    base = "https://www.aviasales.ru/search/"
-    url = f"{base}{route}"
-
-    if marker.isdigit():
-        url += f"?marker={marker}&sub_id={sub_id}"
-
-    return url
-
+    
+    if marker:
+        return add_marker_to_url(base_url, marker, sub_id)
+    
+    return base_url
 
 def find_cheapest_flight_on_exact_date(
     flights: List[Dict],
