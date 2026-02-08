@@ -99,7 +99,7 @@ async def search_destination_everywhere(
 
 async def process_everywhere_search(
     callback: CallbackQuery,
-     Dict[str, Any],
+    data: Dict[str, Any],  # ← ИСПРАВЛЕНО: добавлено имя параметра 'data'
     all_flights: List[Dict],
     search_type: str
 ) -> bool:
