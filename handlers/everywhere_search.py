@@ -3,6 +3,7 @@ import asyncio
 import os
 from typing import Dict, Any, List, Tuple
 from aiogram import Router
+from uuid import uuid4 
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
