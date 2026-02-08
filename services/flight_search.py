@@ -133,21 +133,11 @@ def generate_booking_link(
 ) -> str:
     """
     Генерирует ссылку для бронирования на Aviasales с маркером.
-    
-    Args:
-        flight: данные о рейсе из API (не используется, но сохранён для совместимости)
-        origin: IATA код вылета
-        dest: IATA код прилёта
-        depart_date: дата вылета в формате 'ДД.ММ'
-        passengers_code: код пассажиров (например, '12' = 1 взр + 2 реб)
-        return_date: дата возврата в формате 'ДД.ММ' (опционально)
-    
-    Returns:
-        Полная ссылка с маркером
+    Использует даты из параметров, а не из flight (т.к. там дата поиска, а не вылета).
     """
     # Форматируем даты для ссылки: ДД.ММ → ДДММ
-    d1 = format_avia_link_date(depart_date)
-    d2 = format_avia_link_date(return_date) if return_date else ""
+    d1 = format_avia_link_date(depart_date)      # ← например, "10.03" → "1003"
+    d2 = format_avia_link_date(return_date) if return_date else ""  # ← "15.03" → "1503"
     
     # Формируем маршрут: ORIGDDMMDESTDDMM[PASS]
     route = f"{origin}{d1}{dest}{d2}{passengers_code}"
@@ -156,7 +146,6 @@ def generate_booking_link(
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     
-    # ИСПРАВЛЕНО: проверяем просто наличие маркера, а не только цифры
     if marker:
         return add_marker_to_url(base_url, marker, sub_id)
     
