@@ -14,7 +14,6 @@ def normalize_date(date_str: str) -> str:
     try:
         day, month = map(int, date_str.split('.'))
         year = 2026
-        # Если дата в будущем относительно февраля 2026 — используем 2027
         if month < 2 or (month == 2 and day < 8):
             year = 2027
         return f"{year}-{month:02d}-{day:02d}"
@@ -124,7 +123,7 @@ async def search_flights(
             return []
 
 def generate_booking_link(
-    flight: Dict,
+    flight: Dict,  # ← не используется, но оставлен для совместимости
     origin: str,
     dest: str,
     depart_date: str,
@@ -133,14 +132,19 @@ def generate_booking_link(
 ) -> str:
     """
     Генерирует ссылку для бронирования на Aviasales с маркером.
-    Использует даты из параметров, а не из flight (т.к. там дата поиска, а не вылета).
+    Формат: ORIGDDMMDESTDDMM[PASS] для туда/обратно
+    Формат: ORIGDDMMDEST[PASS] для в одну сторону
     """
     # Форматируем даты для ссылки: ДД.ММ → ДДММ
-    d1 = format_avia_link_date(depart_date)      # ← например, "10.03" → "1003"
-    d2 = format_avia_link_date(return_date) if return_date else ""  # ← "15.03" → "1503"
+    d1 = format_avia_link_date(depart_date)
+    d2 = format_avia_link_date(return_date) if return_date else ""
     
-    # Формируем маршрут: ORIGDDMMDESTDDMM[PASS]
-    route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    # Формируем маршрут: ORIGDDMMDESTDDMM[PASS] или ORIGDDMMDEST[PASS]
+    if return_date:
+        route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    else:
+        route = f"{origin}{d1}{dest}{passengers_code}"
+    
     base_url = f"https://www.aviasales.ru/search/{route}"
     
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
