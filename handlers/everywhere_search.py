@@ -2,8 +2,8 @@ import json
 import asyncio
 import os
 from typing import Dict, Any, List, Tuple
+from uuid import uuid4  # ← ИМПОРТИРОВАНО
 from aiogram import Router
-from uuid import uuid4 
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -212,8 +212,8 @@ async def process_everywhere_search(
         if not booking_link or booking_link.startswith('/'):
             booking_link = generate_booking_link(
                 flight,
-                info.get("origin") or origin_iata,
-                info.get("destination") or dest_iata,
+                info.get("origin") or data["origin_iata"],  # ← ИСПРАВЛЕНО: используем data["origin_iata"]
+                info.get("destination") or data["dest_iata"],  # ← ИСПРАВЛЕНО: используем data["dest_iata"]
                 data["depart_date"],
                 data.get("passengers_code", "1"),
                 data["return_date"]
@@ -398,6 +398,7 @@ async def handle_everywhere_search_manual(
         
         booking_link = flight.get("link") or flight.get("deep_link")
         if not booking_link or booking_link.startswith('/'):
+            # ← ИСПРАВЛЕНО: используем origins[0] и destinations[0] из локальных переменных
             booking_link = generate_booking_link(
                 flight,
                 info.get("origin") or origins[0],
