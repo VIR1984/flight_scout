@@ -9,7 +9,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
+from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
@@ -560,14 +560,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         "dest_everywhere": False
     })
     
-    # === НАЙТИ САМЫЙ ДЕШЁВЫЙ РЕЙС НА ТОЧНО УКАЗАННЫЕ ДАТЫ ===
-    top_flight = find_cheapest_flight_on_exact_date(
-        all_flights,
-        data["depart_date"],  # например, "10.03"
-        data.get("return_date")  # например, "15.03" или None
-    )
-    # =========================================================
-    
+    top_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_iata = top_flight["origin"]
     dest_iata = top_flight.get("destination") or data["dest_iata"]
@@ -616,8 +609,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     else:
         transfer_text = f"✈️ {transfers} пересадки"
     
-    # === ИСПРАВЛЕНО: Заголовок уточняет, что найден рейс на конкретную дату ===
-    header = f"✅ <b>Самый дешёвый вариант на {display_depart} ({data['passenger_desc']}):</b>"
+    header = f"✅ <b>Самый дешёвый вариант ({data['passenger_desc']}):</b>"
     route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
     text = (
         f"{header}\n"
@@ -628,7 +620,6 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         f"⏱️ {duration}\n"
         f"{transfer_text}\n"
     )
-    # ========================================================================
     
     airline = top_flight.get("airline", "")
     flight_number = top_flight.get("flight_number", "")
@@ -644,9 +635,6 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
     if data.get("need_return", False) and display_return:
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
-    # === ДОБАВЛЕНО: предупреждение о возможном изменении цены ===
-    text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
-    # =============================================================
     
     # === ИСПРАВЛЕНО: ВСЕГДА генерируем ссылку через generate_booking_link() с правильными датами ===
     booking_link = generate_booking_link(
@@ -679,14 +667,13 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     ]
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        # === ИСПРАВЛЕНО: в трансфере отображается город, а не код аэропорта ===
+        airport_display = AIRPORT_NAMES.get(dest_iata, dest_iata)
         kb_buttons.insert(1, [
             InlineKeyboardButton(
-                text=f"🚖 Трансфер в {dest_name}",  # ← используем dest_name вместо AIRPORT_NAMES
+                text=f"🚖 Трансфер в {airport_display}",
                 url=transfer_link
             )
         ])
-        # ========================================================================
     
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -817,14 +804,7 @@ async def handle_flight_request(message: Message):
         "dest_everywhere": False
     })
     
-    # === НАЙТИ САМЫЙ ДЕШЁВЫЙ РЕЙС НА ТОЧНО УКАЗАННЫЕ ДАТЫ ===
-    top_flight = find_cheapest_flight_on_exact_date(
-        all_flights,
-        depart_date,  # например, "10.03"
-        return_date  # например, "15.03" или None
-    )
-    # =========================================================
-    
+    top_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_iata = top_flight["origin"]
     dest_iata = dest_iata
@@ -873,8 +853,7 @@ async def handle_flight_request(message: Message):
     else:
         transfer_text = f"✈️ {transfers} пересадки"
     
-    # === ИСПРАВЛЕНО: Заголовок уточняет, что найден рейс на конкретную дату ===
-    header = f"✅ <b>Самый дешёвый вариант на {display_depart} ({passenger_desc}):</b>"
+    header = f"✅ <b>Самый дешёвый вариант ({passenger_desc}):</b>"
     route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
     text = (
         f"{header}\n"
@@ -885,7 +864,6 @@ async def handle_flight_request(message: Message):
         f"⏱️ {duration}\n"
         f"{transfer_text}\n"
     )
-    # ========================================================================
     
     airline = top_flight.get("airline", "")
     flight_number = top_flight.get("flight_number", "")
@@ -901,9 +879,6 @@ async def handle_flight_request(message: Message):
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
     if is_roundtrip and display_return:
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
-    # === ДОБАВЛЕНО: предупреждение о возможном изменении цены ===
-    text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
-    # =============================================================
     
     # === ИСПРАВЛЕНО: ВСЕГДА генерируем ссылку через generate_booking_link() с правильными датами ===
     booking_link = generate_booking_link(
@@ -936,14 +911,13 @@ async def handle_flight_request(message: Message):
     ]
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        # === ИСПРАВЛЕНО: в трансфере отображается город, а не код аэропорта ===
+        airport_display = AIRPORT_NAMES.get(dest_iata, dest_iata)
         kb_buttons.insert(1, [
             InlineKeyboardButton(
-                text=f"🚖 Трансфер в {dest_name}",  # ← используем dest_name вместо AIRPORT_NAMES
+                text=f"🚖 Трансфер в {airport_display}",
                 url=transfer_link
             )
         ])
-        # ========================================================================
     
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
@@ -955,7 +929,7 @@ async def handle_watch_price(callback: CallbackQuery):
     if parts[1] == "all":
         cache_id = parts[2]
         data = await redis_client.get_search_cache(cache_id)
-        if not 
+        if not data:
             await callback.answer("Данные устарели", show_alert=True)
             return
         
@@ -980,7 +954,7 @@ async def handle_watch_price(callback: CallbackQuery):
         cache_id = parts[1]
         price = int(parts[2])
         data = await redis_client.get_search_cache(cache_id)
-        if not 
+        if not data:
             await callback.answer("Данные устарели", show_alert=True)
             return
         top_flight = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -1014,7 +988,7 @@ async def handle_set_threshold(callback: CallbackQuery):
     threshold = int(threshold_str)
     price = int(price_str)
     data = await redis_client.get_search_cache(cache_id)
-    if not 
+    if not data:
         await callback.answer("Данные устарели", show_alert=True)
         return
     
