@@ -440,6 +440,34 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
         await ask_adults(callback, state)
     await callback.answer()
 
+def _update_passengers_in_link(link: str, passengers_code: str) -> str:
+    """Заменяет последнюю цифру в маршруте Aviasales на новое число пассажиров"""
+    if not link or not passengers_code.isdigit():
+        return link
+    if link.startswith('/'):
+        # Относительная ссылка: /MOW1003IST15031?t=...
+        if '?' in link:
+            route_part, query_part = link[1:].split('?', 1)
+        else:
+            route_part, query_part = link[1:], ""
+        if route_part and route_part[-1].isdigit():
+            route_part = route_part[:-1] + passengers_code
+        new_link = f"/{route_part}"
+        if query_part:
+            new_link += f"?{query_part}"
+        return new_link
+    elif '/search/' in link:
+        # Абсолютная ссылка: https://www.aviasales.ru/search/MOW1003IST15031?t=...
+        parsed = urlparse(link)
+        path = parsed.path  # "/search/MOW1003IST15031"
+        if '/search/' in path:
+            route_part = path.split('/search/')[-1]
+            if route_part and route_part[-1].isdigit():
+                route_part = route_part[:-1] + passengers_code
+            new_path = f"/search/{route_part}"
+            return urlunparse(parsed._replace(path=new_path))
+    return link
+
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -615,18 +643,33 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ОСНОВНАЯ ССЫЛКА: ИСПОЛЬЗУЕМ flight["link"] ===
+    # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
-    if not booking_link or not booking_link.startswith(('http://', 'https://')):
-        booking_link = f"https://www.aviasales.ru{booking_link}" if booking_link else ""
+    passengers_code = data.get("passengers_code", "1")
+    if booking_link:
+        booking_link = _update_passengers_in_link(booking_link, passengers_code)
+        if not booking_link.startswith(('http://', 'https://')):
+            booking_link = f"https://www.aviasales.ru{booking_link}"
+    else:
+        # Fallback на generate_booking_link
+        booking_link = generate_booking_link(
+            flight=top_flight,
+            origin=origin_iata,
+            dest=dest_iata,
+            depart_date=data["depart_date"],
+            passengers_code=passengers_code,
+            return_date=data["return_date"] if data.get("need_return") else None
+        )
+        if not booking_link.startswith(('http://', 'https://')):
+            booking_link = f"https://www.aviasales.ru{booking_link}"
 
-    # === 🔗 АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
+    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
     fallback_link = generate_booking_link(
         flight=top_flight,
         origin=origin_iata,
         dest=dest_iata,
         depart_date=data["depart_date"],
-        passengers_code=data.get("passengers_code", "1"),
+        passengers_code=passengers_code,
         return_date=data["return_date"] if data.get("need_return") else None
     )
     if not fallback_link.startswith(('http://', 'https://')):
@@ -636,8 +679,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
-        if booking_link:
-            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
         fallback_link = add_marker_to_url(fallback_link, marker, sub_id)
 
     # === КНОПКИ ===
@@ -878,12 +920,26 @@ async def handle_flight_request(message: Message):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ОСНОВНАЯ ССЫЛКА: ИСПОЛЬЗУЕМ flight["link"] ===
+    # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
-    if not booking_link or not booking_link.startswith(('http://', 'https://')):
-        booking_link = f"https://www.aviasales.ru{booking_link}" if booking_link else ""
+    passengers_code = passengers_code
+    if booking_link:
+        booking_link = _update_passengers_in_link(booking_link, passengers_code)
+        if not booking_link.startswith(('http://', 'https://')):
+            booking_link = f"https://www.aviasales.ru{booking_link}"
+    else:
+        booking_link = generate_booking_link(
+            flight=top_flight,
+            origin=origin_iata,
+            dest=dest_iata,
+            depart_date=depart_date,
+            passengers_code=passengers_code,
+            return_date=return_date if is_roundtrip else None
+        )
+        if not booking_link.startswith(('http://', 'https://')):
+            booking_link = f"https://www.aviasales.ru{booking_link}"
 
-    # === 🔗 АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
+    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
     fallback_link = generate_booking_link(
         flight=top_flight,
         origin=origin_iata,
@@ -899,8 +955,7 @@ async def handle_flight_request(message: Message):
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
-        if booking_link:
-            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
         fallback_link = add_marker_to_url(fallback_link, marker, sub_id)
 
     # === КНОПКИ ===
