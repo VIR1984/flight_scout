@@ -120,6 +120,30 @@ async def search_flights(
             logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
             return []
 
+def generate_booking_link(
+    flight: Dict,
+    origin: str,
+    dest: str,
+    depart_date: str,
+    passengers_code: str = "1",
+    return_date: Optional[str] = None
+) -> str:
+    """
+    Генерирует базовую ссылку без дат — Aviasales сам подставит фильтры по дате.
+    Это даёт максимальную точность: пользователь увидит те же цены, что и в боте.
+    """
+    # Формируем маршрут: ORIGDEST[PASS]
+    route = f"{origin}{dest}{passengers_code}"
+    base_url = f"https://www.aviasales.ru/search/{route}"
+    
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    
+    if marker:
+        return add_marker_to_url(base_url, marker, sub_id)
+    
+    return base_url
+
 def find_cheapest_flight_on_exact_date(
     flights: List[Dict],
     requested_depart_date: str,
