@@ -20,6 +20,14 @@ def normalize_date(date_str: str) -> str:
     except:
         return date_str
 
+def format_avia_link_date(date_str: str) -> str:
+    """Форматирует дату ДД.ММ → ДДММ для ссылки Aviasales"""
+    try:
+        day, month = date_str.split('.')
+        return f"{day}{month}"
+    except:
+        return date_str.replace('.', '')
+
 def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     """
     Добавляет маркер и sub_id к ссылке Aviasales.
@@ -100,8 +108,8 @@ async def search_flights(
                         flight["booking_url"] = add_marker_to_url(flight["deep_link"], marker, sub_id)
                     else:
                         # Резерв: генерируем базовую ссылку (редко нужно)
-                        from .flight_search import generate_fallback_link
-                        flight["booking_url"] = generate_fallback_link(flight, origin, destination, depart_date, return_date)
+                        # (реализация внутри start.py)
+                        pass
 
                 return flights
 
@@ -112,24 +120,35 @@ async def search_flights(
             logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
             return []
 
-# Резервная функция на случай отсутствия link/deep_link (не используется в нормальной работе)
-def generate_fallback_link(flight: Dict, origin: str, dest: str, depart_date: str, return_date: Optional[str]) -> str:
-    """Генерирует базовую ссылку без t-параметров (только маршрут)"""
-    def format_date(d: str) -> str:
-        return d.replace('.', '') if d else ''
+def find_cheapest_flight_on_exact_date(
+    flights: List[Dict],
+    requested_depart_date: str,
+    requested_return_date: Optional[str] = None
+) -> Optional[Dict]:
+    """
+    Находит самый дешёвый рейс, соответствующий *точно* запрошенным датам.
+    """
+    exact_flights = []
+    for flight in flights:
+        flight_depart_date = flight.get("departure_at", "")[:10]  # YYYY-MM-DD
+        flight_return_date = flight.get("return_at", "")[:10] if flight.get("return_at") else None
+        
+        # Преобразуем запрошенные даты в формат YYYY-MM-DD для сравнения
+        req_depart = normalize_date(requested_depart_date)
+        req_return = normalize_date(requested_return_date) if requested_return_date else None
+        
+        # Сравниваем даты
+        if flight_depart_date == req_depart:
+            if req_return:
+                if flight_return_date and flight_return_date == req_return:
+                    exact_flights.append(flight)
+            else:
+                # Односторонний — достаточно совпадения вылета
+                exact_flights.append(flight)
     
-    d1 = format_date(depart_date)
-    d2 = format_date(return_date) if return_date else ''
-    passengers = str(flight.get("number_of_adults", 1))
-    route = f"{origin}{d1}{dest}{d2}{passengers}"
-    base = f"https://www.aviasales.ru/search/{route}"
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        parsed = urlparse(base)
-        query = parse_qs(parsed.query)
-        query['marker'] = [marker]
-        query['sub_id'] = [sub_id]
-        new_query = urlencode(query, doseq=True)
-        return urlunparse(parsed._replace(query=new_query))
-    return base
+    if not exact_flights:
+        # Если нет точных совпадений, возвращаем самый дешёвый из всех (как fallback)
+        return min(flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
+    
+    # Сортируем по цене среди подходящих под даты
+    return min(exact_flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
