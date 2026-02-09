@@ -53,8 +53,16 @@ def update_link_with_user_dates(link: str, origin: str, dest: str, depart_date: 
 
     # Разбираем query параметры
     parsed_query = parse_qs(query, keep_blank_values=True)
-    # Обновляем search_date
-    parsed_query['search_date'] = [d1 + depart_date.split('.')[2]]  # "10032026"
+    # Обновляем search_date: форматируем как DDMMYYYY
+    # Если в дате нет года (ДД.ММ), подставляем 2026
+    date_parts = depart_date.split('.')
+    if len(date_parts) == 2:
+        day_month = date_parts[0] + date_parts[1]  # "1003"
+        year = "2026"
+    else:
+        day_month = date_parts[0] + date_parts[1]
+        year = date_parts[2]  # если есть год в формате ДД.ММ.ГГГГ
+    parsed_query['search_date'] = [day_month + year]
 
     # Собираем обратно
     new_query = urlencode(parsed_query, doseq=True)
