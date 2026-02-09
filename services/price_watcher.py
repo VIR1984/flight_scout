@@ -59,7 +59,7 @@ class PriceWatcher:
         logger.info(f"🔍 Начата проверка {len(watch_keys)} отслеживаний...")
         self.route_cache.clear()
         
-        # Проверяем чанками по 5 маршрутов
+        # Проверяем чанками по 5 маршрутов=
         chunk_size = 5
         total_updated = 0
         total_removed = 0
@@ -75,7 +75,7 @@ class PriceWatcher:
                     
                 try:
                     raw_data = await redis_client.client.get(key)
-                    if not raw_:
+                    if not raw_data:
                         continue
                     
                     watch_data = json.loads(raw_data)

@@ -614,7 +614,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Це актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ГЛАВНОЕ ИЗМЕНЕНИЕ: используем link из API ===
+    # === 🔗 ГЛАВНОЕ ИЗМЕНЕНИЕ: используем link из API ====
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if not booking_link or not booking_link.startswith(('http://', 'https://')):
         booking_link = generate_booking_link(

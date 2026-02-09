@@ -349,7 +349,7 @@ async def handle_everywhere_search_manual(
         )
     ])
     
-    # === КНОПКА "ВСЕ НАПРАВЛЕНИЯ" ===
+    # === КНОПКА "ВСЕ НАПРАВЛЕНИЯ" ====
     # УБРАНА ДЛЯ "Везде → Город" (is_origin_everywhere)
     # ОСТАВЛЕНА ДЛЯ "Город → Везде" (is_dest_everywhere)
     if is_dest_everywhere:
