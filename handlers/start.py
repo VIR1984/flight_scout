@@ -13,6 +13,7 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from handlers.everywhere_search import (
     search_origin_everywhere,
     search_destination_everywhere,
@@ -504,7 +505,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
-            link = add_marker_to_url(link, marker)  # ✅ Используем глобальную функцию
+            link = add_marker_to_url(link, marker)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=link)],
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
@@ -612,32 +613,56 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     text += f"\n💰 <b>Цена от:</b> {price} ₽"
     if data.get("need_return", False) and display_return:
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
-    text += f"\n⚠️ <i>Це актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
+    text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ГЛАВНОЕ ИЗМЕНЕНИЕ: используем link из API ====
+    # === 🔗 ОСНОВНАЯ ССЫЛКА: ИСПОЛЬЗУЕМ flight["link"] ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if not booking_link or not booking_link.startswith(('http://', 'https://')):
-        booking_link = generate_booking_link(
-            flight=top_flight,
-            origin=origin_iata,
-            dest=dest_iata,
-            depart_date=data["depart_date"],
-            passengers_code=data.get("passengers_code", "1"),
-            return_date=data["return_date"] if data.get("need_return") else None
-        )
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
+        booking_link = f"https://www.aviasales.ru{booking_link}" if booking_link else ""
+
+    # === 🔗 АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
+    fallback_link = generate_booking_link(
+        flight=top_flight,
+        origin=origin_iata,
+        dest=dest_iata,
+        depart_date=data["depart_date"],
+        passengers_code=data.get("passengers_code", "1"),
+        return_date=data["return_date"] if data.get("need_return") else None
+    )
+    if not fallback_link.startswith(('http://', 'https://')):
+        fallback_link = f"https://www.aviasales.ru{fallback_link}"
+
+    # === ДОБАВЛЯЕМ МАРКЕР К ОБЕИМ ССЫЛКАМ ===
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
-    # =====================================================
+        if booking_link:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+        fallback_link = add_marker_to_url(fallback_link, marker, sub_id)
 
-    kb_buttons = [
-        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],
-        [InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
-        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
-    ]
+    # === КНОПКИ ===
+    kb_buttons = []
+
+    # Основная кнопка — если есть link
+    if booking_link:
+        kb_buttons.append([
+            InlineKeyboardButton(text=f"✈️ Забронировать за {price} ₽", url=booking_link)
+        ])
+
+    # Альтернативная кнопка — всегда
+    kb_buttons.append([
+        InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)
+    ])
+
+    # Отслеживание — привязано к cache_id (все рейсы, но используется cheapest)
+    kb_buttons.append([
+        InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")
+    ])
+
+    # Меню
+    kb_buttons.append([
+        InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
+    ])
 
     SUPPORTED_TRANSFER_AIRPORTS = [
         "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
@@ -646,7 +671,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     ]
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        kb_buttons.insert(1, [
+        kb_buttons.insert(-2, [
             InlineKeyboardButton(
                 text=f"🚖 Трансфер в {dest_name}",
                 url=transfer_link
@@ -746,7 +771,7 @@ async def handle_flight_request(message: Message):
         marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
-            link = add_marker_to_url(link, marker)  # ✅ Используем глобальную функцию
+            link = add_marker_to_url(link, marker)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)],
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
@@ -853,30 +878,50 @@ async def handle_flight_request(message: Message):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ГЛАВНОЕ ИЗМЕНЕНИЕ: используем link из API ===
+    # === 🔗 ОСНОВНАЯ ССЫЛКА: ИСПОЛЬЗУЕМ flight["link"] ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if not booking_link or not booking_link.startswith(('http://', 'https://')):
-        booking_link = generate_booking_link(
-            flight=top_flight,
-            origin=origin_iata,
-            dest=dest_iata,
-            depart_date=depart_date,
-            passengers_code=passengers_code,
-            return_date=return_date if is_roundtrip else None
-        )
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
+        booking_link = f"https://www.aviasales.ru{booking_link}" if booking_link else ""
+
+    # === 🔗 АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
+    fallback_link = generate_booking_link(
+        flight=top_flight,
+        origin=origin_iata,
+        dest=dest_iata,
+        depart_date=depart_date,
+        passengers_code=passengers_code,
+        return_date=return_date if is_roundtrip else None
+    )
+    if not fallback_link.startswith(('http://', 'https://')):
+        fallback_link = f"https://www.aviasales.ru{fallback_link}"
+
+    # === ДОБАВЛЯЕМ МАРКЕР К ОБЕИМ ССЫЛКАМ ===
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
-    # =====================================================
+        if booking_link:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+        fallback_link = add_marker_to_url(fallback_link, marker, sub_id)
 
-    kb_buttons = [
-        [InlineKeyboardButton(text=f"✈️ Перейти к бронированию ({price} ₽)", url=booking_link)],
-        [InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ]
+    # === КНОПКИ ===
+    kb_buttons = []
+
+    if booking_link:
+        kb_buttons.append([
+            InlineKeyboardButton(text=f"✈️ Забронировать за {price} ₽", url=booking_link)
+        ])
+
+    kb_buttons.append([
+        InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)
+    ])
+
+    kb_buttons.append([
+        InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")
+    ])
+
+    kb_buttons.append([
+        InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")
+    ])
 
     SUPPORTED_TRANSFER_AIRPORTS = [
         "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
@@ -885,7 +930,7 @@ async def handle_flight_request(message: Message):
     ]
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
-        kb_buttons.insert(1, [
+        kb_buttons.insert(-2, [
             InlineKeyboardButton(
                 text=f"🚖 Трансфер в {dest_name}",
                 url=transfer_link
