@@ -4,6 +4,7 @@ import aiohttp
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from utils.logger import logger
+import re
 
 # Конфигурация API
 AVIASALES_API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
@@ -27,6 +28,41 @@ def format_avia_link_date(date_str: str) -> str:
         return f"{day}{month}"
     except:
         return date_str.replace('.', '')
+
+def update_link_with_user_dates(link: str, origin: str, dest: str, depart_date: str, return_date: Optional[str], passengers_code: str) -> str:
+    """
+    Обновляет партнёрскую ссылку, заменяя даты на указанные пользователем.
+    Сохраняет остальные параметры (t, expected_price_uuid и т.д.).
+    """
+    # Пример: /AER1102MOW12021?t=...&search_date=09022026&...
+    # Нужно заменить AER1102MOW12021 на AER1003MOW15031 и search_date на 10032026
+
+    # Форматируем даты
+    d1 = format_avia_link_date(depart_date)  # "10.03" -> "1003"
+    d2 = format_avia_link_date(return_date) if return_date else ""
+    # Формируем новый маршрут
+    new_route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+
+    # Извлекаем текущий маршрут из ссылки (до ?)
+    path_parts = link.split('?', 1)
+    old_path = path_parts[0]  # например, '/AER1102MOW12021'
+    query = path_parts[1] if len(path_parts) > 1 else ""
+
+    # Заменяем старый маршрут на новый
+    new_path = f"/{new_route}"
+
+    # Разбираем query параметры
+    parsed_query = parse_qs(query, keep_blank_values=True)
+    # Обновляем search_date
+    parsed_query['search_date'] = [d1 + depart_date.split('.')[2]]  # "10032026"
+
+    # Собираем обратно
+    new_query = urlencode(parsed_query, doseq=True)
+    new_link = new_path
+    if new_query:
+        new_link += "?" + new_query
+
+    return new_link
 
 def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     """

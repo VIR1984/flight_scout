@@ -9,7 +9,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import search_flights, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
+from services.flight_search import search_flights, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, update_link_with_user_dates, generate_booking_link
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
@@ -669,11 +669,19 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     # =============================================================
     
-    # === ИСПРАВЛЕНО: используем поле 'link' из API как есть (с добавлением маркера) ===
+    # === ИСПРАВЛЕНО: используем поле 'link' из API как есть (с обновлением дат) ===
     api_link = top_flight.get("link") or top_flight.get("deep_link")
     if api_link:
         if api_link.startswith('/'):
-            booking_link = f"https://www.aviasales.ru{api_link}"
+            updated_link = update_link_with_user_dates(
+                link=api_link,
+                origin=origin_iata,
+                dest=dest_iata,
+                depart_date=data["depart_date"],
+                return_date=data.get("return_date"),
+                passengers_code=data.get("passengers_code", "1")
+            )
+            booking_link = f"https://www.aviasales.ru{updated_link}"
         else:
             booking_link = api_link
         # Добавляем маркер и sub_id
@@ -953,11 +961,19 @@ async def handle_flight_request(message: Message):
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     # =============================================================
     
-    # === ИСПРАВЛЕНО: используем поле 'link' из API как есть (с добавлением маркера) ===
+    # === ИСПРАВЛЕНО: используем поле 'link' из API как есть (с обновлением дат) ===
     api_link = top_flight.get("link") or top_flight.get("deep_link")
     if api_link:
         if api_link.startswith('/'):
-            booking_link = f"https://www.aviasales.ru{api_link}"
+            updated_link = update_link_with_user_dates(
+                link=api_link,
+                origin=origin_iata,
+                dest=dest_iata,
+                depart_date=depart_date,
+                return_date=return_date,
+                passengers_code=passengers_code
+            )
+            booking_link = f"https://www.aviasales.ru{updated_link}"
         else:
             booking_link = api_link
         # Добавляем маркер и sub_id
