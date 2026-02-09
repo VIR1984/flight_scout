@@ -9,7 +9,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, add_marker_to_url
+from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
@@ -18,6 +18,7 @@ from handlers.everywhere_search import (
     search_destination_everywhere,
     process_everywhere_search,
     handle_everywhere_search_manual,
+    add_marker_to_url,
     format_user_date,
     build_passenger_desc
 )
@@ -503,8 +504,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
-            from services.flight_search import add_marker_to_url
-            link = add_marker_to_url(link, marker)
+            link = add_marker_to_url(link, marker)  # ✅ Используем глобальную функцию
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=link)],
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
@@ -614,7 +614,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ОСНОВНОЕ ИЗМЕНЕНИЕ: используем link из API ===
+    # === 🔗 ГЛАВНОЕ ИЗМЕНЕНИЕ: используем link из API ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if not booking_link or not booking_link.startswith(('http://', 'https://')):
         booking_link = generate_booking_link(
@@ -746,8 +746,7 @@ async def handle_flight_request(message: Message):
         marker = os.getenv("TRAFFIC_SOURCE", "").strip()
         link = f"https://www.aviasales.ru/search/{route}"
         if marker:
-            from services.flight_search import add_marker_to_url
-            link = add_marker_to_url(link, marker)
+            link = add_marker_to_url(link, marker)  # ✅ Используем глобальную функцию
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)],
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
@@ -854,7 +853,7 @@ async def handle_flight_request(message: Message):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === 🔗 ОСНОВНОЕ ИЗМЕНЕНИЕ: используем link из API ===
+    # === 🔗 ГЛАВНОЕ ИЗМЕНЕНИЕ: используем link из API ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if not booking_link or not booking_link.startswith(('http://', 'https://')):
         booking_link = generate_booking_link(
@@ -1124,7 +1123,7 @@ async def handle_show_transfer(callback: CallbackQuery):
     await callback.message.edit_text(message_text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
-# ===== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ======
+# ===== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК =====
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
