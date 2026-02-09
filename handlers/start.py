@@ -1124,7 +1124,7 @@ async def handle_show_transfer(callback: CallbackQuery):
     await callback.message.edit_text(message_text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
-# ===== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК =====
+# ===== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ======
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
