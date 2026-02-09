@@ -31,7 +31,7 @@ def format_avia_link_date(date_str: str) -> str:
 
 def update_link_with_user_dates(link: str, origin: str, dest: str, depart_date: str, return_date: Optional[str], passengers_code: str) -> str:
     """
-    Обновляет партнёрскую ссылку, заменяя даты на указанные пользователем.
+    Обновляет партнёрскую ссылку, заменяя даты на указанные пользователем.///
     Сохраняет остальные параметры (t, expected_price_uuid и т.д.).
     """
     # Пример: /AER1102MOW12021?t=...&search_date=09022026&...
