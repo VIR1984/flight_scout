@@ -31,7 +31,7 @@ def format_avia_link_date(date_str: str) -> str:
 
 def update_link_with_user_dates(link: str, origin: str, dest: str, depart_date: str, return_date: Optional[str], passengers_code: str) -> str:
     """
-    Обновляет партнёрскую ссылку, заменяя даты на указанные пользователем.///
+    Обновляет партнёрскую ссылку, заменяя даты на указанные пользователем.
     Сохраняет остальные параметры (t, expected_price_uuid и т.д.).
     """
     # Пример: /AER1102MOW12021?t=...&search_date=09022026&...
@@ -54,15 +54,11 @@ def update_link_with_user_dates(link: str, origin: str, dest: str, depart_date: 
     # Разбираем query параметры
     parsed_query = parse_qs(query, keep_blank_values=True)
     # Обновляем search_date: форматируем как DDMMYYYY
-    # Если в дате нет года (ДД.ММ), подставляем 2026
-    date_parts = depart_date.split('.')
-    if len(date_parts) == 2:
-        day_month = date_parts[0] + date_parts[1]  # "1003"
-        year = "2026"
-    else:
-        day_month = date_parts[0] + date_parts[1]
-        year = date_parts[2]  # если есть год в формате ДД.ММ.ГГГГ
-    parsed_query['search_date'] = [day_month + year]
+    parsed_query['search_date'] = [d1 + depart_date.split('.')[2]]  # "10.03.2026" -> "10032026"
+    # ВАЖНО: если дата в формате "ДД.ММ", то добавим год вручную
+    if len(depart_date.split('.')) < 3:
+        year = "2026"  # по умолчанию для 2026 года
+        parsed_query['search_date'] = [d1 + year]
 
     # Собираем обратно
     new_query = urlencode(parsed_query, doseq=True)
