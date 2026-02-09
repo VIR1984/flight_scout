@@ -9,7 +9,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
+from services.flight_search import search_flights, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
@@ -565,6 +565,28 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         data["depart_date"],  # например, "10.03"
         data.get("return_date")  # например, "15.03" или None
     )
+    
+    if top_flight is None:
+        # Нет рейсов на точную дату
+        origin_iata = origins[0]
+        d1 = format_avia_link_date(data["depart_date"])
+        d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
+        route = f"{origin_iata}{d1}{destinations[0]}{d2}1"
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        link = f"https://www.aviasales.ru/search/{route}"
+        if marker:
+            link = add_marker_to_url(link, marker)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=link)],
+            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+        ])
+        await callback.message.edit_text(
+            "😔 Билеты на указанные даты не найдены.\n"
+            "Попробуйте выбрать другие даты или посмотреть варианты на Aviasales:",
+            reply_markup=kb
+        )
+        await state.clear()
+        return
     # =========================================================
     
     price = top_flight.get("value") or top_flight.get("price") or "?"
@@ -617,13 +639,14 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     
     # === ИСПРАВЛЕНО: Заголовок уточняет, что найден рейс на конкретную дату ===
     header = f"✅ <b>Самый дешёвый вариант на {display_depart} ({data['passenger_desc']}):</b>"
-    route_line = f"🛫 <b>Рейс: {origin_name}</b> → <b>{dest_name}</b>"
+    route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
     text = (
         f"{header}\n"
         f"{route_line}\n"
         f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-        f"📅 Дата вылета: {display_depart}\n"
-        f"⏱️ Продолжительность полета: {duration}\n"
+        f"📅 {display_depart}\n"
+        f"⏰ {departure_time} → {arrival_time}\n"
+        f"⏱️ {duration}\n"
         f"{transfer_text}\n"
     )
     # ========================================================================
@@ -646,22 +669,29 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     # =============================================================
     
-    # === ИСПРАВЛЕНО: ВСЕГДА генерируем ссылку через generate_booking_link() с правильными датами ===
-    booking_link = generate_booking_link(
-        flight=top_flight,
-        origin=origin_iata,
-        dest=dest_iata,
-        depart_date=data["depart_date"],
-        passengers_code=data.get("passengers_code", "1"),
-        return_date=data["return_date"] if data.get("need_return") else None
-    )
-    if not booking_link.startswith(('http://', 'https://')):
-        booking_link = f"https://www.aviasales.ru{booking_link}"
-    
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    # === ИСПРАВЛЕНО: используем поле 'link' из API как есть (с добавлением маркера) ===
+    api_link = top_flight.get("link") or top_flight.get("deep_link")
+    if api_link:
+        if api_link.startswith('/'):
+            booking_link = f"https://www.aviasales.ru{api_link}"
+        else:
+            booking_link = api_link
+        # Добавляем маркер и sub_id
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+        if marker:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    else:
+        # Резерв: генерируем базовую ссылку
+        d1 = format_avia_link_date(data["depart_date"])
+        d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
+        passengers_code = data.get("passengers_code", "1")
+        route = f"{origin_iata}{d1}{dest_iata}{d2}{passengers_code}"
+        booking_link = f"https://www.aviasales.ru/search/{route}"
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+        if marker:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
     # =========================================================================================
     
     kb_buttons = [
@@ -821,6 +851,26 @@ async def handle_flight_request(message: Message):
         depart_date,  # например, "10.03"
         return_date  # например, "15.03" или None
     )
+    
+    if top_flight is None:
+        origin_iata = origins[0]
+        d1 = format_avia_link_date(depart_date)
+        d2 = format_avia_link_date(return_date) if return_date else ""
+        route = f"{origin_iata}{d1}{dest_iata}{d2}{passengers_code}"
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        link = f"https://www.aviasales.ru/search/{route}"
+        if marker:
+            link = add_marker_to_url(link, marker)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales (с пересадками)", url=link)],
+            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+        ])
+        await message.answer(
+            "Билеты на указанные даты не найдены 😢\n"
+            "Попробуйте выбрать другие даты или посмотреть варианты на Aviasales:",
+            reply_markup=kb
+        )
+        return
     # =========================================================
     
     price = top_flight.get("value") or top_flight.get("price") or "?"
@@ -873,13 +923,14 @@ async def handle_flight_request(message: Message):
     
     # === ИСПРАВЛЕНО: Заголовок уточняет, что найден рейс на конкретную дату ===
     header = f"✅ <b>Самый дешёвый вариант на {display_depart} ({passenger_desc}):</b>"
-    route_line = f"🛫 Рейс: <b>{origin_name}</b> → <b>{dest_name}</b>"
+    route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
     text = (
         f"{header}\n"
         f"{route_line}\n"
         f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-        f"📅 Дата вылета: {display_depart}\n"
-        f"⏱️ Продолжительность полета: {duration}\n"
+        f"📅 {display_depart}\n"
+        f"⏰ {departure_time} → {arrival_time}\n"
+        f"⏱️ {duration}\n"
         f"{transfer_text}\n"
     )
     # ========================================================================
@@ -902,22 +953,28 @@ async def handle_flight_request(message: Message):
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     # =============================================================
     
-    # === ИСПРАВЛЕНО: ВСЕГДА генерируем ссылку через generate_booking_link() с правильными датами ===
-    booking_link = generate_booking_link(
-        flight=top_flight,
-        origin=origin_iata,
-        dest=dest_iata,
-        depart_date=depart_date,
-        passengers_code=passengers_code,
-        return_date=return_date if is_roundtrip else None
-    )
-    if not booking_link.startswith(('http://', 'https://')):
-        booking_link = f"https://www.aviasales.ru{booking_link}"
-    
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    # === ИСПРАВЛЕНО: используем поле 'link' из API как есть (с добавлением маркера) ===
+    api_link = top_flight.get("link") or top_flight.get("deep_link")
+    if api_link:
+        if api_link.startswith('/'):
+            booking_link = f"https://www.aviasales.ru{api_link}"
+        else:
+            booking_link = api_link
+        # Добавляем маркер и sub_id
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+        if marker:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    else:
+        # Резерв: генерируем базовую ссылку
+        d1 = format_avia_link_date(depart_date)
+        d2 = format_avia_link_date(return_date) if return_date else ""
+        route = f"{origin_iata}{d1}{dest_iata}{d2}{passengers_code}"
+        booking_link = f"https://www.aviasales.ru/search/{route}"
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+        if marker:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
     # =========================================================================================
     
     kb_buttons = [
@@ -952,7 +1009,7 @@ async def handle_watch_price(callback: CallbackQuery):
     if parts[1] == "all":
         cache_id = parts[2]
         data = await redis_client.get_search_cache(cache_id)
-        if not data: 
+        if not data:
             await callback.answer("Данные устарели", show_alert=True)
             return
         
