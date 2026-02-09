@@ -48,7 +48,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         # Остановка наблюдателя
-        price_watcher.stop()
+        price_watcher.running = False
         watcher_task.cancel()
 
         # Закрытие соединения с Redis
