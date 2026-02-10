@@ -649,18 +649,12 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     route_line = f"🛫 <b>Рейс: {origin_name}</b> → <b>{dest_name}</b>"
     
     text = (
-        f"{header}
-"
-        f"{route_line}
-"
-        f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})
-"
-        f"📅 Дата вылета: {display_depart}
-"
-        f"⏱️ Продолжительность полета: {duration}
-"
-        f"{transfer_text}
-"
+        f"{header}"
+        f"{route_line}"
+        f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
+        f"📅 Дата вылета: {display_depart}"
+        f"⏱️ Продолжительность полета: {duration}"
+        f"{transfer_text}"
     )
     # ========================================================================
     
@@ -673,8 +667,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         }
         airline_display = airline_name_map.get(airline, airline)
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
-        text += f"✈️ {flight_display}
-"
+        text += f"✈️ {flight_display}"
     
     text += f"
 💰 <b>Цена от:</b> {price} ₽"
