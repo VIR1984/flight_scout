@@ -442,51 +442,50 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
 
 def _update_passengers_in_link(link: str, passengers_code: str) -> str:
     """
-    Полностью заменяет код пассажиров в маршруте Aviasales.
-    Поддерживает коды: 1, 2, 21, 211 и т.д.
+    Полностью заменяет пассажирский блок в ссылке Aviasales.
+    Работает для:
+    - one way
+    - round trip
+    - любого количества пассажиров (1, 2, 21, 211 и т.д.)
     """
-    if not link or not passengers_code:
+
+    if not link or not passengers_code or not passengers_code.isdigit():
         return link
 
-    # Извлекаем маршрут из URL
+    # Разбираем URL
     if link.startswith('/'):
+        parsed = None
         path = link
-        is_absolute = False
+        query = ""
+        if "?" in path:
+            path, query = path.split("?", 1)
     else:
         parsed = urlparse(link)
         path = parsed.path
-        is_absolute = True
+        query = parsed.query
 
-    # Ищем маршрут вида /search/...
-    if '/search/' not in path:
+    if not path.startswith("/search/"):
         return link
 
-    search_part = path.split('/search/', 1)[1]
+    route = path.replace("/search/", "")
 
-    # Разделяем маршрут и параметры
-    if '?' in search_part:
-        route, query = search_part.split('?', 1)
-    else:
-        route, query = search_part, ""
+    # Удаляем существующий пассажирский код (все цифры в конце маршрута)
+    route = re.sub(r"\d+$", "", route)
 
-    # Удаляем старый код пассажиров (все цифры в конце маршрута)
-    i = len(route) - 1
-    while i >= 0 and route[i].isdigit():
-        i -= 1
+    # Добавляем новый пассажирский код
+    new_route = route + passengers_code
 
-    # Формируем новый маршрут
-    new_route = route[:i + 1] + passengers_code
+    new_path = f"/search/{new_route}"
+
+    if query:
+        new_path += f"?{query}"
 
     # Собираем обратно
-    if query:
-        final_path = f"/search/{new_route}?{query}"
+    if parsed:
+        return urlunparse(parsed._replace(path=new_path))
     else:
-        final_path = f"/search/{new_route}"
+        return new_path
 
-    if is_absolute:
-        return urlunparse(parsed._replace(path=final_path))
-    else:
-        return final_path
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):
