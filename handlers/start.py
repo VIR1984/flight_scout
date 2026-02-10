@@ -669,8 +669,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
         text += f"✈️ {flight_display}"
     
-    text += f"
-💰 <b>Цена от:</b> {price} ₽"
+    text += f"\n💰 <b>Цена от:</b> {price} ₽"
     if data.get("need_return", False) and display_return:
         text += f"
 ↩️ <b>Обратно:</b> {display_return}"
