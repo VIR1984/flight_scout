@@ -1,21 +1,17 @@
 import os
 import asyncio
 import aiohttp
-import re
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
 from utils.logger import logger
 
-# ================== CONFIG ==================
-
+# Конфигурация API
 AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
 AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN", "").strip()
 
-# ================== DATES ==================
-
 def normalize_date(date_str: str) -> str:
-    """ДД.ММ → YYYY-MM-DD"""
+    """Преобразует дату ДД.ММ в формат ГГГГ-ММ-ДД для 2026 года (или 2027 для январь/февраль)"""
     try:
         day, month = map(int, date_str.split('.'))
         year = 2026
@@ -25,133 +21,29 @@ def normalize_date(date_str: str) -> str:
     except Exception:
         return date_str
 
-
 def format_avia_link_date(date_str: str) -> str:
-    """ДД.ММ → ДДММ"""
+    """Форматирует дату ДД.ММ → ДДММ для ссылки Aviasales"""
     try:
         day, month = date_str.split('.')
         return f"{day}{month}"
     except Exception:
         return date_str.replace('.', '')
 
-# ================== MARKER ==================
-
 def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
+    """
+    Добавляет маркер и sub_id к ссылке Aviasales.
+    Корректно обрабатывает уже существующие параметры.
+    """
     if not marker or not url:
         return url
     parsed = urlparse(url)
-    query = parse_qs(parsed.query)
-    query["marker"] = [marker]
-    query["sub_id"] = [sub_id]
-    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
-
-# ================== PASSENGERS ==================
-
-def build_passengers_code(adults: int, children: int = 0, infants: int = 0) -> str:
-    """
-    Aviasales pax format:
-    2   → 2 adults
-    21  → 2 adults + 1 child
-    211 → 2 adults + 1 child + 1 infant
-    """
-    adults = max(1, adults)
-    infants = min(infants, adults)
-
-    code = str(adults)
-    if children > 0 or infants > 0:
-        code += str(children)
-    if infants > 0:
-        code += str(infants)
-
-    return code
-
-
-def patch_aviasales_passengers(link: str, passengers_code: str) -> str:
-    """
-    /search/MOW1003IST1 → /search/MOW211IST211
-    """
-    if not link or not passengers_code.isdigit():
-        return link
-
-    parsed = urlparse(link)
-    path = parsed.path
-
-    match = re.search(
-        r"/search/([A-Z]{3})(\d+)([A-Z]{3})(\d+)",
-        path
-    )
-    if not match:
-        return link
-
-    origin, _, dest, _ = match.groups()
-    new_path = f"/search/{origin}{passengers_code}{dest}{passengers_code}"
-
-    return urlunparse(parsed._replace(path=new_path))
-
-# ================== LINKS ==================
-
-def generate_booking_link(
-    origin: str,
-    dest: str,
-    depart_date: str,
-    passengers_code: str,
-    return_date: Optional[str] = None
-) -> str:
-    """
-    Генерация fallback-ссылки Aviasales
-    """
-    d1 = format_avia_link_date(depart_date)
-    d2 = format_avia_link_date(return_date) if return_date else ""
-    route = f"{origin}{d1}{dest}{d2}{passengers_code}"
-
-    url = f"https://www.aviasales.ru/search/{route}"
-
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-
-    if marker:
-        url = add_marker_to_url(url, marker, sub_id)
-
-    return url
-
-
-def build_final_booking_link(
-    flight: Dict,
-    origin: str,
-    dest: str,
-    depart_date: str,
-    passengers_code: str,
-    return_date: Optional[str] = None
-) -> str:
-    """
-    ЕДИНАЯ точка получения ссылки
-    1. Берём link/deep_link из API
-    2. Чиним пассажиров
-    3. Если нет — fallback
-    """
-    link = flight.get("link") or flight.get("deep_link")
-
-    if link:
-        link = patch_aviasales_passengers(link, passengers_code)
-        if not link.startswith("http"):
-            link = "https://www.aviasales.ru" + link
-    else:
-        link = generate_booking_link(
-            origin=origin,
-            dest=dest,
-            depart_date=depart_date,
-            passengers_code=passengers_code,
-            return_date=return_date
-        )
-
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        link = add_marker_to_url(link, marker, sub_id)
-
-    return link
-
-# ================== SEARCH ==================
+    query_params = parse_qs(parsed.query)
+    query_params.pop('marker', None)
+    query_params.pop('sub_id', None)
+    query_params['marker'] = [marker]
+    query_params['sub_id'] = [sub_id]
+    new_query = urlencode(query_params, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
 
 async def search_flights(
     origin: str,
@@ -161,9 +53,12 @@ async def search_flights(
     currency: str = "rub",
     direct: bool = False
 ) -> List[Dict]:
-
+    """
+    Ищет авиабилеты через Travelpayouts API (grouped_prices).
+    Возвращает список рейсов, совместимый с остальным кодом.
+    """
     if not AVIASALES_TOKEN:
-        logger.warning("AVIASALES_TOKEN not set")
+        logger.warning("⚠️ AVIASALES_TOKEN не установлен — поиск авиабилетов недоступен")
         return []
 
     params = {
@@ -178,43 +73,150 @@ async def search_flights(
 
     if return_date:
         params["return_at"] = return_date
+        # Опционально: задать длительность поездки (в днях)=
+        try:
+            d1 = datetime.fromisoformat(depart_date)
+            d2 = datetime.fromisoformat(return_date)
+            trip_days = (d2 - d1).days
+            if trip_days > 0:
+                params["min_trip_duration"] = trip_days
+                params["max_trip_duration"] = trip_days
+        except Exception:
+            pass  # игнорируем ошибки парсинга
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(AVIASALES_GROUPED_URL, params=params) as r:
-            if r.status != 200:
-                logger.error(await r.text())
-                return []
+        try:
+            async with session.get(AVIASALES_GROUPED_URL, params=params, timeout=10) as response:
+                if response.status == 429:
+                    logger.warning("⚠️ Достигнут лимит API Aviasales (429). Ждём 60 секунд...")
+                    await asyncio.sleep(60)
+                    return []
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
+                    return []
+                data = await response.json()
+                if not data.get("success"):
+                    logger.error(f"❌ API вернул ошибку: {data.get('error')}")
+                    return []
 
-            data = await r.json()
-            if not data.get("success"):
-                return []
+                grouped_flights = data.get("data", {})
+                flights = []
 
-            flights = []
-            for _, flight in data.get("data", {}).items():
-                flight["value"] = flight.get("price")
-                flights.append(flight)
+                for date_key, flight in grouped_flights.items():
+                    # Приводим к формату, совместимому с prices_for_dates
+                    flight["value"] = flight.get("price")  # для min(flights, key=lambda f: f.get("value"))
+                    flight["departure_at"] = flight.get("departure_at", f"{date_key}T00:00:00+03:00")
+                    flight["return_at"] = flight.get("return_at", "")
+                    flight["origin"] = flight.get("origin", origin)
+                    flight["destination"] = flight.get("destination", destination)
+                    flights.append(flight)
 
-            return flights
+                # Добавляем маркер ко всем ссылкам
+                marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+                sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+                for flight in flights:
+                    if flight.get("link"):
+                        flight["link"] = add_marker_to_url(flight["link"], marker, sub_id)
+                    if flight.get("deep_link"):
+                        flight["deep_link"] = add_marker_to_url(flight["deep_link"], marker, sub_id)
 
+                return flights
+
+        except asyncio.TimeoutError:
+            logger.error("❌ Таймаут при запросе к Aviasales API")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
+            return []
+
+def generate_booking_link(
+    flight: Dict,
+    origin: str,
+    dest: str,
+    depart_date: str,
+    passengers_code: str = "1",
+    return_date: Optional[str] = None
+) -> str:
+    """
+    Генерирует ссылку для бронирования на Aviasales с маркером.
+    Формат: /search/MOW1003IST1 для одностороннего
+    Формат: /search/MOW1003IST15031 для туда-обратно
+    """
+    # Если в рейсе уже есть ссылка от API - модифицируем её
+    existing_link = flight.get("link") or flight.get("deep_link")
+    if existing_link and existing_link.startswith('/search/'):
+        # Заменяем код пассажиров в существующей ссылке
+        return replace_passengers_in_url(existing_link, passengers_code)
+    
+    # Иначе генерируем новую ссылку
+    d1 = format_avia_link_date(depart_date)
+    d2 = format_avia_link_date(return_date) if return_date else ""
+    
+    if return_date:
+        route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    else:
+        route = f"{origin}{d1}{dest}{passengers_code}"
+    
+    base_url = f"https://www.aviasales.ru/search/{route}"
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    
+    if marker:
+        return add_marker_to_url(base_url, marker, sub_id)
+    return base_url
 
 def find_cheapest_flight_on_exact_date(
     flights: List[Dict],
-    depart_date: str,
-    return_date: Optional[str] = None
+    requested_depart_date: str,
+    requested_return_date: Optional[str] = None
 ) -> Optional[Dict]:
+    """
+    Находит самый дешёвый рейс, соответствующий *точно* запрошенным датам.
+    """
+    exact_flights = []
+    req_depart = normalize_date(requested_depart_date)
+    req_return = normalize_date(requested_return_date) if requested_return_date else None
 
-    if not flights:
-        return None
+    for flight in flights:
+        flight_depart = flight.get("departure_at", "")[:10]
+        flight_return = flight.get("return_at", "")[:10] if flight.get("return_at") else None
 
-    target_depart = normalize_date(depart_date)
-    target_return = normalize_date(return_date) if return_date else None
+        if flight_depart == req_depart:
+            if req_return:
+                if flight_return and flight_return == req_return:
+                    exact_flights.append(flight)
+            else:
+                exact_flights.append(flight)
 
-    exact = []
-    for f in flights:
-        if f.get("departure_at", "")[:10] != target_depart:
-            continue
-        if target_return and f.get("return_at", "")[:10] != target_return:
-            continue
-        exact.append(f)
-
-    return min(exact or flights, key=lambda f: f.get("value", 10**9))
+    if not exact_flights:
+        return min(flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
+    return min(exact_flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
+    
+def replace_passengers_in_url(url: str, passengers_code: str) -> str:
+    """
+    Заменяет код пассажиров в ссылке Aviasales.
+    Формат: /search/MOW1003IST1 → /search/MOW1003IST211
+    где 211 = 2 взр, 1 реб, 1 мл
+    """
+    if not url or not passengers_code:
+        return url
+    
+    # Извлекаем маршрут из URL
+    import re
+    
+    # Паттерн для поиска маршрута: /search/КОДГОРОДАДАТАКОДГОРОДА[ПАССАЖИРЫ]
+    match = re.search(r'/search/([A-Z]{3}\d{4}[A-Z]{3})(\d+)?', url)
+    
+    if not match:
+        return url
+    
+    route_part = match.group(1)  # MOW1003IST
+    old_passengers = match.group(2) or "1"  # текущий код пассажиров
+    
+    # Формируем новый маршрут с правильным кодом пассажиров
+    new_route = f"{route_part}{passengers_code}"
+    
+    # Заменяем в URL
+    return url.replace(f"{route_part}{old_passengers}", new_route)
+    

@@ -14,9 +14,6 @@ from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from services.flight_search import patch_aviasales_passengers
-from services.flight_search import build_final_booking_link
-
 from handlers.everywhere_search import (
     search_origin_everywhere,
     search_destination_everywhere,
@@ -443,6 +440,39 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
         await ask_adults(callback, state)
     await callback.answer()
 
+def _update_passengers_in_link(link: str, passengers_code: str) -> str:
+    """Заменяет последнюю цифру в маршруте Aviasales на первую цифру из passengers_code (число взрослых)"""
+    if not link or not passengers_code.isdigit():
+        return link
+    # Извлекаем маршрут из URL
+    if link.startswith('/'):
+        path = link
+    else:
+        parsed = urlparse(link)
+        path = parsed.path
+    # Ищем маршрут вида /search/... в URL
+    if '/search/' in path:
+        search_part = path.split('/search/', 1)[1]
+        # Разделяем маршрут и параметры
+        if '?' in search_part:
+            route, query = search_part.split('?', 1)
+        else:
+            route, query = search_part, ""
+        # Меняем последнюю цифру маршрута на первую цифру из passengers_code
+        if route and route[-1].isdigit():
+            new_route = route[:-1] + passengers_code[0]
+        else:
+            new_route = route
+        # Собираем обратно
+        if query:
+            final_path = f"/search/{new_route}?{query}"
+        else:
+            final_path = f"/search/{new_route}"
+        if link.startswith('/'):
+            return final_path
+        else:
+            return urlunparse(parsed._replace(path=final_path))
+    return link
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):
@@ -623,8 +653,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passengers_code", "1")
     if booking_link:
-        booking_link = patch_aviasales_passengers(booking_link, passengers_code)
-
+        booking_link = _update_passengers_in_link(booking_link, passengers_code)
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
