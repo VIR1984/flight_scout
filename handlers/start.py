@@ -562,8 +562,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
-            "😔 Билеты не найдены.
-"
+            "😔 Билеты не найдены."
             "На Aviasales могут быть рейсы с пересадками — попробуйте:",
             reply_markup=kb
         )
