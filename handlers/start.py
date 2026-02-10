@@ -9,15 +9,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import (
-    search_flights,
-    search_grouped_prices,  # ← ДОБАВЛЕНО
-    generate_booking_link,
-    normalize_date,
-    format_avia_link_date,
-    find_cheapest_flight_on_exact_date,
-    update_passengers_in_aviasales_link  # ← ДОБАВЛЕНО для ручной обработки
-)
+from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
@@ -561,19 +553,12 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         for dest in destinations:
             if orig == dest:
                 continue
-            result = await search_grouped_prices(
-                origin=orig,        # ← именованные параметры
-                destination=dest,
+            flights = await search_flights(
+                orig,
+                dest,
                 normalize_date(data["depart_date"]),
-                normalize_date(data["return_date"]) if data.get("return_date") else None,
-                passengers=data.get("passengers_code", "1")
+                normalize_date(data["return_date"]) if data.get("return_date") else None
             )
-            # Обработка результата grouped_prices
-            if result and result.get("data"):
-                flights = []
-                for route in result["data"]:
-        # Каждый route может содержать несколько вариантов
-                    flights.append(route)
             for f in flights:
                 f["origin"] = orig
                 f["destination"] = dest
