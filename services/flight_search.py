@@ -255,44 +255,35 @@ def generate_booking_link(
     return_date: Optional[str] = None
 ) -> str:
     """
-    Генерирует ссылку для бронирования на Aviasales с маркером.
+    Генерирует ссылку для бронирования на Aviasales с полным кодом пассажиров.
     
-    Для нового формата использует структуру с ?t= параметром.
-    Формат: ORIGDDMMDEST[PASS]?t=... для в одну сторону
-    Формат: ORIGDDMMDESTDDMM[PASS]?t=... для туда/обратно
+    Формат маршрута:
+      • Туда-обратно: ORIGDDMMDESTDDMM[PASS]
+      • В одну сторону: ORIGDDMMDEST[PASS]
     
-    Args:
-        flight: Данные рейса из API
-        origin: IATA код вылета
-        dest: IATA код прилёта
-        depart_date: Дата вылета ДД.ММ
-        passengers_code: Код пассажиров ("1", "2", "21", "211")
-        return_date: Дата возврата ДД.ММ (опционально)
-    
-    Returns:
-        Ссылка для бронирования
+    Где [PASS] — полный код пассажиров (1-3 цифры):
+      • "1"   → 1 взрослый
+      • "21"  → 2 взр. + 1 реб.
+      • "211" → 2 взр. + 1 реб. + 1 мл.
     """
-    # Сначала пробуем использовать ссылку из самого рейса
-    if flight.get("link"):
-        # Обновляем код пассажиров в существующей ссылке
-        link = update_passengers_in_aviasales_link(flight["link"], passengers_code)
-        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-        
-        if marker:
-            return add_marker_to_url(link, marker, sub_id)
-        return link
+    # Валидация кода пассажиров
+    if not passengers_code or not re.match(r'^[1-9]\d{0,2}$', passengers_code):
+        passengers_code = "1"
     
-    # Fallback: генерируем ссылку вручную (старый формат)
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
     
+    # Формируем маршрут с полным кодом пассажиров
     if return_date:
+        # Туда-обратно: MOW1003IST1503211
         route = f"{origin}{d1}{dest}{d2}{passengers_code}"
     else:
+        # В одну сторону: IST1003MOW211
         route = f"{origin}{d1}{dest}{passengers_code}"
     
     base_url = f"https://www.aviasales.ru/search/{route}"
+    
+    # Добавляем маркер
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     
