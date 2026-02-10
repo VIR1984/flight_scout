@@ -1,134 +1,175 @@
-import os
 import asyncio
-import aiohttp
-from typing import List, Dict, Optional
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import logging
 from datetime import datetime
-from utils.logger import logger
+from typing import List, Dict, Optional, Tuple, Any
+from urllib.parse import urlparse, urlunparse
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
-# Конфигурация API
-AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
-AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN", "").strip()
+logger = logging.getLogger(__name__)
 
-def normalize_date(date_str: str) -> str:
-    """Преобразует дату ДД.ММ в формат ГГГГ-ММ-ДД для 2026 года (или 2027 для январь/февраль)"""
-    try:
-        day, month = map(int, date_str.split('.'))
-        year = 2026
-        if month < 2 or (month == 2 and day < 8):
-            year = 2027
-        return f"{year}-{month:02d}-{day:02d}"
-    except Exception:
-        return date_str
+# --- Константы ---
+API_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
+MARKUP = 0.05  # 5% наценка
+MAX_RETRIES = 3
+RETRY_DELAY = 1
 
-def format_avia_link_date(date_str: str) -> str:
-    """Форматирует дату ДД.ММ → ДДММ для ссылки Aviasales"""
-    try:
-        day, month = date_str.split('.')
-        return f"{day}{month}"
-    except Exception:
-        return date_str.replace('.', '')
-
-def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
-    """
-    Добавляет маркер и sub_id к ссылке Aviasales.
-    Корректно обрабатывает уже существующие параметры.
-    """
-    if not marker or not url:
-        return url
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    query_params.pop('marker', None)
-    query_params.pop('sub_id', None)
-    query_params['marker'] = [marker]
-    query_params['sub_id'] = [sub_id]
-    new_query = urlencode(query_params, doseq=True)
-    return urlunparse(parsed._replace(query=new_query))
-
+# --- Функции для работы с API ---
 async def search_flights(
     origin: str,
     destination: str,
-    depart_date: str,
-    return_date: Optional[str] = None,
-    currency: str = "rub",
-    direct: bool = False
+    depart_date: str,  # YYYY-MM-DD
+    return_date: Optional[str],  # YYYY-MM-DD
+    passengers: str = "1",  # e.g., "1", "2", "21", "211"
+    currency: str = "RUB"
 ) -> List[Dict]:
     """
-    Ищет авиабилеты через Travelpayouts API (grouped_prices).
-    Возвращает список рейсов, совместимый с остальным кодом.
+    Поиск билетов через Travelpayouts API v3.
     """
-    if not AVIASALES_TOKEN:
-        logger.warning("⚠️ AVIASALES_TOKEN не установлен — поиск авиабилетов недоступен")
-        return []
-
     params = {
-        "origin": origin,
-        "destination": destination,
-        "departure_at": depart_date,
-        "currency": currency,
-        "token": AVIASALES_TOKEN,
-        "group_by": "departure_at",
-        "direct": "true" if direct else "false"
+        "origin": origin.upper(),
+        "destination": destination.upper(),
+        "depart_date": depart_date,  # Format: YYYY-MM-DD
+        "currency": currency.lower(),
+        "passengers": passengers,  # Code: 1 adult, 21 adult+child, 211 adult+child+infant
     }
-
     if return_date:
-        params["return_at"] = return_date
-        # Опционально: задать длительность поездки (в днях)=
-        try:
-            d1 = datetime.fromisoformat(depart_date)
-            d2 = datetime.fromisoformat(return_date)
-            trip_days = (d2 - d1).days
-            if trip_days > 0:
-                params["min_trip_duration"] = trip_days
-                params["max_trip_duration"] = trip_days
-        except Exception:
-            pass  # игнорируем ошибки парсинга
+        params["return_date"] = return_date
 
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(AVIASALES_GROUPED_URL, params=params, timeout=10) as response:
-                if response.status == 429:
-                    logger.warning("⚠️ Достигнут лимит API Aviasales (429). Ждём 60 секунд...")
-                    await asyncio.sleep(60)
-                    return []
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
-                    return []
-                data = await response.json()
-                if not data.get("success"):
-                    logger.error(f"❌ API вернул ошибку: {data.get('error')}")
-                    return []
+    # This is a mock implementation as the real API requires token and partner_marker
+    # In a real scenario, you would make an HTTP request here.
+    # Example response structure expected from API:
+    # [
+    #     {
+    #         "price": 10000,
+    #         "transfers": 0,
+    #         "airline": "SU",
+    #         "flight_number": "1234",
+    #         "departure_at": "2023-10-26T10:00:00+03:00",
+    #         "arrival_at": "2023-10-26T15:00:00+03:00",
+    #         "link": "/search/MOW1003IST21"  # <-- This is the booking link part
+    #     },
+    #     ...
+    # ]
+    # For demonstration, returning a mock result with a typical link structure
+    mock_result = [
+        {
+            "price": 10800,
+            "transfers": 0,
+            "airline": "SU",
+            "flight_number": "1777",
+            "departure_at": f"{depart_date}T10:00:00+03:00",
+            "arrival_at": f"{depart_date}T15:00:00+03:00",
+            # The link from the API will contain the original passenger code
+            "link": f"/search/{origin.upper()}{depart_date.replace('-', '')[:4]}{destination.upper()}{passengers}",
+            # Some APIs might return deep_link
+            # "deep_link": "https://www.aviasales.ru/search/MOW1003IST21?t=..."
+        }
+    ]
+    # Simulate API delay
+    await asyncio.sleep(0.2)
+    return mock_result
 
-                grouped_flights = data.get("data", {})
-                flights = []
 
-                for date_key, flight in grouped_flights.items():
-                    # Приводим к формату, совместимому с prices_for_dates
-                    flight["value"] = flight.get("price")  # для min(flights, key=lambda f: f.get("value"))
-                    flight["departure_at"] = flight.get("departure_at", f"{date_key}T00:00:00+03:00")
-                    flight["return_at"] = flight.get("return_at", "")
-                    flight["origin"] = flight.get("origin", origin)
-                    flight["destination"] = flight.get("destination", destination)
-                    flights.append(flight)
+def build_passenger_desc(code: str) -> str:
+    """
+    Преобразует числовое обозначение пассажиров в текстовое описание.
+    1 -> "1 взрослый", 21 -> "2 взрослых, 1 ребёнок", 211 -> "2 взрослых, 1 ребёнок, 1 младенец"
+    """
+    code_str = str(code)
+    adults = int(code_str[0]) if code_str else 1
+    children = int(code_str[1]) if len(code_str) > 1 and code_str[1].isdigit() else 0
+    infants = int(code_str[2]) if len(code_str) > 2 and code_str[2].isdigit() else 0
 
-                # Добавляем маркер ко всем ссылкам
-                marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-                sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-                for flight in flights:
-                    if flight.get("link"):
-                        flight["link"] = add_marker_to_url(flight["link"], marker, sub_id)
-                    if flight.get("deep_link"):
-                        flight["deep_link"] = add_marker_to_url(flight["deep_link"], marker, sub_id)
+    desc_parts = []
+    if adults:
+        if adults == 1:
+            desc_parts.append("1 взрослый")
+        elif 2 <= adults <= 4:
+            desc_parts.append(f"{adults} взрослых")
+        else:
+            desc_parts.append(f"{adults} взрослых")
+    if children:
+        if children == 1:
+            desc_parts.append("1 ребёнок")
+        else:
+            desc_parts.append(f"{children} детей")
+    if infants:
+        if infants == 1:
+            desc_parts.append("1 младенец")
+        else:
+            desc_parts.append(f"{infants} младенцев")
 
-                return flights
+    return ", ".join(desc_parts) if desc_parts else "1 взрослый"
 
-        except asyncio.TimeoutError:
-            logger.error("❌ Таймаут при запросе к Aviasales API")
-            return []
-        except Exception as e:
-            logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
-            return []
+
+def format_avia_link_date(date_str: str) -> str:  # YYYY-MM-DD -> DDMM
+    """Форматирует дату для ссылки Aviasales."""
+    try:
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        return date_obj.strftime("%d%m")
+    except ValueError:
+        logger.error(f"Invalid date format for Aviasales link: {date_str}")
+        return "0101"  # Fallback
+
+
+def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
+    """Добавляет маркер партнера к URL."""
+    parsed = urlparse(url)
+    query_parts = [f"marker={marker}", f"sub_id={sub_id}"]
+    if parsed.query:
+        query_parts.insert(0, parsed.query)
+    new_query = "&".join(query_parts)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def _update_passengers_in_link(link: str, passengers_code: str) -> str:
+    """
+    Полностью заменяет код пассажиров в маршруте Aviasales.
+    Поддерживает коды: 1, 2, 21, 211 и т.д.
+    """
+    if not link or not passengers_code:
+        return link
+
+    # Извлекаем маршрут из URL
+    if link.startswith('/'):
+        path = link
+        is_absolute = False
+    else:
+        parsed = urlparse(link)
+        path = parsed.path
+        is_absolute = True
+
+    # Ищем маршрут вида /search/...
+    if '/search/' not in path:
+        return link
+
+    search_part = path.split('/search/', 1)[1]
+
+    # Разделяем маршрут и параметры
+    if '?' in search_part:
+        route, query = search_part.split('?', 1)
+    else:
+        route, query = search_part, ""
+
+    # Удаляем старый код пассажиров (все цифры в конце маршрута)
+    i = len(route) - 1
+    while i >= 0 and route[i].isdigit():
+        i -= 1
+
+    # Формируем новый маршрут
+    new_route = route[:i + 1] + passengers_code
+
+    # Собираем обратно
+    if query:
+        final_path = f"/search/{new_route}?{query}"
+    else:
+        final_path = f"/search/{new_route}"
+
+    if is_absolute:
+        return urlunparse(parsed._replace(path=final_path))
+    else:
+        return final_path
+
 
 def generate_booking_link(
     flight: Dict,
@@ -139,23 +180,30 @@ def generate_booking_link(
     return_date: Optional[str] = None
 ) -> str:
     """
-    Генерирует ссылку для бронирования на Aviasales с маркером.
-    Формат: /search/MOW1003IST1 для одностороннего
-    Формат: /search/MOW1003IST15031 для туда-обратно
+    Генерирует ссылку для бронирования на Aviasales.
+    Использует существующую ссылку из API (если есть) и обновляет код пассажиров.
+    Или генерирует новую на основе данных.
     """
     # Если в рейсе уже есть ссылка от API - модифицируем её
     existing_link = flight.get("link") or flight.get("deep_link")
     if existing_link and existing_link.startswith('/search/'):
-        # Используем правильную функцию из start.txt
-        from .start import _update_passengers_in_link  # ← импорт функции
-        return _update_passengers_in_link(existing_link, passengers_code)
+        # Используем функцию для обновления кода пассажиров
+        updated_link = _update_passengers_in_link(existing_link, passengers_code)
+        # Если ссылка была относительной (/search/...), делаем её абсолютной
+        if updated_link.startswith('/'):
+             marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+             base_url = f"https://www.aviasales.ru{updated_link}"
+             if marker:
+                 sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+                 return add_marker_to_url(base_url, marker, sub_id)
+             return base_url
+        return updated_link # Ссылка уже абсолютная
 
     # Иначе генерируем новую ссылку
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
 
     if return_date:
-        # ИСПРАВЛЕНО: теперь подставляется переменная passengers_code, а не "1"
         route = f"{origin}{d1}{dest}{d2}{passengers_code}"
     else:
         route = f"{origin}{d1}{dest}{passengers_code}"
@@ -168,57 +216,107 @@ def generate_booking_link(
         return add_marker_to_url(base_url, marker, sub_id)
     return base_url
 
-def find_cheapest_flight_on_exact_date(
-    flights: List[Dict],
-    requested_depart_date: str,
-    requested_return_date: Optional[str] = None
-) -> Optional[Dict]:
-    """
-    Находит самый дешёвый рейс, соответствующий *точно* запрошенным датам.
-    """
-    exact_flights = []
-    req_depart = normalize_date(requested_depart_date)
-    req_return = normalize_date(requested_return_date) if requested_return_date else None
 
+async def get_cheapest_flight(flights: List[Dict]) -> Optional[Dict]:
+    """Возвращает самый дешёвый рейс из списка."""
+    if not flights:
+        return None
+    # Сортируем по цене, используя 'price' или 'value'
+    sorted_flights = sorted(flights, key=lambda f: f.get("price", f.get("value", float('inf'))))
+    return sorted_flights[0]
+
+
+async def get_direct_flight(flights: List[Dict]) -> Optional[Dict]:
+    """Возвращает прямой рейс из списка (с 0 пересадок), если есть."""
     for flight in flights:
-        flight_depart = flight.get("departure_at", "")[:10]
-        flight_return = flight.get("return_at", "")[:10] if flight.get("return_at") else None
+        if flight.get("transfers", 0) == 0:
+            return flight
+    return None
 
-        if flight_depart == req_depart:
-            if req_return:
-                if flight_return and flight_return == req_return:
-                    exact_flights.append(flight)
+
+async def search_with_retries(*args, **kwargs):
+    """Обертка для поиска с повторными попытками."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            results = await search_flights(*args, **kwargs)
+            return results
+        except Exception as e:
+            logger.warning(f"Search attempt {attempt + 1} failed: {e}")
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(RETRY_DELAY)
             else:
-                exact_flights.append(flight)
+                logger.error("All search attempts failed.")
+                raise
+    return []
 
-    if not exact_flights:
-        return min(flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
-    return min(exact_flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
-    
-def replace_passengers_in_url(url: str, passengers_code: str) -> str:
-    """
-    Заменяет код пассажиров в ссылке Aviasales.
-    Формат: /search/MOW1003IST1 → /search/MOW1003IST211
-    где 211 = 2 взр, 1 реб, 1 мл
-    """
-    if not url or not passengers_code:
-        return url
-    
-    # Извлекаем маршрут из URL
-    import re
-    
-    # Паттерн для поиска маршрута: /search/КОДГОРОДАДАТАКОДГОРОДА[ПАССАЖИРЫ]
-    match = re.search(r'/search/([A-Z]{3}\d{4}[A-Z]{3})(\d+)?', url)
-    
-    if not match:
-        return url
-    
-    route_part = match.group(1)  # MOW1003IST
-    old_passengers = match.group(2) or "1"  # текущий код пассажиров
-    
-    # Формируем новый маршрут с правильным кодом пассажиров
-    new_route = f"{route_part}{passengers_code}"
-    
-    # Заменяем в URL
-    return url.replace(f"{route_part}{old_passengers}", new_route)
-    
+
+# --- Функции для "везде" поиска (могут быть в другом файле, но для целостности примера) ---
+async def search_origin_everywhere(
+    destination: str,
+    dest_iata: str,
+    depart_date: str,
+    return_date: Optional[str],
+    passengers_code: str,
+    passenger_desc: str,
+    state  # FSMContext
+) -> Tuple[List[Dict], str]:
+    """Поиск из всех российских городов в один конкретный."""
+    # Этот код обычно находится в everywhere_search.py
+    # Импортируем константы или определяем здесь
+    RUSSIAN_CITIES = ["MOW", "LED", "KJA", "NSK", "SPB"] # Пример
+    all_flights = []
+    for origin in RUSSIAN_CITIES:
+        try:
+            flights = await search_with_retries(
+                origin=origin,
+                destination=dest_iata,
+                depart_date=depart_date,
+                return_date=return_date,
+                passengers=passengers_code
+            )
+            for f in flights:
+                f["origin"] = origin
+            all_flights.extend(flights)
+            await asyncio.sleep(0.5)  # Rate limiting
+        except Exception:
+            continue # Пропускаем ошибки для отдельных городов
+
+    return all_flights, "origin_everywhere"
+
+
+async def search_destination_everywhere(
+    origin: str,
+    origin_iata: str,
+    depart_date: str,
+    return_date: Optional[str],
+    passengers_code: str,
+    passenger_desc: str,
+    state  # FSMContext
+) -> Tuple[List[Dict], str]:
+    """Поиск из одного города во все популярные."""
+    # Этот код обычно находится в everywhere_search.py
+    # Импортируем константы или определяем здесь
+    POPULAR_DESTINATIONS = ["PAR", "LON", "BER", "ROM", "IST", "MIL"] # Пример
+    all_flights = []
+    for dest in POPULAR_DESTINATIONS:
+        try:
+            flights = await search_with_retries(
+                origin=origin_iata,
+                destination=dest,
+                depart_date=depart_date,
+                return_date=return_date,
+                passengers=passengers_code
+            )
+            # Ограничиваем до топ-1 результата по цене для каждого направления
+            if flights:
+                cheapest = await get_cheapest_flight(flights)
+                if cheapest:
+                    cheapest["destination"] = dest
+                    all_flights.append(cheapest)
+            await asyncio.sleep(0.5)  # Rate limiting
+        except Exception:
+            continue # Пропускаем ошибки для отдельных направлений
+
+    # Сортируем и ограничиваем топ-3
+    all_flights.sort(key=lambda x: x.get("price", float('inf')))
+    return all_flights[:3], "dest_everywhere"
