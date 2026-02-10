@@ -1,10 +1,12 @@
 import os
+import re
 import asyncio
 import aiohttp
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
 from utils.logger import logger
+
 
 # Конфигурация API
 AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
