@@ -141,35 +141,44 @@ def generate_booking_link(
     return_date: Optional[str] = None
 ) -> str:
     """
-    Генерирует ссылку для бронирования на Aviasales с полным кодом пассажиров.
+    Генерирует ссылку для бронирования на Aviasales с ПОЛНЫМ кодом пассажиров.
     
     Формат маршрута:
-      • Туда-обратно: ORIGDDMMDESTDDMM[PASS]
-      • В одну сторону: ORIGDDMMDEST[PASS]
+      • Туда-обратно: ORIGDDMMDESTDDMM[PASS]  (например, MOW1003AER1503211)
+      • В одну сторону: ORIGDDMMDEST[PASS]     (например, AER1003MOW211)
     
     Где [PASS] — полный код пассажиров (1-3 цифры):
       • "1"   → 1 взрослый
+      • "2"   → 2 взрослых
       • "21"  → 2 взр. + 1 реб.
       • "211" → 2 взр. + 1 реб. + 1 мл.
     """
-    # Валидация кода пассажиров
-    if not passengers_code or not re.match(r'^[1-9]\d{0,2}$', passengers_code):
+    # Валидация и нормализация кода пассажиров
+    if not passengers_code or not isinstance(passengers_code, str):
         passengers_code = "1"
     
+    # Убираем всё кроме цифр и оставляем максимум 3 цифры
+    passengers_code = re.sub(r'\D', '', passengers_code)[:3]
+    
+    # Если после очистки пусто или начинается с 0 — используем "1"
+    if not passengers_code or passengers_code[0] == '0':
+        passengers_code = "1"
+    
+    # Форматируем даты для ссылки (ДДММ)
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
     
-    # Формируем маршрут с полным кодом пассажиров
+    # Формируем маршрут с ПОЛНЫМ кодом пассажиров
     if return_date:
-        # Туда-обратно: MOW1003IST1503211
+        # Туда-обратно: MOW1003AER1503211
         route = f"{origin}{d1}{dest}{d2}{passengers_code}"
     else:
-        # В одну сторону: IST1003MOW211
+        # В одну сторону: AER1003MOW211
         route = f"{origin}{d1}{dest}{passengers_code}"
     
     base_url = f"https://www.aviasales.ru/search/{route}"
     
-    # Добавляем маркер
+    # Добавляем маркер партнера и sub_id
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     
