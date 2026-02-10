@@ -442,49 +442,42 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
 
 def _update_passengers_in_link(link: str, passengers_code: str) -> str:
     """
-    Полностью заменяет пассажирский блок в ссылке Aviasales.
-    Работает для:
-    - one way
-    - round trip
-    - любого количества пассажиров (1, 2, 21, 211 и т.д.)
+    Обновляет число пассажиров в ссылке Aviasales.
+    Работает с deep_link и со ссылками вида:
+     - https://www.aviasales.ru/search/ORIGDDMMDEST[DDMM]OLDPASS?...
+    Заменяет только пассажирский код в конце маршрута.
     """
-
     if not link or not passengers_code or not passengers_code.isdigit():
         return link
 
-    # Разбираем URL
-    if link.startswith('/'):
-        parsed = None
-        path = link
-        query = ""
-        if "?" in path:
-            path, query = path.split("?", 1)
-    else:
+    # Парсим URL
+    try:
         parsed = urlparse(link)
-        path = parsed.path
-        query = parsed.query
-
-    if not path.startswith("/search/"):
+    except Exception:
         return link
 
-    route = path.replace("/search/", "")
+    path = parsed.path  # путь вида /search/IST1003MOW1 или /search/IST1003MOW15031
 
-    # Удаляем существующий пассажирский код (все цифры в конце маршрута)
-    route = re.sub(r"\d+$", "", route)
+    # Ищем начало маршрута
+    if not path.startswith("/search/"):
+        # Если путь другой — возвращаем исходный
+        return link
 
-    # Добавляем новый пассажирский код
-    new_route = route + passengers_code
+    # Вычленяем часть после /search/
+    search_part = path[len("/search/"):]
 
-    new_path = f"/search/{new_route}"
+    # Удаляем старый пассажирский код — все цифры в конце
+    new_route = re.sub(r"\d+$", "", search_part)
 
-    if query:
-        new_path += f"?{query}"
+    # Прибавляем новый пассажирский код
+    new_route += passengers_code
 
-    # Собираем обратно
-    if parsed:
-        return urlunparse(parsed._replace(path=new_path))
-    else:
-        return new_path
+    # Собираем новый путь
+    new_path = "/search/" + new_route
+
+    # Собираем URL обратно, сохраняя query (параметры после '?')
+    return urlunparse(parsed._replace(path=new_path))
+
 
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
