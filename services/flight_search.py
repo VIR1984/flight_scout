@@ -73,7 +73,7 @@ async def search_flights(
 
     if return_date:
         params["return_at"] = return_date
-        # Опционально: задать длительность поездки (в днях)=
+        # Опционально: задать длительность поездки (в днях)=+++
         try:
             d1 = datetime.fromisoformat(depart_date)
             d2 = datetime.fromisoformat(return_date)
