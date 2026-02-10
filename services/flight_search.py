@@ -146,22 +146,24 @@ def generate_booking_link(
     # Если в рейсе уже есть ссылка от API - модифицируем её
     existing_link = flight.get("link") or flight.get("deep_link")
     if existing_link and existing_link.startswith('/search/'):
-        # Заменяем код пассажиров в существующей ссылке
-        return replace_passengers_in_url(existing_link, passengers_code)
-    
+        # Используем правильную функцию из start.txt
+        from .start import _update_passengers_in_link  # ← импорт функции
+        return _update_passengers_in_link(existing_link, passengers_code)
+
     # Иначе генерируем новую ссылку
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
-    
+
     if return_date:
+        # ИСПРАВЛЕНО: теперь подставляется переменная passengers_code, а не "1"
         route = f"{origin}{d1}{dest}{d2}{passengers_code}"
     else:
         route = f"{origin}{d1}{dest}{passengers_code}"
-    
+
     base_url = f"https://www.aviasales.ru/search/{route}"
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
+
     if marker:
         return add_marker_to_url(base_url, marker, sub_id)
     return base_url

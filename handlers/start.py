@@ -442,55 +442,51 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
 
 def _update_passengers_in_link(link: str, passengers_code: str) -> str:
     """
-    Заменяет код пассажиров в маршруте Aviasales.
-    Формат: /search/IST1003MOW1 → /search/IST1003MOW211
-    где 211 = 2 взр, 1 реб, 1 мл
+    Полностью заменяет код пассажиров в маршруте Aviasales.
+    Поддерживает коды: 1, 2, 21, 211 и т.д.
     """
     if not link or not passengers_code:
         return link
-    
+
     # Извлекаем маршрут из URL
     if link.startswith('/'):
         path = link
+        is_absolute = False
     else:
         parsed = urlparse(link)
         path = parsed.path
-    
-    # Ищем маршрут вида /search/... в URL
+        is_absolute = True
+
+    # Ищем маршрут вида /search/...
     if '/search/' not in path:
         return link
-    
+
     search_part = path.split('/search/', 1)[1]
-    
+
     # Разделяем маршрут и параметры
     if '?' in search_part:
         route, query = search_part.split('?', 1)
     else:
         route, query = search_part, ""
-    
-    # Находим все цифры в конце маршрута (код пассажиров)
-    # Маршрут: ORIGDDMMDEST[DDMM][PASS]
+
+    # Удаляем старый код пассажиров (все цифры в конце маршрута)
     i = len(route) - 1
     while i >= 0 and route[i].isdigit():
         i -= 1
-    
-    # Если нашли цифры в конце — это код пассажиров
-    if i < len(route) - 1:
-        new_route = route[:i + 1] + passengers_code
-    else:
-        # Если цифр нет — просто добавляем код
-        new_route = route + passengers_code
-    
+
+    # Формируем новый маршрут
+    new_route = route[:i + 1] + passengers_code
+
     # Собираем обратно
     if query:
         final_path = f"/search/{new_route}?{query}"
     else:
         final_path = f"/search/{new_route}"
-    
-    if link.startswith('/'):
-        return final_path
-    else:
+
+    if is_absolute:
         return urlunparse(parsed._replace(path=final_path))
+    else:
+        return final_path
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):
