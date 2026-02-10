@@ -687,24 +687,14 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
-    passengers_code = data.get("passengers_code", "1")
-
-# === ОСНОВНАЯ ССЫЛКА: сначала маркер, потом пассажиры ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
+    passengers_code = data.get("passengers_code", "1")
     if booking_link:
-        # Сначала добавляем маркер к исходной ссылке от API
-        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-        if marker:
-            booking_link = add_marker_to_url(booking_link, marker, sub_id)
-        
-        # Затем модифицируем пассажиров
         booking_link = _update_passengers_in_link(booking_link, passengers_code)
-        
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
-        # Fallback на generate_booking_link (уже содержит маркер внутри)
+        # Fallback на generate_booking_link
         booking_link = generate_booking_link(
             flight=top_flight,
             origin=origin_iata,
@@ -716,7 +706,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
 
-    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() уже содержит маркер ===
+    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
     fallback_link = generate_booking_link(
         flight=top_flight,
         origin=origin_iata,
@@ -974,22 +964,13 @@ async def handle_flight_request(message: Message):
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
-    # === ОСНОВНАЯ ССЫЛКА: сначала маркер, потом пассажиры ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
+    passengers_code = passengers_code
     if booking_link:
-        # Сначала добавляем маркер к исходной ссылке от API
-        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-        if marker:
-            booking_link = add_marker_to_url(booking_link, marker, sub_id)
-        
-        # Затем модифицируем пассажиров
         booking_link = _update_passengers_in_link(booking_link, passengers_code)
-        
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
-        # Fallback на generate_booking_link (уже содержит маркер внутри)
         booking_link = generate_booking_link(
             flight=top_flight,
             origin=origin_iata,
@@ -1001,7 +982,7 @@ async def handle_flight_request(message: Message):
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
 
-    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() уже содержит маркер ===
+    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
     fallback_link = generate_booking_link(
         flight=top_flight,
         origin=origin_iata,
@@ -1012,6 +993,13 @@ async def handle_flight_request(message: Message):
     )
     if not fallback_link.startswith(('http://', 'https://')):
         fallback_link = f"https://www.aviasales.ru{fallback_link}"
+
+    # === ДОБАВЛЯЕМ МАРКЕР К ОБЕИМ ССЫЛКАМ ===
+    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    if marker:
+        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+        fallback_link = add_marker_to_url(fallback_link, marker, sub_id)
 
     # === КНОПКИ ===
     kb_buttons = []
