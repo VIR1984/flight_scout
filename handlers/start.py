@@ -443,21 +443,12 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
 def _update_passengers_in_link(link: str, passengers_code: str) -> str:
     """
     Корректно заменяет количество пассажиров в ссылке Aviasales.
-    
-    Алгоритм:
-      1. Извлекаем путь из URL
-      2. Находим часть после /search/
-      3. Удаляем ПОСЛЕДНЮЮ цифру пути (старое количество пассажиров)
-      4. Добавляем ПОЛНЫЙ код пассажиров (не только первую цифру!)
-    
-    Примеры:
-      • Прямой рейс:   /search/MOW1003IST1   → /search/MOW1003IST2   (для "2")
-      • Туда-обратно:  /search/MOW1003IST15031 → /search/MOW1003IST1503211 (для "211")
+    ВАЖНО: Заменяет ПОСЛЕДНЮЮ цифру на ПОЛНЫЙ код пассажиров (не только первую!)
     """
     if not link or not passengers_code:
         return link
     
-    # Валидация кода пассажиров (1-3 цифры, первая 1-9)
+    # Валидация: оставляем только 1-3 цифры, первая 1-9
     passengers_code = re.sub(r'\D', '', passengers_code)[:3]
     if not passengers_code or passengers_code[0] == '0':
         passengers_code = "1"
@@ -478,29 +469,26 @@ def _update_passengers_in_link(link: str, passengers_code: str) -> str:
     if not path.startswith('/search/'):
         return link
     
-    # Извлекаем маршрут (часть после /search/ до ? или конца строки)
-    route_part = path[8:]  # убираем '/search/'
+    # Извлекаем маршрут (часть после /search/)
+    route_part = path[8:]
     
-    # Удаляем параметры запроса из маршрута, если они есть внутри пути (редко, но бывает)
+    # Удаляем параметры запроса из маршрута (если есть)
     if '?' in route_part:
         route_part = route_part.split('?', 1)[0]
     
     # === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ===
-    # Удаляем ТОЛЬКО последнюю цифру маршрута и добавляем ПОЛНЫЙ код пассажиров
+    # Удаляем ТОЛЬКО последнюю цифру и добавляем ПОЛНЫЙ код пассажиров
     if route_part and route_part[-1].isdigit():
         new_route_part = route_part[:-1] + passengers_code
     else:
-        # Если нет цифры в конце (маловероятно), добавляем в конец
         new_route_part = route_part + passengers_code
     
     # Собираем новый путь
     new_path = f"/search/{new_route_part}"
     
-    # Возвращаем в исходном формате с сохранением параметров запроса
+    # Возвращаем в исходном формате
     if is_relative:
-        if query:
-            return f"{new_path}?{query}"
-        return new_path
+        return f"{new_path}?{query}" if query else new_path
     else:
         return urlunparse((
             parsed.scheme,
@@ -686,15 +674,24 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
+        # === ОСНОВНАЯ ССЫЛКА: сначала маркер, потом пассажиры ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passengers_code", "1")
     if booking_link:
+        # Сначала добавляем маркер к ИСХОДНОЙ ссылке от API
+        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
+        sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+        if marker:
+            booking_link = add_marker_to_url(booking_link, marker, sub_id)
+        
+        # Затем модифицируем пассажиров (удаляем последнюю '1' → добавляем полный код '211')
         booking_link = _update_passengers_in_link(booking_link, passengers_code)
+        
+        # Преобразуем в абсолютный URL (БЕЗ лишних пробелов!)
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
-        # Fallback на generate_booking_link
+        # Fallback: generate_booking_link() сам добавляет маркер и пассажиров
         booking_link = generate_booking_link(
             flight=top_flight,
             origin=origin_iata,
@@ -706,7 +703,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
 
-    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
+    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: генерируется с маркером и пассажирами ===
     fallback_link = generate_booking_link(
         flight=top_flight,
         origin=origin_iata,
@@ -717,13 +714,6 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     )
     if not fallback_link.startswith(('http://', 'https://')):
         fallback_link = f"https://www.aviasales.ru{fallback_link}"
-
-    # === ДОБАВЛЯЕМ МАРКЕР К ОБЕИМ ССЫЛКАМ ===
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
-        fallback_link = add_marker_to_url(fallback_link, marker, sub_id)
 
     # === КНОПКИ ===
     kb_buttons = []

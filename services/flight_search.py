@@ -141,32 +141,30 @@ def generate_booking_link(
 ) -> str:
     """
     Генерирует ссылку для бронирования на Aviasales с ПОЛНЫМ кодом пассажиров.
-    
-    Формат маршрута:
-      • Прямой рейс:    ORIGДДММDEST[PASS]     (например, MOW1003IST2)
-      • Туда-обратно:   ORIGДДММDESTДДММ[PASS] (например, MOW1003IST1503211)
+    Формат:
+      • Прямой рейс:    ORIGДДММDEST[PASS]
+      • Туда-обратно:   ORIGДДММDESTДДММ[PASS]
     """
-    # Валидация и нормализация кода пассажиров
+    # Валидация кода пассажиров
     passengers_code = re.sub(r'\D', '', passengers_code)[:3]
     if not passengers_code or passengers_code[0] == '0':
         passengers_code = "1"
     
-    # Форматируем даты (ДДММ)
+    # Форматируем даты
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
     
-    # Формируем маршрут с ПОЛНЫМ кодом пассажиров
+    # Формируем маршрут
     if return_date:
         route = f"{origin}{d1}{dest}{d2}{passengers_code}"
     else:
-        route = f"{origin}{d1}{dest}{passengers_code}"  # ← для прямого рейса
+        route = f"{origin}{d1}{dest}{passengers_code}"
     
     base_url = f"https://www.aviasales.ru/search/{route}"
     
-    # Добавляем маркер
+    # Добавляем маркер (уже с пассажирами внутри маршрута)
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
     if marker:
         return add_marker_to_url(base_url, marker, sub_id)
     
