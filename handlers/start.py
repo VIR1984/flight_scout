@@ -519,12 +519,19 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         for dest in destinations:
             if orig == dest:
                 continue
-            flights = await search_flights(
+            result = await search_grouped_prices(
                 orig,
                 dest,
                 normalize_date(data["depart_date"]),
-                normalize_date(data["return_date"]) if data.get("return_date") else None
+                normalize_date(data["return_date"]) if data.get("return_date") else None,
+                passengers=data.get("passengers_code", "1")
             )
+            # Обработка результата grouped_prices
+            if result and result.get("data"):
+                flights = []
+                for route in result["data"]:
+        # Каждый route может содержать несколько вариантов
+                    flights.append(route)
             for f in flights:
                 f["origin"] = orig
                 f["destination"] = dest
