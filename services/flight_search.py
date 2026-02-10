@@ -152,7 +152,7 @@ def generate_booking_link(
         ORIGDDMMDESTDDMM[PASS]
     """
 
-    # --- Валидация пассажиров ---
+    # --- Валидация пассажиров ----
     if not passengers_code or not passengers_code.isdigit():
         passengers_code = "1"
 

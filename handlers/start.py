@@ -939,7 +939,7 @@ async def handle_flight_request(message: Message):
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
 
-    # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
+    # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ====
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = passengers_code
     if booking_link:
