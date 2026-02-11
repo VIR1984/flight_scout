@@ -1,7 +1,6 @@
 import os
 import asyncio
 import aiohttp
-import re
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
@@ -140,34 +139,18 @@ def generate_booking_link(
     return_date: Optional[str] = None
 ) -> str:
     """
-    Генерирует ссылку для бронирования на Aviasales с ПОЛНЫМ кодом пассажиров.
-    Формат:
-      • Прямой рейс:    ORIGДДММDEST[PASS]
-      • Туда-обратно:   ORIGДДММDESTДДММ[PASS]
+    Генерирует ссылку для бронирования на Aviasales с маркером.
+    Формат: ORIGDDMMDESTDDMM[PASS] для туда/обратно
+    Формат: ORIGDDMMDEST[PASS] для в одну сторону
     """
-    # Валидация кода пассажиров
-    passengers_code = re.sub(r'\D', '', passengers_code)[:3]
-    if not passengers_code or passengers_code[0] == '0':
-        passengers_code = "1"
-    
-    # Форматируем даты
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
-    
-    # Формируем маршрут
-    if return_date:
-        route = f"{origin}{d1}{dest}{d2}{passengers_code}"
-    else:
-        route = f"{origin}{d1}{dest}{passengers_code}"
-    
+    route = f"{origin}{d1}{dest}{d2}{passengers_code}" if return_date else f"{origin}{d1}{dest}{passengers_code}"
     base_url = f"https://www.aviasales.ru/search/{route}"
-    
-    # Добавляем маркер (уже с пассажирами внутри маршрута)
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     if marker:
         return add_marker_to_url(base_url, marker, sub_id)
-    
     return base_url
 
 def find_cheapest_flight_on_exact_date(
