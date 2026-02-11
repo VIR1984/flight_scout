@@ -1,6 +1,7 @@
 import os
 import asyncio
 import aiohttp
+import re
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
@@ -130,27 +131,60 @@ async def search_flights(
             logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
             return []
 
+
 def generate_booking_link(
-    flight: Dict,
-    origin: str,
-    dest: str,
-    depart_date: str,
-    passengers_code: str = "1",
-    return_date: Optional[str] = None
+        flight: Dict,
+        origin: str,
+        dest: str,
+        depart_date: str,
+        passengers_code: str = "1",
+        return_date: Optional[str] = None
 ) -> str:
     """
-    Генерирует ссылку для бронирования на Aviasales с маркером.
-    Формат: ORIGDDMMDESTDDMM[PASS] для туда/обратно
-    Формат: ORIGDDMMDEST[PASS] для в одну сторону
+    Генерирует ссылку для бронирования на Aviasales с ПОЛНЫМ кодом пассажиров.
+
+    Формат маршрута:
+      • Туда-обратно: ORIGDDMMDESTDDMM[PASS]  (например, MOW1003AER1503211)
+      • В одну сторону: ORIGDDMMDEST[PASS]     (например, AER1003MOW211)
+
+    Где [PASS] — полный код пассажиров (1-3 цифры):
+      • "1"   → 1 взрослый
+      • "2"   → 2 взрослых
+      • "21"  → 2 взр. + 1 реб.
+      • "211" → 2 взр. + 1 реб. + 1 мл.
     """
+    # Валидация и нормализация кода пассажиров
+    if not passengers_code or not isinstance(passengers_code, str):
+        passengers_code = "1"
+
+    # Убираем всё кроме цифр и оставляем максимум 3 цифры
+    passengers_code = re.sub(r'\D', '', passengers_code)[:3]
+
+    # Если после очистки пусто или начинается с 0 — используем "1"
+    if not passengers_code or passengers_code[0] == '0':
+        passengers_code = "1"
+
+    # Форматируем даты для ссылки (ДДММ)
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
-    route = f"{origin}{d1}{dest}{d2}{passengers_code}" if return_date else f"{origin}{d1}{dest}{passengers_code}"
+
+    # Формируем маршрут с ПОЛНЫМ кодом пассажиров
+    if return_date:
+        # Туда-обратно: MOW1003AER1503211
+        route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    else:
+        # В одну сторону: AER1003MOW211
+        route = f"{origin}{d1}{dest}{passengers_code}"
+
     base_url = f"https://www.aviasales.ru/search/{route}"
+
+    # Добавляем маркер партнера и sub_id
     marker = os.getenv("TRAFFIC_SOURCE", "").strip()
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+
     if marker:
         return add_marker_to_url(base_url, marker, sub_id)
+
     return base_url
 
 def find_cheapest_flight_on_exact_date(
