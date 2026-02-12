@@ -685,7 +685,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         airline_display = airline_name_map.get(airline, airline)
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
         text += f"✈️ {flight_display}\n"
-    text += f"\n💰 <b>Цена от:</b> {price} ₽"
+    text += f"\n💰 <b>Цена от:</b> {price} ₽ (за 1 пассажира)"
     if data.get("need_return", False) and display_return:
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
@@ -962,10 +962,10 @@ async def handle_flight_request(message: Message):
         airline_display = airline_name_map.get(airline, airline)
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
         text += f"✈️ {flight_display}\n"
-    text += f"\n💰 <b>Цена от:</b> {price} ₽"
+    text += f"\n💰 <b>Цена от:</b> {price} ₽ (за 1 пассажира)"
     if is_roundtrip and display_return:
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
-    text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
+    text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться. Цена за 1 пассажира. </i>"
 
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
