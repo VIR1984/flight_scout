@@ -11,7 +11,6 @@ from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-
 def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     if not marker or not url:
         return url
@@ -24,7 +23,6 @@ def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
     new_query = urlencode(query_params, doseq=True)
     return urlunparse(parsed._replace(query=new_query))
 
-
 def format_user_date(date_str: str) -> str:
     try:
         d, m = map(int, date_str.split('.'))
@@ -34,7 +32,6 @@ def format_user_date(date_str: str) -> str:
         return f"{d:02d}.{m:02d}.{year}"
     except:
         return date_str
-
 
 def build_passenger_desc(code: str) -> str:
     try:
@@ -48,7 +45,6 @@ def build_passenger_desc(code: str) -> str:
         return ", ".join(parts) if parts else "1 взр."
     except:
         return "1 взр."
-
 
 async def search_origin_everywhere(
     destination: str,
@@ -78,7 +74,6 @@ async def search_origin_everywhere(
         await asyncio.sleep(0.5)
     return all_flights, "origin_everywhere"
 
-
 async def search_destination_everywhere(
     origin: str,
     origin_iata: str,
@@ -106,7 +101,6 @@ async def search_destination_everywhere(
         await asyncio.sleep(0.5)
     return all_flights, "destination_everywhere"
 
-
 async def process_everywhere_search(
     callback: CallbackQuery,
     data: Dict[str, Any],
@@ -121,9 +115,10 @@ async def process_everywhere_search(
     is_origin_everywhere = (search_type == "origin_everywhere")
     is_dest_everywhere = (search_type == "destination_everywhere")
     
+    # Исправление: передаем None вместо несуществующего dest_iata/origin_iata
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
-        "dest_iata": data.get("dest_iata"),
+        "dest_iata": data.get("dest_iata"),  # Может быть None для "Везде"
         "is_roundtrip": False,
         "display_depart": display_depart,
         "display_return": None,
@@ -212,12 +207,11 @@ async def process_everywhere_search(
     kb_buttons.append([
         InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
     ])
-    
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+    
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
     return True
-
 
 async def handle_everywhere_search_manual(
     message: Message,
@@ -229,6 +223,11 @@ async def handle_everywhere_search_manual(
     is_origin_everywhere: bool,
     is_dest_everywhere: bool
 ) -> bool:
+    
+    # === ИСПРАВЛЕНИЕ: Инициализация переменных перед условием ===
+    orig_iata = None
+    dest_iata = None
+    
     if is_origin_everywhere:
         origins = GLOBAL_HUBS[:5]
         origin_name = "Везде"
@@ -255,8 +254,8 @@ async def handle_everywhere_search_manual(
     display_depart = format_user_date(depart_date)
     
     await message.answer("Ищу билеты (включая с пересадками)...")
-    
     all_flights = []
+    
     for orig in origins:
         for dest in destinations:
             if orig == dest:
@@ -280,9 +279,11 @@ async def handle_everywhere_search_manual(
         return False
     
     cache_id = str(uuid4())
+    
+    # === ИСПРАВЛЕНИЕ: передаем dest_iata, который может быть None ===
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
-        "dest_iata": dest_iata,
+        "dest_iata": dest_iata,  # Может быть None для "Везде"
         "is_roundtrip": False,
         "display_depart": display_depart,
         "display_return": None,
@@ -370,7 +371,7 @@ async def handle_everywhere_search_manual(
     kb_buttons.append([
         InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")
     ])
-    
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+    
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
     return True

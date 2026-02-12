@@ -189,7 +189,7 @@ class PriceWatcher:
         try:
             flights = await search_flights(
                 origin=origin,
-                dest=dest,
+                destination=dest,
                 depart_date=normalize_date(depart_date),
                 return_date=normalize_date(return_date) if return_date else None
             )
