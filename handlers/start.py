@@ -26,7 +26,7 @@ from services.flight_search import (
     normalize_date,          
     format_avia_link_date    
 )
-)
+
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
