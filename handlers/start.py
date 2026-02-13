@@ -515,10 +515,13 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     transfers_only = (flight_type == "transfer")
     
     if is_origin_everywhere and not is_dest_everywhere:
-        all_flights, search_type = await search_origin_everywhere(    #search_origin_everywhere ищет из всех городов → в указанный город.
+        all_flights = await search_origin_everywhere(    #search_origin_everywhere ищет из всех городов → в указанный город.
             dest_iata=data["dest_iata"],
             depart_date=data["depart_date"],
             flight_type=data.get("flight_type", "all")
+            
+        search_type = "origin_everywhere"
+        success = await process_everywhere_search (callback, data, all_flights, search_type)
 )
         # Фильтрация для "Везде → Город"
         if direct_only:
@@ -531,11 +534,14 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             await state.clear()
             return
     elif not is_origin_everywhere and is_dest_everywhere:
-        all_flights, search_type = await search_destination_everywhere(  #search_destination_everywhere → ГОРОД → везде → нужен origin_iata (пункт отправления)
+        all_flights = await search_destination_everywhere(  #search_destination_everywhere → ГОРОД → везде → нужен origin_iata (пункт отправления)
             origin_iata=data["origin_iata"],  
             depart_date=data["depart_date"],
             flight_type=data.get("flight_type", "all")
         )
+        search_type = "destination_everywhere"
+        success = await process_everywhere_search(callback, data, all_flights, search_type)
+        
         # Фильтрация для "Город → Везде"
         if direct_only:
             all_flights = [f for f in all_flights if f.get("transfers", 999) == 0]
