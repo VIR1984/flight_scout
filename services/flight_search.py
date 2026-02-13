@@ -229,19 +229,7 @@ def find_cheapest_flight_on_exact_date(
     
     # Добавлено тестирование
 def update_passengers_in_link(link: str, passengers_code: str) -> str:
-    """
-    Корректно заменяет количество пассажиров в ссылке Aviasales.
-    ВАЖНО: В ссылках от API пассажиры — ВСЕГДА последняя цифра пути.
-    Алгоритм:
-    1. Извлекаем маршрут из пути (/search/...)
-    2. Удаляем ПОСЛЕДНЮЮ цифру (старое количество пассажиров = '1')
-    3. Добавляем ПОЛНЫЙ код пассажиров (например, '211', а не только '2')
-    Пример:
-    Вход:  /search/MOW1003AER15031?t=..., passengers_code="21"
-    Шаг 2: /search/MOW1003AER1503 (удалена последняя '1')
-    Шаг 3: /search/MOW1003AER150321 (добавлено '21')
-    Выход: /search/MOW1003AER150321?t=...
-    """
+    
     print(f"[DEBUG update_passengers_in_link] Вход: link='{link}', passengers_code='{passengers_code}'")
     
     import re

@@ -156,7 +156,7 @@ async def process_everywhere_search(
     
     # === КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: обновляем пассажиров в ссылке из API ===
     booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
-    passengers_code = data.get("passengers_code", "1")
+    passengers_code = data.get("passenger_code", "1")
     
     if booking_link:
         # Обновляем количество пассажиров в ссылке от API
