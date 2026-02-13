@@ -710,7 +710,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passengers_code", "1")
     if booking_link:
-        booking_link = _update_passengers_in_link(booking_link, passengers_code)
+        booking_link = update_passengers_in_link(booking_link, passengers_code)
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
@@ -1031,7 +1031,7 @@ async def handle_flight_request(message: Message):
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = passengers_code
     if booking_link:
-        booking_link = _update_passengers_in_link(booking_link, passengers_code)
+        booking_link = update_passengers_in_link(booking_link, passengers_code)
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
