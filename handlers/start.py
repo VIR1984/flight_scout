@@ -473,6 +473,8 @@ async def show_summary(message, state: FSMContext):
         passenger_code=passenger_code,
         passenger_desc=passenger_desc
     )
+    print(f"[DEBUG show_summary] После сохранения: passenger_code='{passenger_code}'") # <-- ДОБАВИТЬ
+    
     await message.edit_text(summary, parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
 
@@ -503,6 +505,7 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    print(f"[DEBUG confirm_search] Состояние FSM перед вызовом API: {data}") # <-- ДОБАВИТЬ
     await callback.message.edit_text("⏳ Ищу билеты...")
     
     is_origin_everywhere = data["origin"] == "везде"
@@ -723,6 +726,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passengers_code", "1")
+    print(f"[DEBUG confirm_search] passengers_code из state: '{passengers_code}'") # <-- ДОБАВИТЬ
     if booking_link:
         # СТАЛО:
         print(f"[DEBUG confirm_search] Перед update_passengers_in_link: link='{booking_link}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
