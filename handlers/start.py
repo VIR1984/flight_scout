@@ -65,20 +65,31 @@ def validate_date(date_str: str) -> bool:
         return False
 
 def build_passenger_code(adults: int, children: int = 0, infants: int = 0) -> str:
+    print(f"[DEBUG build_passenger_code] Вход: adults={adults}, children={children}, infants={infants}") # <-- ДОБАВИТЬ
+    
     adults = max(1, adults)
     total = adults + children + infants
+
     if total > 9:
+        print(f"[DEBUG build_passenger_code] Всего пассажиров > 9 ({total}), корректирую...") # <-- ДОБАВИТЬ
         remaining = 9 - adults
         if children + infants > remaining:
+            old_children, old_infants = children, infants # <-- ДОБАВИТЬ
             children = min(children, remaining)
             infants = max(0, remaining - children)
+            print(f"[DEBUG build_passenger_code] Коррекция детей/младенцев: {old_children}/{old_infants} -> {children}/{infants}") # <-- ДОБАВИТЬ
         if infants > adults:
+            old_infants = infants # <-- ДОБАВИТЬ
             infants = adults
+            print(f"[DEBUG build_passenger_code] Коррекция младенцев: {old_infants} -> {infants} (не больше взрослых)") # <-- ДОБАВИТЬ
+
     code = str(adults)
     if children > 0:
         code += str(children)
     if infants > 0:
         code += str(infants)
+    
+    print(f"[DEBUG build_passenger_code] Выход: '{code}'") # <-- ДОБАВИТЬ
     return code
 
 @router.message(Command("start"))
@@ -426,8 +437,11 @@ async def show_summary(message, state: FSMContext):
     adults = data["adults"]
     children = data.get("children", 0)
     infants = data.get("infants", 0)
+    # СТАЛО:
+    print(f"[DEBUG] Перед вызовом build_passenger_code: adults={adults}, children={children}, infants={infants}") # <-- ДОБАВИТЬ
     passenger_code = build_passenger_code(adults, children, infants)
-    passenger_desc = build_passenger_desc(passenger_code)
+    print(f"[DEBUG] Получен passenger_code: '{passenger_code}'") # <-- ДОБАВИТЬ
+    passenger_desc = format_passenger_desc(passenger_code)
     summary = (
         "📋 <b>Проверьте данные:</b>\n"
         f"📍 Маршрут: <b>{data['origin_name']} → {data['dest_name']}</b>\n"
@@ -710,7 +724,10 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passengers_code", "1")
     if booking_link:
-        booking_link = update_passengers_in_link(booking_link, passengers_code)
+        # СТАЛО:
+    print(f"[DEBUG confirm_search] Перед update_passengers_in_link: link='{booking_link}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
+    booking_link = update_passengers_in_link(booking_link, passengers_code) # <-- УБЕДИТЕСЬ, ЧТО ВЫЗЫВАЕТСЯ ПРАВИЛЬНАЯ ФУНКЦИЯ
+    print(f"[DEBUG confirm_search] После update_passengers_in_link: link='{booking_link}'") # <-- ДОБАВИТЬ
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
