@@ -217,33 +217,109 @@ def find_cheapest_flight_on_exact_date(
     
     
     # Добавлено тестирование
-
 def update_passengers_in_link(link: str, passengers_code: str) -> str:
+    """
+    Корректно заменяет количество пассажиров в ссылке Aviasales.
+    ВАЖНО: В ссылках от API пассажиры — ВСЕГДА последняя цифра пути.
+    Алгоритм:
+    1. Извлекаем маршрут из пути (/search/...)
+    2. Удаляем ПОСЛЕДНЮЮ цифру (старое количество пассажиров = '1')
+    3. Добавляем ПОЛНЫЙ код пассажиров (например, '211', а не только '2')
+    Пример:
+    Вход:  /search/MOW1003AER15031?t=..., passengers_code="21"
+    Шаг 2: /search/MOW1003AER1503 (удалена последняя '1')
+    Шаг 3: /search/MOW1003AER150321 (добавлено '21')
+    Выход: /search/MOW1003AER150321?t=...
+    """
+    print(f"[DEBUG update_passengers_in_link] Вход: link='{link}', passengers_code='{passengers_code}'")
+    
+    import re
+    from urllib.parse import urlparse, urlunparse
+
     if not link or not passengers_code or not passengers_code.isdigit():
+        print(f"[DEBUG update_passengers_in_link] Возврат: нет ссылки или кода пассажиров (link='{link}', passengers_code='{passengers_code}')")
         return link
+
     if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
+        print(f"[DEBUG update_passengers_in_link] Возврат: невалидный код пассажиров '{passengers_code}'")
         return link
+
     is_relative = link.startswith('/')
     parsed = None if is_relative else urlparse(link)
     path = link if is_relative else parsed.path
+
+    print(f"[DEBUG update_passengers_in_link] Извлеченный путь: '{path}'")
+    print(f"[DEBUG update_passengers_in_link] Тип ссылки: {'относительная' if is_relative else 'абсолютная'}")
+
     if '/search/' not in path:
+        print(f"[DEBUG update_passengers_in_link] Возврат: путь не содержит '/search/'. Исходная ссылка: '{link}'")
         return link
+
     path_parts = path.split('/search/', 1)
     if len(path_parts) < 2:
+        print(f"[DEBUG update_passengers_in_link] Возврат: не удалось разделить путь по '/search/'. Исходная ссылка: '{link}'")
         return link
-    search_part = path_parts[1]
+
+    prefix, search_part = path_parts
+    print(f"[DEBUG update_passengers_in_link] Префикс пути: '{prefix}'")
+    print(f"[DEBUG update_passengers_in_link] Часть после /search/: '{search_part}'")
+
     if '?' in search_part:
         route, query = search_part.split('?', 1)
         has_query = True
+        print(f"[DEBUG update_passengers_in_link] Найдена строка запроса. Маршрут: '{route}', параметры: '{query}'")
     else:
         route, query = search_part, ""
         has_query = False
+        print(f"[DEBUG update_passengers_in_link] Нет строки запроса. Маршрут: '{route}'")
+
+    # === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ===
+    # Удаляем последнюю цифру (старое количество пассажиров) и добавляем новый код
     if route and route[-1].isdigit():
         new_route = route[:-1] + passengers_code
+        print(f"[DEBUG update_passengers_in_link] Заменяем последнюю цифру. Было: '{route}', стало: '{new_route}'")
     else:
+        # Если нет цифры в конце (маловероятно для ссылок от API), добавляем в конец
         new_route = route + passengers_code
-    new_path = f"/search/{new_route}" + (f"?{query}" if has_query else "")
-    return new_path if is_relative else urlunparse(parsed._replace(path=new_path))
+        print(f"[DEBUG update_passengers_in_link] Нет цифры в конце маршрута, добавляем код в конец. Было: '{route}', стало: '{new_route}'")
+
+    # Собираем путь обратно
+    new_path = f"/search/{new_route}"
+    if has_query:
+        new_path += f"?{query}"
+        print(f"[DEBUG update_passengers_in_link] Добавлена строка запроса: '{new_path}'")
+
+    # Возвращаем в исходном формате (сохраняем относительность/абсолютность)
+    result = new_path if is_relative else urlunparse(parsed._replace(path=new_path))
+    print(f"[DEBUG update_passengers_in_link] Выход: '{result}'")
+    return result
+
+# def update_passengers_in_link(link: str, passengers_code: str) -> str:
+    # if not link or not passengers_code or not passengers_code.isdigit():
+        # return link
+    # if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
+        # return link
+    # is_relative = link.startswith('/')
+    # parsed = None if is_relative else urlparse(link)
+    # path = link if is_relative else parsed.path
+    # if '/search/' not in path:
+        # return link
+    # path_parts = path.split('/search/', 1)
+    # if len(path_parts) < 2:
+        # return link
+    # search_part = path_parts[1]
+    # if '?' in search_part:
+        # route, query = search_part.split('?', 1)
+        # has_query = True
+    # else:
+        # route, query = search_part, ""
+        # has_query = False
+    # if route and route[-1].isdigit():
+        # new_route = route[:-1] + passengers_code
+    # else:
+        # new_route = route + passengers_code
+    # new_path = f"/search/{new_route}" + (f"?{query}" if has_query else "")
+    # return new_path if is_relative else urlunparse(parsed._replace(path=new_path))
     
 def parse_passengers(s: str) -> str:
     """
