@@ -725,9 +725,9 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     passengers_code = data.get("passengers_code", "1")
     if booking_link:
         # СТАЛО:
-    print(f"[DEBUG confirm_search] Перед update_passengers_in_link: link='{booking_link}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
-    booking_link = update_passengers_in_link(booking_link, passengers_code) # <-- УБЕДИТЕСЬ, ЧТО ВЫЗЫВАЕТСЯ ПРАВИЛЬНАЯ ФУНКЦИЯ
-    print(f"[DEBUG confirm_search] После update_passengers_in_link: link='{booking_link}'") # <-- ДОБАВИТЬ
+        print(f"[DEBUG confirm_search] Перед update_passengers_in_link: link='{booking_link}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
+        booking_link = update_passengers_in_link(booking_link, passengers_code) # <-- УБЕДИТЕСЬ, ЧТО ВЫЗЫВАЕТСЯ ПРАВИЛЬНАЯ ФУНКЦИЯ
+        print(f"[DEBUG confirm_search] После update_passengers_in_link: link='{booking_link}'") # <-- ДОБАВИТЬ
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
