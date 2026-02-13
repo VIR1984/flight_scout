@@ -215,11 +215,7 @@ def find_cheapest_flight_on_exact_date(
         return min(flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
     return min(exact_flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
 
-# В confirm_search перед строкой вызова update_passengers_in_link
-print(f"[DEBUG start.py confirm_search] Перед update_passengers_in_link: booking_link='{booking_link}', passengers_code='{passengers_code}'")
 
-# В handle_flight_request перед строкой вызова update_passengers_in_link
-print(f"[DEBUG start.py handle_flight_request] Перед update_passengers_in_link: booking_link='{booking_link}', passengers_code='{passengers_code}'")
     
     
     # Добавлено тестирование
