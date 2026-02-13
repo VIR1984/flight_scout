@@ -485,68 +485,6 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
         await ask_adults(callback, state)
     await callback.answer()
 
-def _update_passengers_in_link(link: str, passengers_code: str) -> str:
-    """
-    Корректно заменяет количество пассажиров в ссылке Aviasales.
-    ВАЖНО: В ссылках от API пассажиры — ВСЕГДА последняя цифра пути.
-    Алгоритм:
-    1. Извлекаем маршрут из пути (/search/...)
-    2. Удаляем ПОСЛЕДНЮЮ цифру (старое количество пассажиров = '1')
-    3. Добавляем ПОЛНЫЙ код пассажиров (например, '211', а не только '2')
-    Пример:
-    Вход:  /search/MOW1003AER15031?t=..., passengers_code="2"
-    Шаг 2: /search/MOW1003AER1503 (удалена последняя '1')
-    Шаг 3: /search/MOW1003AER15032 (добавлено '2')
-    Выход: /search/MOW1003AER15032?t=...
-    """
-    if not link or not passengers_code or not passengers_code.isdigit():
-        return link
-    # Валидация кода пассажиров (1-3 цифры, первая 1-9)
-    if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
-        return link
-    # Определяем тип ссылки (относительная /search/... или абсолютная)
-    if link.startswith('/'):
-        path = link
-        is_relative = True
-        parsed = None
-    else:
-        parsed = urlparse(link)
-        path = parsed.path
-        is_relative = False
-    # Проверяем формат пути
-    if '/search/' not in path:
-        return link
-    # Разделяем путь на части до и после /search/
-    path_parts = path.split('/search/', 1)
-    if len(path_parts) < 2:
-        return link
-    prefix = path_parts[0]  # обычно пустая строка или '/'
-    search_part = path_parts[1]
-    # Разделяем маршрут и параметры запроса (?t=...)
-    if '?' in search_part:
-        route, query = search_part.split('?', 1)
-        has_query = True
-    else:
-        route, query = search_part, ""
-        has_query = False
-    # === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ===
-    # БЫЛО: route[:-1] + passengers_code[0]  ← только ПЕРВАЯ цифра!
-    # СТАЛО: route[:-1] + passengers_code     ← ПОЛНЫЙ код пассажиров
-    if route and route[-1].isdigit():
-        new_route = route[:-1] + passengers_code
-    else:
-        # Если нет цифры в конце (маловероятно для ссылок от API), добавляем в конец
-        new_route = route + passengers_code
-    # Собираем путь обратно
-    if has_query:
-        new_path = f"/search/{new_route}?{query}"
-    else:
-        new_path = f"/search/{new_route}"
-    # Возвращаем в исходном формате (сохраняем относительность/абсолютность)
-    if is_relative:
-        return new_path
-    else:
-        return urlunparse(parsed._replace(path=new_path))
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):

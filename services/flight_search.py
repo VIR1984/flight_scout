@@ -7,6 +7,7 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
 from utils.logger import logger
 
+
 # Конфигурация API
 AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
 AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN", "").strip()
@@ -213,3 +214,94 @@ def find_cheapest_flight_on_exact_date(
     if not exact_flights:
         return min(flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
     return min(exact_flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
+    
+    
+    # Добавлено тестирование
+
+def update_passengers_in_link(link: str, passengers_code: str) -> str:
+    if not link or not passengers_code or not passengers_code.isdigit():
+        return link
+    if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
+        return link
+    is_relative = link.startswith('/')
+    parsed = None if is_relative else urlparse(link)
+    path = link if is_relative else parsed.path
+    if '/search/' not in path:
+        return link
+    path_parts = path.split('/search/', 1)
+    if len(path_parts) < 2:
+        return link
+    search_part = path_parts[1]
+    if '?' in search_part:
+        route, query = search_part.split('?', 1)
+        has_query = True
+    else:
+        route, query = search_part, ""
+        has_query = False
+    if route and route[-1].isdigit():
+        new_route = route[:-1] + passengers_code
+    else:
+        new_route = route + passengers_code
+    new_path = f"/search/{new_route}" + (f"?{query}" if has_query else "")
+    return new_path if is_relative else urlunparse(parsed._replace(path=new_path))
+    
+# def parse_passengers(s: str) -> str:
+    # """
+    # Парсит строку с пассажирами и возвращает код пассажиров.
+    # Примеры:
+    # - "2 взр" → "2"
+    # - "2 взр, 1 реб" → "21"
+    # - "2 взр, 1 мл" → "201"
+    # """
+    # if not s:
+        # return "1"
+    
+    # if s.isdigit():
+        # return s
+    
+    # adults = children = infants = 0
+    
+    # for part in s.split(","):
+        # part = part.strip().lower()
+        # n = int(re.search(r"\d+", part).group()) if re.search(r"\d+", part) else 1
+        
+        # if "взр" in part or "взросл" in part:
+            # adults = n
+        # elif "реб" in part or "дет" in part:
+            # children = n
+        # elif "мл" in part or "млад" in part:
+            # infants = n
+    
+    Формируем код пассажиров
+    # code = str(adults)
+    # if children > 0:
+        # code += str(children)
+    # if infants > 0:
+        # code += str(infants)
+    
+    # return code
+
+# def format_passenger_desc(code: str) -> str:
+    # """
+    # Форматирует код пассажиров в читаемое описание.
+    # Примеры:
+    # - "1" → "1 взр."
+    # - "21" → "2 взр., 1 реб."
+    # - "211" → "2 взр., 1 реб., 1 мл."
+    # """
+    # try:
+        # adults = int(code[0])
+        # children = int(code[1]) if len(code) > 1 else 0
+        # infants = int(code[2]) if len(code) > 2 else 0
+        
+        # parts = []
+        # if adults:
+            # parts.append(f"{adults} взр.")
+        # if children:
+            # parts.append(f"{children} реб.")
+        # if infants:
+            # parts.append(f"{infants} мл.")
+        
+        # return ", ".join(parts) if parts else "1 взр."
+    # except:
+        # return "1 взр."
