@@ -1261,7 +1261,7 @@ async def handle_set_threshold(callback: CallbackQuery):
         depart_date=data["original_depart"],
         return_date=data["original_return"],
         current_price=price,
-        passengers=data.get("passengers_code", "1"),
+        passengers=data.get("passenger_code", "1"),
         threshold=threshold
     )
     
