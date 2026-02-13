@@ -516,8 +516,8 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     
     if is_origin_everywhere and not is_dest_everywhere:
         all_flights, search_type = await search_origin_everywhere(
-            destination=data["dest_name"],
-            dest_iata=data["dest_iata"],
+            city_name=data["dest_name"],    
+            city_iata=data["dest_iata"],    
             depart_date=data["depart_date"],
             return_date=None,
             passengers_code=data["passenger_code"],
@@ -536,8 +536,8 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             return
     elif not is_origin_everywhere and is_dest_everywhere:
         all_flights, search_type = await search_destination_everywhere(
-            origin=data["origin_name"],
-            origin_iata=data["origin_iata"],
+            city_name=data["origin_name"],  
+            city_iata=data["origin_iata"],  
             depart_date=data["depart_date"],
             return_date=None,
             passengers_code=data["passenger_code"],
