@@ -522,7 +522,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             
         search_type = "origin_everywhere"
         success = await process_everywhere_search (callback, data, all_flights, search_type)
-)
+        )
         # Фильтрация для "Везде → Город"
         if direct_only:
             all_flights = [f for f in all_flights if f.get("transfers", 999) == 0]
