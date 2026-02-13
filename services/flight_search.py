@@ -380,3 +380,23 @@ def format_passenger_desc(code: str) -> str:
         return ", ".join(parts) if parts else "1 взр."
     except:
         return "1 взр."
+        
+def format_duration(minutes: int) -> str:
+    """
+    Форматирует длительность полёта из минут в читаемый вид.
+    Примеры:
+    - 125 → "2ч 5м"
+    - 60 → "1ч"
+    - 30 → "30м"
+    - 0 → "—"
+    """
+    if not minutes:
+        return "—"
+    hours = minutes // 60
+    mins = minutes % 60
+    parts = []
+    if hours:
+        parts.append(f"{hours}ч")
+    if mins:
+        parts.append(f"{mins}м")
+    return " ".join(parts) if parts else "—"
