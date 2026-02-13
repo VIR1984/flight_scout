@@ -519,10 +519,10 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             dest_iata=data["dest_iata"],
             depart_date=data["depart_date"],
             flight_type=data.get("flight_type", "all")
-            
+        )    
         search_type = "origin_everywhere"
         success = await process_everywhere_search (callback, data, all_flights, search_type)
-        )
+        
         # Фильтрация для "Везде → Город"
         if direct_only:
             all_flights = [f for f in all_flights if f.get("transfers", 999) == 0]
