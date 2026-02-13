@@ -245,63 +245,63 @@ def update_passengers_in_link(link: str, passengers_code: str) -> str:
     new_path = f"/search/{new_route}" + (f"?{query}" if has_query else "")
     return new_path if is_relative else urlunparse(parsed._replace(path=new_path))
     
-# def parse_passengers(s: str) -> str:
-    # """
-    # Парсит строку с пассажирами и возвращает код пассажиров.
-    # Примеры:
-    # - "2 взр" → "2"
-    # - "2 взр, 1 реб" → "21"
-    # - "2 взр, 1 мл" → "201"
-    # """
-    # if not s:
-        # return "1"
+def parse_passengers(s: str) -> str:
+    """
+    Парсит строку с пассажирами и возвращает код пассажиров.
+    Примеры:
+    - "2 взр" → "2"
+    - "2 взр, 1 реб" → "21"
+    - "2 взр, 1 мл" → "201"
+    """
+    if not s:
+        return "1"
     
-    # if s.isdigit():
-        # return s
+    if s.isdigit():
+        return s
     
-    # adults = children = infants = 0
+    adults = children = infants = 0
     
-    # for part in s.split(","):
-        # part = part.strip().lower()
-        # n = int(re.search(r"\d+", part).group()) if re.search(r"\d+", part) else 1
+    for part in s.split(","):
+        part = part.strip().lower()
+        n = int(re.search(r"\d+", part).group()) if re.search(r"\d+", part) else 1
         
-        # if "взр" in part or "взросл" in part:
-            # adults = n
-        # elif "реб" in part or "дет" in part:
-            # children = n
-        # elif "мл" in part or "млад" in part:
-            # infants = n
+        if "взр" in part or "взросл" in part:
+            adults = n
+        elif "реб" in part or "дет" in part:
+            children = n
+        elif "мл" in part or "млад" in part:
+            infants = n
     
-    # Формируем код пассажиров
-    # code = str(adults)
-    # if children > 0:
-        # code += str(children)
-    # if infants > 0:
-        # code += str(infants)
+    Формируем код пассажиров
+    code = str(adults)
+    if children > 0:
+        code += str(children)
+    if infants > 0:
+        code += str(infants)
     
-    # return code
+    return code
 
-# def format_passenger_desc(code: str) -> str:
-    # """
-    # Форматирует код пассажиров в читаемое описание.
-    # Примеры:
-    # - "1" → "1 взр."
-    # - "21" → "2 взр., 1 реб."
-    # - "211" → "2 взр., 1 реб., 1 мл."
-    # """
-    # try:
-        # adults = int(code[0])
-        # children = int(code[1]) if len(code) > 1 else 0
-        # infants = int(code[2]) if len(code) > 2 else 0
+def format_passenger_desc(code: str) -> str:
+    """
+    Форматирует код пассажиров в читаемое описание.
+    Примеры:
+    - "1" → "1 взр."
+    - "21" → "2 взр., 1 реб."
+    - "211" → "2 взр., 1 реб., 1 мл."
+    """
+    try:
+        adults = int(code[0])
+        children = int(code[1]) if len(code) > 1 else 0
+        infants = int(code[2]) if len(code) > 2 else 0
         
-        # parts = []
-        # if adults:
-            # parts.append(f"{adults} взр.")
-        # if children:
-            # parts.append(f"{children} реб.")
-        # if infants:
-            # parts.append(f"{infants} мл.")
+        parts = []
+        if adults:
+            parts.append(f"{adults} взр.")
+        if children:
+            parts.append(f"{children} реб.")
+        if infants:
+            parts.append(f"{infants} мл.")
         
-        # return ", ".join(parts) if parts else "1 взр."
-    # except:
-        # return "1 взр."
+        return ", ".join(parts) if parts else "1 взр."
+    except:
+        return "1 взр."
