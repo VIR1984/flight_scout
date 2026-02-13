@@ -22,11 +22,10 @@ from services.flight_search import (
     format_passenger_desc,
     format_user_date,
     build_flight_result_text,
-    add_marker_to_url
-    normalize_date,          
-    format_avia_link_date    
+    add_marker_to_url,
+    normalize_date,          # ИСПРАВЛЕНО: добавлен импорт
+    format_avia_link_date    # ИСПРАВЛЕНО: добавлен импорт
 )
-
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
@@ -47,7 +46,7 @@ class FlightSearch(StatesGroup):
     depart_date = State()
     need_return = State()
     return_date = State()
-    flight_type = State()  # ← НОВЫЙ ШАГ
+    flight_type = State()
     adults = State()
     children = State()
     infants = State()
@@ -601,7 +600,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             flights = await search_flights(
                 orig,
                 dest,
-                normalize_date(data["depart_date"]),
+                normalize_date(data["depart_date"]),  # ИСПРАВЛЕНО: функция теперь доступна
                 normalize_date(data["return_date"]) if data.get("return_date") else None,
                 direct=direct_only
             )
@@ -639,7 +638,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     # Если рейсов нет совсем
     if not all_flights:
         origin_iata = origins[0]
-        d1 = format_avia_link_date(data["depart_date"])
+        d1 = format_avia_link_date(data["depart_date"])  # ИСПРАВЛЕНО: функция теперь доступна
         d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
         route = f"{origin_iata}{d1}{destinations[0]}{d2}1"
         
@@ -873,7 +872,7 @@ async def handle_flight_request(message: Message):
         flights = await search_flights(
             orig,
             dest_iata,
-            normalize_date(depart_date),
+            normalize_date(depart_date),  # ИСПРАВЛЕНО: функция теперь доступна
             normalize_date(return_date) if return_date else None,
             direct=direct_only
         )
@@ -909,7 +908,7 @@ async def handle_flight_request(message: Message):
     # Если рейсов нет совсем
     if not all_flights:
         origin_iata = origins[0]
-        d1 = format_avia_link_date(depart_date)
+        d1 = format_avia_link_date(depart_date)  # ИСПРАВЛЕНО: функция теперь доступна
         d2 = format_avia_link_date(return_date) if return_date else ""
         route = f"{origin_iata}{d1}{dest_iata}{d2}{passengers_code}"
         
@@ -1181,6 +1180,17 @@ async def handle_set_threshold(callback: CallbackQuery):
 # ===== Трансферы =====
 
 transfer_context: Dict[int, Dict[str, Any]] = {}
+
+def get_airport_name(iata: str) -> str:
+    """Возвращает название аэропорта по IATA-коду"""
+    AIRPORT_NAMES = {
+        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
+        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
+        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
+        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
+        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
+    }
+    return AIRPORT_NAMES.get(iata, iata)
 
 @router.callback_query(F.data.startswith("ask_transfer_"))
 async def handle_ask_transfer(callback: CallbackQuery):
