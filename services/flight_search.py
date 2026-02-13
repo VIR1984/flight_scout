@@ -272,7 +272,7 @@ def update_passengers_in_link(link: str, passengers_code: str) -> str:
         # elif "мл" in part or "млад" in part:
             # infants = n
     
-    Формируем код пассажиров
+    # Формируем код пассажиров
     # code = str(adults)
     # if children > 0:
         # code += str(children)
