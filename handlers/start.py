@@ -697,6 +697,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         origin_iata=origin_iata,
         dest_iata=dest_iata,
         display_depart=display_depart,
+        display_depart=display_depart,
         display_return=display_return,
         passenger_desc=data["passenger_desc"],
         is_roundtrip=data.get("need_return", False)
