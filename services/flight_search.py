@@ -153,7 +153,10 @@ def generate_booking_link(
       • "2"   → 2 взрослых
       • "21"  → 2 взр. + 1 реб.
       • "211" → 2 взр. + 1 реб. + 1 мл.
-    """
+    
+     """
+    print(f"[DEBUG generate_booking_link] Вход: origin='{origin}', dest='{dest}', depart_date='{depart_date}', return_date='{return_date}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
+
     # Валидация и нормализация кода пассажиров
     if not passengers_code or not isinstance(passengers_code, str):
         passengers_code = "1"
@@ -168,6 +171,9 @@ def generate_booking_link(
     # Форматируем даты для ссылки (ДДММ)
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
+    
+    print(f"[DEBUG generate_booking_link] Отформатированные даты: d1='{d1}', d2='{d2}'") # <-- ДОБАВИТЬ
+
 
     # Формируем маршрут с ПОЛНЫМ кодом пассажиров
     if return_date:
@@ -176,6 +182,9 @@ def generate_booking_link(
     else:
         # В одну сторону: AER1003MOW211
         route = f"{origin}{d1}{dest}{passengers_code}"
+        
+    print(f"[DEBUG generate_booking_link] Сформированный маршрут: '{route}'") # <-- ДОБАВИТЬ
+
 
     base_url = f"https://www.aviasales.ru/search/{route}"
 

@@ -724,7 +724,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     price_per_passenger = int(float(price)) if price != "?" else 0 # Конвертируем строку в число, если возможно
 
     # Извлекаем количество взрослых из кода пассажиров
-    passengers_code = data.get("passengers_code", "1")
+    passengers_code = data.get("passenger_code", "1")
     try:
         num_adults = int(passengers_code[0]) if passengers_code and passengers_code[0].isdigit() else 1
     except (IndexError, ValueError):
