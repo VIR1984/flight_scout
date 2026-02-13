@@ -9,7 +9,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date
+from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, update_passengers_in_lin
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
