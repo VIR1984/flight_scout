@@ -230,7 +230,7 @@ async def process_route(message: Message, state: FSMContext):
         "📅 Введите дату вылета в формате <code>ДД.ММ</code>\n"
         "📌 <b>Пример:</b> 10.03",
         parse_mode="HTML",
-        reply_markup=CANCEL_KB
+        # reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.depart_date)
 
@@ -258,7 +258,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
     await message.answer(
-        f"✅ Дата вылета: <b>{message.text}</b>\n"
+        # f"✅ Дата вылета: <b>{message.text}</b>\n"
         "🔄 Нужен ли обратный билет?",
         parse_mode="HTML",
         reply_markup=kb
@@ -311,9 +311,7 @@ async def ask_flight_type(message_or_callback, state: FSMContext):
     ])
     text = (
         "✈️ Какие рейсы показывать?\n"
-        "• <b>Прямые</b> — без пересадок (быстрее, часто дороже)\n"
-        "• <b>С пересадкой</b> — 1+ пересадка (дешевле, дольше в пути)\n"
-        "• <b>Все варианты</b> — покажу и те, и другие (рекомендуется)"
+        
     )
     if isinstance(message_or_callback, CallbackQuery):
         await message_or_callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -349,7 +347,7 @@ async def ask_adults(message_or_callback, state: FSMContext):
             InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
         ]
     ])
-    text = "👥 Сколько взрослых пассажиров (от 12 лет)?\n(max. до 9 человек)"
+    text = "👥 Сколько взрослых пассажиров (от 12 лет)?\n"
     if isinstance(message_or_callback, CallbackQuery):
         await message_or_callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     else:
@@ -377,7 +375,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
         kb_buttons.append([InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
-            f"👥 Взрослых: <b>{adults}</b>\n"
+            # f"👥 Взрослых: <b>{adults}</b>\n"
             f"👶 Сколько детей (от 2-11 лет)?\n"
             f"<i>Если у вас младенцы, укажете дальше</i>",
             parse_mode="HTML",
@@ -410,8 +408,8 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
         kb_buttons.append([InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
-            f"👥 Взрослых: <b>{adults}</b>\n"
-            f"👶 Детей: <b>{children}</b>\n"
+            # f"👥 Взрослых: <b>{adults}</b>\n"
+            # f"👶 Детей: <b>{children}</b>\n"
             f"🍼 Сколько младенцев? (младше 2-х лет без места)",
             parse_mode="HTML",
             reply_markup=kb
@@ -689,13 +687,27 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         transfer_text = f"✈️ {transfers} пересадки"
     
         
-    header = f"✅ <b>Самый дешёвый вариант на {display_depart} ({data['passenger_desc']}):</b>"
+    header = f"✅ <b>Самый дешёвый вариант: "
+    if price != "?":
+        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
+        if num_adults > 1:
+             text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
+             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
+        # Если взрослый только один, просто показываем цену за него
+    else:
+        # Если точная цена неизвестна
+        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
+        if num_adults > 1:
+            text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
+            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
     route_line = f"🛫 <b>Рейс: {origin_name}</b> → <b>{dest_name}</b>"
     text = (
         f"{header}\n"
         f"{route_line}\n"
         f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
         f"📅 Дата вылета: {display_depart}\n"
+        f"\n↩️ <b>Обратно:</b> {display_return}"
+        
         f"⏱️ Продолжительность полета: {duration}\n"
         f"{transfer_text}\n"
     )
@@ -726,23 +738,12 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
 
     # Формируем текст цены
-    if price != "?":
-        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
-        if num_adults > 1:
-             text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
-             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        # Если взрослый только один, просто показываем цену за него
-    else:
-        # Если точная цена неизвестна
-        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
-        if num_adults > 1:
-            text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
+    
 
     # --- КОНЕЦ ЛОГИКИ РАСЧЁТА ЦЕНЫ ---
 
     if data.get("need_return", False) and display_return:
-        text += f"\n↩️ <b>Обратно:</b> {display_return}"
+        # text += f"\n↩️ <b>Обратно:</b> {display_return}"
     text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     
     
