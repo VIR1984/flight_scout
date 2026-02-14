@@ -702,7 +702,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     except (IndexError, ValueError):
         num_adults = 1
 
-    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?" "?"
+    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
 
     if price != "?":
         text += f"💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
@@ -748,7 +748,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         text += f"\n✈️ <b>Авиакомпания и номер рейса:</b> {flight_display}"
 
     # Предупреждение
-    # text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
+    text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     
     
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
@@ -1050,51 +1050,17 @@ async def handle_flight_request(message: Message):
         transfer_text = f"✈️ {transfers} пересадки"
     
        
-     text = "✅ <b>Самый дешёвый вариант</b>\n"
+    header = f"✅ <b>Самый дешёвый вариант на {display_depart} ({data['passenger_desc']}):</b>"
+    route_line = f"🛫 <b>Рейс: {origin_name}</b> → <b>{dest_name}</b>"
+    text = (
+        f"{header}\n"
+        f"{route_line}\n"
+        f"📍({origin_iata}) → ({dest_iata})\n"
+        f"📅 Туда: {display_depart}\n"
+        f"⏱️ Продолжительность полета: {duration}\n"
+        f"{transfer_text}\n"
+    )
 
-    # --- ЛОГИКА РАСЧЁТА ЦЕНЫ ---
-    price_per_passenger = int(float(price)) if price != "?" else 0
-
-    passengers_code = data.get("passenger_code", "1")
-    try:
-        num_adults = int(passengers_code[0]) if passengers_code and passengers_code[0].isdigit() else 1
-    except (IndexError, ValueError):
-        num_adults = 1
-
-    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?" "?"
-
-    if price != "?":
-        text += f"💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
-        if num_adults > 1:
-            text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
-    else:
-        text += f"💰 <b>Цена за 1 пассажира:</b> {price} ₽"
-        if num_adults > 1:
-            text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-    
-    # Обратный рейс (если есть)
-    if data.get("need_return", False) and display_return:
-        text += f"\n↩️ <b>Обратно:</b> {display_return}"
-
-    # Добавляем уточнение о детях/младенцах только если они есть
-    # if (data.get("children", 0) > 0 or data.get("infants", 0) > 0) and num_adults > 1:
-        # text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-
-    
-
-    # Рейс
-    text += f"\n🛫 <b>Рейс:</b> {origin_name} → {dest_name}"
-
-    # Города и коды аэропортов
-    text += f"\n📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
-
-    # Продолжительность
-    text += f"\n⏱️ <b>Продолжительность:</b> {duration}"
-
-    # Тип рейса
-    text += f"\n{transfer_text}"
-
-    # Авиакомпания и номер рейса (если есть)
     airline = top_flight.get("airline", "")
     flight_number = top_flight.get("flight_number", "")
     if airline or flight_number:
@@ -1104,9 +1070,40 @@ async def handle_flight_request(message: Message):
         }
         airline_display = airline_name_map.get(airline, airline)
         flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
-        text += f"\n✈️ <b>Авиакомпания и номер рейса:</b> {flight_display}"
+        text += f"✈️ {flight_display}\n"
 
-    # Предупреждение
+    # --- ЛОГИКА РАСЧЁТА ЦЕНЫ ---
+    # Получаем цену за одного пассажира
+    price_per_passenger = int(float(price)) if price != "?" else 0 # Конвертируем строку в число, если возможно
+
+    # Извлекаем количество взрослых из кода пассажиров
+    passengers_code = data.get("passenger_code", "1")
+    try:
+        num_adults = int(passengers_code[0]) if passengers_code and passengers_code[0].isdigit() else 1
+    except (IndexError, ValueError):
+        num_adults = 1 # Если не удаётся извлечь, по умолчанию 1
+
+    # Рассчитываем примерную стоимость для всех взрослых
+    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
+
+    # Формируем текст цены
+    if price != "?":
+        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
+        if num_adults > 1:
+             text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
+             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
+        # Если взрослый только один, просто показываем цену за него
+    else:
+        # Если точная цена неизвестна
+        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
+        if num_adults > 1:
+            text += f"\n🧮 <b>Цена за {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
+            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
+
+    # --- КОНЕЦ ЛОГИКИ РАСЧЁТА ЦЕНЫ ---
+
+    if data.get("need_return", False) and display_return:
+        text += f"\n↩️ Обратно: {display_return}"
     # text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
   
     
