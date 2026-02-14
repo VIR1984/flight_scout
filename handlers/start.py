@@ -687,52 +687,16 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         transfer_text = f"✈️ {transfers} пересадки"
     
         
-        # --- ЗАГОЛОВОК ---
-    header = "✅ <b>Самый дешёвый вариант:</b>"
+        # === ФОРМИРОВАНИЕ ТЕКСТА ДЛЯ ПОИСКА "ВЕЗДЕ" ===
 
-    # --- МАРШРУТ ---
-    route_line = f"✈️ <b>Рейс:</b> {origin_name} → {dest_name}"
-    airports_line = f"📍 <b>Аэропорты:</b> {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
-    duration_line = f"⏱️ <b>Продолжительность:</b> {duration}"
-
-    # --- ТИП РЕЙСА ---
-    if transfer_text:
-        transfer_clean = transfer_text.replace("✈️", "").strip()
-        type_line = f"🔁 <b>Тип рейса:</b> {transfer_clean}"
+    # 1. Заголовок без даты и пассажиров
+    if is_dest_everywhere:
+        header = f"✅ <b>Самый дешёвый вариант из {data['origin_name']}</b>"
     else:
-        type_line = f"🔁 <b>Тип рейса:</b> Прямой"
+        header = f"✅ <b>Самый дешёвый вариант в {data['dest_name']}</b>"
 
-    text = (
-        f"{header}\n\n"
-        f"{route_line}\n"
-        f"{airports_line}\n"
-        f"{duration_line}\n"
-        f"{type_line}\n"
-    )
-
-    # --- АВИАКОМПАНИЯ ---
-    airline = top_flight.get("airline", "")
-    flight_number = top_flight.get("flight_number", "")
-
-    if airline or flight_number:
-        airline_name_map = {
-            "SU": "Аэрофлот",
-            "S7": "S7 Airlines",
-            "DP": "Победа",
-            "U6": "Уральские авиалинии",
-            "FV": "Россия",
-            "UT": "ЮТэйр",
-            "N4": "Нордстар",
-            "IK": "Победа"
-        }
-
-        airline_display = airline_name_map.get(airline, airline)
-        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
-        text += f"🛩 <b>Авиакомпания и номер рейса:</b> {flight_display}\n"
-
-    # --- ЛОГИКА ЦЕНЫ ---
+    # 2-3. Расчёт цены
     price_per_passenger = int(float(price)) if price != "?" else 0
-
     passengers_code = data.get("passenger_code", "1")
     try:
         num_adults = int(passengers_code[0]) if passengers_code and passengers_code[0].isdigit() else 1
@@ -741,25 +705,64 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
 
     estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
 
-    # --- ВЫВОД ЦЕНЫ (В НАЧАЛО БЛОКА) ---
-    price_block = ""
+    # Блок расчёта цены
+    price_lines = []
+    price_lines.append(f"💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽")
+    if num_adults > 1:
+        price_lines.append(f"🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽")
+        price_lines.append("<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>")
 
-    if price != "?":
-        price_block += f"💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽\n"
-        price_block += f"🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽\n"
+    # 4. Дата возврата (если есть)
+    return_line = f"↩️ <b>Обратно:</b> {display_return}" if data.get("need_return", False) and display_return else ""
+
+    # 5. Рейс
+    route_line = f"🛫 <b>Рейс:</b> {origin_name} → {dest_name}"
+
+    # 6. Города и коды аэропортов
+    airports_line = f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
+
+    # 7. Продолжительность
+    duration_line = f"⏱️ <b>Продолжительность:</b> {duration}"
+
+    # 8. Тип рейса
+    if transfers == 0:
+        transfer_line = "✈️ <b>Тип рейса:</b> Прямой"
+    elif transfers == 1:
+        transfer_line = "✈️ <b>Тип рейса:</b> 1 пересадка"
     else:
-        price_block += f"💰 <b>Цена за 1 пассажира:</b> {price} ₽\n"
-        price_block += f"🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽\n"
+        transfer_line = f"✈️ <b>Тип рейса:</b> {transfers} пересадки"
 
-    # Вставляем цену сразу после заголовка
-    text = text.replace(header + "\n\n", header + "\n" + price_block + "\n")
+    # 9. Авиакомпания и номер рейса
+    airline_line = ""
+    if airline or flight_number:
+        airline_name_map = {
+            "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
+            "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
+        }
+        airline_display = airline_name_map.get(airline, airline)
+        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
+        airline_line = f"✈️ <b>Авиакомпания и номер рейса:</b> {flight_display}"
 
-    # --- ОБРАТНЫЙ РЕЙС ---
-    if data.get("need_return", False) and display_return:
-        text += f"\n↩️ <b>Обратно:</b> {display_return}\n"
+    # Сборка финального текста в точном порядке
+    text_parts = [header]
+    text_parts.extend(price_lines)
 
-    # --- ПРЕДУПРЕЖДЕНИЕ ---
-    text += "\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
+    if return_line:
+        text_parts.append(return_line)
+
+    text_parts.extend([
+        route_line,
+        airports_line,
+        duration_line,
+        transfer_line
+    ])
+
+    if airline_line:
+        text_parts.append(airline_line)
+
+    text_parts.append("⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>")
+
+    text = "\n".join(text_parts)
 
     route_line = f"🛫 <b>Рейс: {origin_name}</b> → <b>{dest_name}</b>"
     text = (
