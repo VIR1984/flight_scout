@@ -654,6 +654,11 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         except:
             return dt_str.split('T')[1][:5] if 'T' in dt_str else "??:??"
     
+    def format_thousands(value: int) -> str:
+    """Форматирует число с пробелом как разделителем тысяч. Пример: 12345 → '12 345'"""
+    return f"{value:,}".replace(",", " ")
+    
+    
     def format_duration(minutes):
         if not minutes:
             return "—"
@@ -699,7 +704,8 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     except (IndexError, ValueError):
         num_adults = 1
 
-    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
+    raw_total = price_per_passenger * num_adults if price != "?" else None
+    estimated_total_price = format_thousands(raw_total) if raw_total is not None else "?"
 
     if price != "?":
         text += f"💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
