@@ -96,7 +96,7 @@ def build_passenger_code(adults: int, children: int = 0, infants: int = 0) -> st
 async def cmd_start(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
-        [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")]
+        # [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")]
     ])
     await message.answer(
         "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
@@ -109,7 +109,7 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
         await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
-        [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")]
+        # [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")]
     ])
     try:
         await callback.message.edit_text(
