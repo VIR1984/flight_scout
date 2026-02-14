@@ -1459,7 +1459,7 @@ async def retry_with_transfers(callback: CallbackQuery, state: FSMContext):
     # Просто возвращаем пользователя в главное меню с подсказкой
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
-        [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")]
+        # [InlineKeyboardButton(text="📖 Справка", callback_data="show_help")]
     ])
     await callback.message.edit_text(
         "🔄 <b>Поиск рейсов с пересадками</b>\n\n"
