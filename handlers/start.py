@@ -164,14 +164,11 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "✈️ <b>Начнём поиск билетов!</b>\n"
-        "📍 <b>Шаг 1 из 6:</b> Введите маршрут в формате:\n"
+        "📍 Напишите маршрут в формате:\n"
         "<code>Город отправления - Город прибытия</code>\n\n"
-        "📌 <b>Примеры:</b>\n"
+        "📌 <b>Пример:</b>\n"
         "• Москва - Сочи\n"
-        "• СПБ - Бангкок\n"
-        "• Везде - Стамбул (поиск из всех городов России)\n"
-        "• Стамбул - Везде (поиск из Стамбула → топ-3 направлений)\n\n"
-        "💡 Можно писать через дефис или через пробел",
+        "💡 Если еще не решили, откуда или куда полетите, напишите Везде",
         parse_mode="HTML",
         reply_markup=CANCEL_KB
     )
@@ -229,8 +226,8 @@ async def process_route(message: Message, state: FSMContext):
     else:
         hint = f"✈️ Маршрут: <b>{origin_name} → {dest_name}</b>"
     await message.answer(
-        hint + "\n"
-        "📅 <b>Шаг 2 из 6:</b> Введите дату вылета в формате <code>ДД.ММ</code>\n"
+        # hint + "\n"
+        "📅 Введите дату вылета в формате <code>ДД.ММ</code>\n"
         "📌 <b>Пример:</b> 10.03",
         parse_mode="HTML",
         reply_markup=CANCEL_KB
@@ -262,7 +259,7 @@ async def process_depart_date(message: Message, state: FSMContext):
     ])
     await message.answer(
         f"✅ Дата вылета: <b>{message.text}</b>\n"
-        "🔄 <b>Шаг 3 из 6:</b> Нужен ли обратный билет?",
+        "🔄 Нужен ли обратный билет?",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -274,7 +271,7 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
     await state.update_data(need_return=need_return)
     if need_return:
         await callback.message.edit_text(
-            "📅 <b>Шаг 4 из 6:</b> Введите дату возврата в формате <code>ДД.ММ</code>\n"
+            "📅 Введите дату возврата в формате <code>ДД.ММ</code>\n"
             "📌 <b>Пример:</b> 15.03",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
@@ -313,7 +310,7 @@ async def ask_flight_type(message_or_callback, state: FSMContext):
         ]
     ])
     text = (
-        "✈️ <b>Шаг 5 из 6:</b> Какие рейсы показывать?\n"
+        "✈️ Какие рейсы показывать?\n"
         "• <b>Прямые</b> — без пересадок (быстрее, часто дороже)\n"
         "• <b>С пересадкой</b> — 1+ пересадка (дешевле, дольше в пути)\n"
         "• <b>Все варианты</b> — покажу и те, и другие (рекомендуется)"
@@ -352,7 +349,7 @@ async def ask_adults(message_or_callback, state: FSMContext):
             InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
         ]
     ])
-    text = "👥 <b>Шаг 6 из 6:</b> Сколько взрослых пассажиров (от 12 лет)?\n(max. до 9 человек)"
+    text = "👥 Сколько взрослых пассажиров (от 12 лет)?\n(max. до 9 человек)"
     if isinstance(message_or_callback, CallbackQuery):
         await message_or_callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     else:
