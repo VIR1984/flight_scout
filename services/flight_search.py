@@ -433,3 +433,51 @@ def clean_aviasales_link(url: str) -> str:
     ))
     
     return clean_url
+
+async def create_partner_link(
+    original_url: str,
+    marker: str,
+    trs: str,
+    sub_id: str = "telegram_bot_v2"
+) -> str:
+    """
+    Преобразует чистую ссылку Aviasales в партнёрскую через Travelpayouts API.
+    Возвращает partner_url или исходную ссылку при ошибке.
+    """
+    api_url = "https://api.travelpayouts.com/links/v1/create"
+    token = os.getenv("TRAVELPAYOUTS_API_TOKEN", "").strip()
+
+    if not token or not marker or not trs:
+        logger.warning("⚠️ TRAVELPAYOUTS_API_TOKEN, marker или trs не заданы")
+        return original_url
+
+    payload = {
+        "trs": int(trs),
+        "marker": int(marker),
+        "shorten": False,
+        "links": [{"url": original_url, "sub_id": sub_id}]
+    }
+
+    headers = {"X-Access-Token": token}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, json=payload, headers=headers, timeout=10) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"❌ Partner Links API error ({resp.status}): {error_text}")
+                    return original_url
+
+                data = await resp.json()
+                if data.get("code") == "success":
+                    partner_url = data["result"]["links"][0].get("partner_url")
+                    if partner_url:
+                        logger.info("✅ Partner link created successfully")
+                        return partner_url
+                else:
+                    logger.error(f"❌ Partner Links API failed: {data}")
+
+    except Exception as e:
+        logger.error(f"❌ Exception in create_partner_link: {e}")
+
+    return original_url
