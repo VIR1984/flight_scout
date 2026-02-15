@@ -8,6 +8,7 @@ from datetime import datetime
 from utils.logger import logger
 
 
+
 # Конфигурация API
 AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
 AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN", "").strip()
@@ -402,3 +403,33 @@ def format_duration(minutes: int) -> str:
     return " ".join(parts) if parts else "—"
     
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+def clean_aviasales_link(url: str) -> str:
+    """
+    Удаляет параметры 'marker' и 'sub_id' из URL Aviasales.
+    Возвращает чистую ссылку, пригодную для отправки в Partner Links API.
+    """
+    if not url or not url.startswith(('http://', 'https://')):
+        return url
+
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query, keep_blank_values=True)
+
+    # Удаляем marker и sub_id
+    query_params.pop('marker', None)
+    query_params.pop('sub_id', None)
+
+    # Собираем URL обратно
+    new_query = urlencode(query_params, doseq=True)
+    clean_url = urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        new_query,
+        parsed.fragment
+    ))
+    
+    return clean_url
