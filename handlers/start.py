@@ -20,6 +20,7 @@ from services.flight_search import (
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
+from aiogram.fsm.state import State, StatesGroup 
 from handlers.everywhere_search import (
     search_origin_everywhere,
     search_destination_everywhere,
