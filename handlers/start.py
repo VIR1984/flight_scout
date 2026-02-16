@@ -26,7 +26,7 @@ from handlers.everywhere_search import (
 from utils.logger import logger 
 
 
-# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API ===
+# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API =====
 async def convert_to_partner_link(clean_link: str) -> str:
     """Преобразует чистую ссылку в партнёрскую через Travelpayouts API (links/v1/create)"""
     # ОЧИСТКА от старых параметров

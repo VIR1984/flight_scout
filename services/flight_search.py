@@ -266,32 +266,7 @@ def update_passengers_in_link(link: str, passengers_code: str) -> str:
     print(f"[DEBUG update_passengers_in_link] Выход: '{result}'")
     return result
 
-# def update_passengers_in_link(link: str, passengers_code: str) -> str:
-    # if not link or not passengers_code or not passengers_code.isdigit():
-        # return link
-    # if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
-        # return link
-    # is_relative = link.startswith('/')
-    # parsed = None if is_relative else urlparse(link)
-    # path = link if is_relative else parsed.path
-    # if '/search/' not in path:
-        # return link
-    # path_parts = path.split('/search/', 1)
-    # if len(path_parts) < 2:
-        # return link
-    # search_part = path_parts[1]
-    # if '?' in search_part:
-        # route, query = search_part.split('?', 1)
-        # has_query = True
-    # else:
-        # route, query = search_part, ""
-        # has_query = False
-    # if route and route[-1].isdigit():
-        # new_route = route[:-1] + passengers_code
-    # else:
-        # new_route = route + passengers_code
-    # new_path = f"/search/{new_route}" + (f"?{query}" if has_query else "")
-    # return new_path if is_relative else urlunparse(parsed._replace(path=new_path))
+
     
 def parse_passengers(s: str) -> str:
     """
