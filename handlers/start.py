@@ -807,7 +807,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
             return_date=data["return_date"] if data.get("need_return") else None
         )
         if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}
+            booking_link = f"https://www.aviasales.ru{booking_link}"
     
     # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
     
