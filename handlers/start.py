@@ -24,46 +24,9 @@ from handlers.everywhere_search import (
     build_passenger_desc
 )
 from utils.logger import logger 
+from utils.link_converter import convert_to_partner_link
 
 
-# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API =====
-async def convert_to_partner_link(clean_link: str) -> str:
-    """Преобразует чистую ссылку в партнёрскую через Travelpayouts API (links/v1/create)"""
-    # ОЧИСТКА от старых параметров
-    parsed = urlparse(clean_link)
-    query_params = parse_qs(parsed.query)
-    query_params.pop('marker', None)
-    query_params.pop('sub_id', None)
-    new_query = urlencode(query_params, doseq=True)
-    clean_link = urlunparse(parsed._replace(query=new_query))
-    
-    api_token = os.getenv("TRAVELPAYOUTS_API_TOKEN") or os.getenv("AVIASALES_TOKEN")
-    marker = os.getenv("TRAFFIC_SOURCE", "700812").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
-    if not api_token or not clean_link.startswith(('http://', 'https://')):
-        return clean_link
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.travelpayouts.com/links/v1/create",  # ← КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
-                headers={"X-Access-Token": api_token},
-                json={"link": clean_link, "marker": marker, "subid": sub_id},
-                timeout=10
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    partner_link = data.get("link")  # ← КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
-                    if partner_link:
-                        logger.info(f"✅ Partner link: {partner_link[:50]}...")
-                        return partner_link
-                logger.warning(f"⚠️ TP API error ({resp.status}): {await resp.text()}")
-                return clean_link
-    except Exception as e:
-        logger.error(f"❌ Error converting link: {e}")
-        return clean_link
-# =====================================================================
 
 router = Router()
 

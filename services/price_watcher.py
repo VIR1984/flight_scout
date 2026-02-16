@@ -12,53 +12,9 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.cities import IATA_TO_CITY
+from utils.link_converter import convert_to_partner_link
 
 
-# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API =====
-async def convert_to_partner_link(clean_link: str) -> str:
-    """
-    Преобразует чистую ссылку в партнёрскую через Travelpayouts API.
-    Автоматически очищает от существующих marker/sub_id перед отправкой в API.
-    """
-    # ОЧИСТКА от старых параметров marker/sub_id
-    parsed = urlparse(clean_link)
-    query_params = parse_qs(parsed.query)
-    query_params.pop('marker', None)
-    query_params.pop('sub_id', None)
-    new_query = urlencode(query_params, doseq=True)
-    clean_link = urlunparse(parsed._replace(query=new_query))
-    
-    api_token = os.getenv("TRAVELPAYOUTS_API_TOKEN") or os.getenv("AVIASALES_TOKEN")
-    marker = os.getenv("TRAFFIC_SOURCE", "700812").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    
-    if not api_token or not clean_link or not clean_link.startswith(('http://', 'https://')):
-        return clean_link
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.travelpayouts.com/links/v1/create",
-                headers={"X-Access-Token": api_token},
-                json={"link": clean_link, "marker": marker, "subid": sub_id},
-                timeout=10
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    partner_link = data.get("link")
-                    if partner_link:
-                        logger.info(f"✅ PriceWatcher: partner link generated for {clean_link[:40]}...")
-                        return partner_link
-                logger.warning(f"⚠️ TP API error ({resp.status}) in price watcher: {await resp.text()}")
-                return clean_link
-    except asyncio.TimeoutError:
-        logger.error("❌ Timeout converting link in price watcher")
-        return clean_link
-    except Exception as e:
-        logger.error(f"❌ Error converting link in price watcher: {e}")
-        return clean_link
-        
-        
 
 class PriceWatcher:
     """Фоновый сервис для отслеживания изменения цен на авиабилеты"""
