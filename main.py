@@ -10,6 +10,7 @@ from handlers.start import router as start_router
 from utils.logger import logger
 from utils.redis_client import redis_client
 from services.price_watcher import PriceWatcher
+from utils.link_converter import convert_to_partner_link
 
 logging.basicConfig(level=logging.DEBUG)
 load_dotenv()

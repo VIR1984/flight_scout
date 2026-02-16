@@ -2,8 +2,6 @@
 import json
 import asyncio
 import os
-import aiohttp  # ← ДОБАВЛЕНО
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse  # ← ДОБАВЛЕНО
 from typing import Dict, Any, List, Tuple
 from uuid import uuid4
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery

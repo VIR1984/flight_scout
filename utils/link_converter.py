@@ -1,4 +1,3 @@
-# utils/link_converter.py
 import os
 import asyncio
 import aiohttp
@@ -23,10 +22,9 @@ async def convert_to_partner_link(clean_link: str) -> str:
     sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
     
     if not api_token or not clean_link.startswith(('http://', 'https://')):
-        logger.warning(f"⚠️ Невалидные параметры для конвертации ссылки")
+        logger.warning(f"⚠️ Невалидные параметры для конвертации")
         return clean_link
     
-    # Вызов API
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -41,7 +39,11 @@ async def convert_to_partner_link(clean_link: str) -> str:
                     if partner_link and partner_link.startswith("https://tp.media"):
                         logger.info(f"✅ Partner link: {partner_link[:70]}...")
                         return partner_link
-                logger.error(f"⚠️ TP API error {resp.status}: {await resp.text()[:200]}")
+                    logger.error(f"❌ Ответ без валидной ссылки: {data}")
+                else:
+                    # 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: сначала получаем текст, потом обрезаем
+                    error_text = await resp.text()
+                    logger.error(f"⚠️ TP API error {resp.status}: {error_text[:200]}")
                 return clean_link
     except asyncio.TimeoutError:
         logger.error("❌ Таймаут при конвертации ссылки")

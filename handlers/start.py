@@ -1,11 +1,10 @@
 import json
 import asyncio
-import aiohttp 
 import os
 import re
 from uuid import uuid4
 from typing import Dict, Any
-from aiogram import Router, F
+from aiogram import Router, 
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,7 +13,6 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from handlers.everywhere_search import (
     search_origin_everywhere,
     search_destination_everywhere,
