@@ -22,6 +22,7 @@ from handlers.everywhere_search import (
     format_user_date,
     build_passenger_desc
 )
+from utils.logger import logger 
 
 
 # === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API ===
