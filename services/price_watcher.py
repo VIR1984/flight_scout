@@ -37,14 +37,14 @@ async def convert_to_partner_link(clean_link: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "https://api.travelpayouts.com/v2/tp/prices/create_partner_link",
+                "https://api.travelpayouts.com/links/v1/create",
                 headers={"X-Access-Token": api_token},
                 json={"link": clean_link, "marker": marker, "subid": sub_id},
                 timeout=10
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    partner_link = data.get("partner_link")
+                    partner_link = data.get("link")
                     if partner_link:
                         logger.info(f"✅ PriceWatcher: partner link generated for {clean_link[:40]}...")
                         return partner_link
