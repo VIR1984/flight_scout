@@ -4,7 +4,7 @@ import os
 import re
 from uuid import uuid4
 from typing import Dict, Any
-from aiogram import Router, 
+from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
