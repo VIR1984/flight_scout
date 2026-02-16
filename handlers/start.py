@@ -807,7 +807,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ===
+    # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ==
     
     fallback_link = generate_booking_link(
         flight=top_flight,
