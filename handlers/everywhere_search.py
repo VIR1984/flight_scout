@@ -556,7 +556,7 @@ async def handle_everywhere_search_manual(
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     
-     booking_link = await convert_to_partner_link(booking_link)
+    booking_link = await convert_to_partner_link(booking_link)
     
     kb_buttons = []
     kb_buttons.append([
