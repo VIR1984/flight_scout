@@ -13,7 +13,7 @@ from utils.logger import logger
 from utils.cities import IATA_TO_CITY
 
 
-# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API ===
+# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API =====
 async def convert_to_partner_link(clean_link: str) -> str:
     """
     Преобразует чистую ссылку в партнёрскую через Travelpayouts API.

@@ -1138,7 +1138,7 @@ async def handle_flight_request(message: Message):
   
     
    
-     # === ФОРМИРОВАНИЕ ЧИСТЫХ ССЫЛОК (БЕЗ МАРКЕРА) ===
+     # === ФОРМИРОВАНИЕ ЧИСТЫХ ССЫЛОК (БЕЗ МАРКЕРА) =====
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if booking_link:
         booking_link = update_passengers_in_link(booking_link, passengers_code)
