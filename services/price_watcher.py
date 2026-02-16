@@ -247,7 +247,7 @@ class PriceWatcher:
             logger.error(f"❌ Ошибка при поиске цен {origin}→{dest}: {e}")
             return None
     
-     async def _send_price_notification(
+    async def _send_price_notification(
         self,
         user_id: int,
         watch: Dict,
