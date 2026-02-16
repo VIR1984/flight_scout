@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+import aiohttp 
 from datetime import datetime
 from typing import Dict, Optional
 from aiogram import Bot
