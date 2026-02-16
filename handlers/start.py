@@ -638,12 +638,10 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         d1 = format_avia_link_date(data["depart_date"])
         d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
         route = f"{origin_iata}{d1}{destinations[0]}{d2}1"
-        marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-        link = f"https://www.aviasales.ru/search/{route}"
-        if marker:
-            link = add_marker_to_url(link, marker)
+        clean_link = f"https://www.aviasales.ru/search/{route}"  # ← ЧИСТАЯ ссылка
+        partner_link = await convert_to_partner_link(clean_link)  # ← Преобразование через API
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=link)],
+            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=partner_link)],
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
         ])
         await callback.message.edit_text(

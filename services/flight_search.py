@@ -166,12 +166,7 @@ def generate_booking_link(
 
     base_url = f"https://www.aviasales.ru/search/{route}"
 
-    # Добавляем маркер партнера и sub_id
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-
-    if marker:
-        return add_marker_to_url(base_url, marker, sub_id)
+    
 
     return base_url
 
