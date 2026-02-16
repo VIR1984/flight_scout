@@ -38,7 +38,7 @@ async def convert_to_partner_link(clean_link: str) -> str:
     payload = {
         "trs": trs,          # ← Project ID (обязательно!)
         "marker": marker,    # ← Partner ID (число!)
-        "shorten": False,    # ← False для полной ссылки с campaign_id
+        "shorten": True,    # ← False для полной ссылки с campaign_id
         "links": [{          # ← Массив объектов (обязательно!)
             "url": clean_link,
             "sub_id": sub_id  # ← Обратите внимание: sub_id (с подчёркиванием!)
