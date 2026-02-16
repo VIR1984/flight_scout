@@ -2,6 +2,8 @@
 import json
 import asyncio
 import os
+import aiohttp  # ← ДОБАВЛЕНО
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse  # ← ДОБАВЛЕНО
 from typing import Dict, Any, List, Tuple
 from uuid import uuid4
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -12,12 +14,59 @@ from services.flight_search import (
     normalize_date,
     format_avia_link_date,
     update_passengers_in_link,
-    add_marker_to_url,
+    # add_marker_to_url,  # ← УДАЛЕНО: больше не используется
     format_duration as format_duration_helper
 )
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
+from utils.logger import logger  # ← ДОБАВЛЕНО
 
+# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API с очисткой ===
+async def convert_to_partner_link(clean_link: str) -> str:
+    """
+    Преобразует ссылку в партнёрскую через Travelpayouts API.
+    Автоматически очищает от существующих marker/sub_id перед отправкой в API.
+    Возвращает partner_link или исходную ссылку при ошибке.
+    """
+    # ОЧИСТКА от старых параметров marker/sub_id
+    parsed = urlparse(clean_link)
+    query_params = parse_qs(parsed.query)
+    query_params.pop('marker', None)
+    query_params.pop('sub_id', None)
+    new_query = urlencode(query_params, doseq=True)
+    clean_link = urlunparse(parsed._replace(query=new_query))
+    
+    api_token = os.getenv("TRAVELPAYOUTS_API_TOKEN") or os.getenv("AVIASALES_TOKEN")
+    marker = os.getenv("TRAFFIC_SOURCE", "700812").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    
+    if not api_token or not clean_link or not clean_link.startswith(('http://', 'https://')):
+        return clean_link
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.travelpayouts.com/v2/tp/prices/create_partner_link",
+                headers={"X-Access-Token": api_token},
+                json={"link": clean_link, "marker": marker, "subid": sub_id},
+                timeout=10
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    partner_link = data.get("partner_link")
+                    if partner_link:
+                        logger.info(f"✅ Everywhere partner link: {partner_link[:60]}...")
+                        return partner_link
+                logger.warning(f"⚠️ TP API error ({resp.status}): {await resp.text()}")
+                return clean_link
+    except asyncio.TimeoutError:
+        logger.error("❌ Timeout converting everywhere link")
+        return clean_link
+    except Exception as e:
+        logger.error(f"❌ Error converting everywhere link: {e}")
+        return clean_link
+        
+        
 def format_user_date(date_str: str) -> str:
     try:
         d, m = map(int, date_str.split('.'))
@@ -104,7 +153,8 @@ async def process_everywhere_search(
 ) -> bool:
     if not all_flights:
         return False
-    
+        
+        
     cache_id = str(uuid4())
     display_depart = format_user_date(data["depart_date"])
     is_origin_everywhere = (search_type == "origin_everywhere")
@@ -243,7 +293,8 @@ async def process_everywhere_search(
     
     text += f"\n\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     
-    # === ОБНОВЛЕНИЕ ПАССАЖИРОВ В ССЫЛКЕ ===
+    
+     # === ФОРМИРОВАНИЕ ЧИСТЫХ ССЫЛОК (БЕЗ МАРКЕРА) ===
     booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
     passengers_code = data.get("passenger_code", "1")
     if booking_link:
@@ -251,7 +302,6 @@ async def process_everywhere_search(
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
-        # Fallback на генерацию ссылки
         booking_link = generate_booking_link(
             flight=cheapest_flight,
             origin=origin_iata,
@@ -263,11 +313,7 @@ async def process_everywhere_search(
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    # Добавляем маркер к ссылке
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+    booking_link = await convert_to_partner_link(booking_link)
     
     kb_buttons = []
     kb_buttons.append([
@@ -281,13 +327,10 @@ async def process_everywhere_search(
     if is_dest_everywhere:
         d1 = format_avia_link_date(data["depart_date"])
         map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}{d1}{passengers_code}"
-        if marker:
-            map_link = add_marker_to_url(map_link, marker, sub_id)
+        # === ПРЕОБРАЗУЕМ КАРТУ НАПРАВЛЕНИЙ ЧЕРЕЗ API ===
+        map_link = await convert_to_partner_link(map_link)
         kb_buttons.append([
-            InlineKeyboardButton(
-                text="🌍 Все направления",
-                url=map_link
-            )
+            InlineKeyboardButton(text="🌍 Все направления", url=map_link)
         ])
     
     kb_buttons.append([
@@ -502,7 +545,6 @@ async def handle_everywhere_search_manual(
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     else:
-        # Fallback на генерацию ссылки
         booking_link = generate_booking_link(
             flight=cheapest_flight,
             origin=origin_iata,
@@ -514,11 +556,7 @@ async def handle_everywhere_search_manual(
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
     
-    # Добавляем маркер к ссылке
-    marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-    if marker:
-        booking_link = add_marker_to_url(booking_link, marker, sub_id)
+     booking_link = await convert_to_partner_link(booking_link)
     
     kb_buttons = []
     kb_buttons.append([
@@ -532,14 +570,12 @@ async def handle_everywhere_search_manual(
     if is_dest_everywhere:
         d1 = format_avia_link_date(depart_date)
         map_link = f"https://www.aviasales.ru/map?params={origins[0]}{d1}{passengers_code}"
-        if marker:
-            map_link = add_marker_to_url(map_link, marker, sub_id)
+        # === ПРЕОБРАЗУЕМ КАРТУ НАПРАВЛЕНИЙ ЧЕРЕЗ API ===
+        map_link = await convert_to_partner_link(map_link)
         kb_buttons.append([
-            InlineKeyboardButton(
-                text="🌍 Все направления",
-                url=map_link
-            )
+            InlineKeyboardButton(text="🌍 Все направления", url=map_link)
         ])
+    
     
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")

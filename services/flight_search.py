@@ -8,7 +8,6 @@ from datetime import datetime
 from utils.logger import logger
 
 
-
 # Конфигурация API
 AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
 AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN", "").strip()
@@ -32,21 +31,6 @@ def format_avia_link_date(date_str: str) -> str:
     except Exception:
         return date_str.replace('.', '')
 
-def add_marker_to_url(url: str, marker: str, sub_id: str = "telegram") -> str:
-    """
-    Добавляет маркер и sub_id к ссылке Aviasales.
-    Корректно обрабатывает уже существующие параметры.
-    """
-    if not marker or not url:
-        return url
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    query_params.pop('marker', None)
-    query_params.pop('sub_id', None)
-    query_params['marker'] = [marker]
-    query_params['sub_id'] = [sub_id]
-    new_query = urlencode(query_params, doseq=True)
-    return urlunparse(parsed._replace(query=new_query))
 
 async def search_flights(
     origin: str,
@@ -98,31 +82,24 @@ async def search_flights(
                     error_text = await response.text()
                     logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
                     return []
+                
                 data = await response.json()
                 if not data.get("success"):
                     logger.error(f"❌ API вернул ошибку: {data.get('error')}")
                     return []
-
+                
                 grouped_flights = data.get("data", {})
                 flights = []
-
                 for date_key, flight in grouped_flights.items():
-                    # Приводим к формату, совместимому с prices_for_dates
-                    flight["value"] = flight.get("price")  # для min(flights, key=lambda f: f.get("value"))
+                    # Приводим к формату, совместимому с остальным кодом
+                    flight["value"] = flight.get("price")
                     flight["departure_at"] = flight.get("departure_at", f"{date_key}T00:00:00+03:00")
                     flight["return_at"] = flight.get("return_at", "")
                     flight["origin"] = flight.get("origin", origin)
                     flight["destination"] = flight.get("destination", destination)
                     flights.append(flight)
 
-                # Добавляем маркер ко всем ссылкам
-                marker = os.getenv("TRAFFIC_SOURCE", "").strip()
-                sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
-                for flight in flights:
-                    if flight.get("link"):
-                        flight["link"] = add_marker_to_url(flight["link"], marker, sub_id)
-                    if flight.get("deep_link"):
-                        flight["deep_link"] = add_marker_to_url(flight["deep_link"], marker, sub_id)
+                
 
                 return flights
 
@@ -401,83 +378,3 @@ def format_duration(minutes: int) -> str:
     if mins:
         parts.append(f"{mins}м")
     return " ".join(parts) if parts else "—"
-    
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-
-def clean_aviasales_link(url: str) -> str:
-    """
-    Удаляет параметры 'marker' и 'sub_id' из URL Aviasales.
-    Возвращает чистую ссылку, пригодную для отправки в Partner Links API.
-    """
-    if not url or not url.startswith(('http://', 'https://')):
-        return url
-
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query, keep_blank_values=True)
-
-    # Удаляем marker и sub_id
-    query_params.pop('marker', None)
-    query_params.pop('sub_id', None)
-
-    # Собираем URL обратно
-    new_query = urlencode(query_params, doseq=True)
-    clean_url = urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        parsed.params,
-        new_query,
-        parsed.fragment
-    ))
-    
-    return clean_url
-
-async def create_partner_link(
-    original_url: str,
-    marker: str,
-    trs: str,
-    sub_id: str = "telegram_bot_v2"
-) -> str:
-    """
-    Преобразует чистую ссылку Aviasales в партнёрскую через Travelpayouts API.
-    Возвращает partner_url или исходную ссылку при ошибке.
-    """
-    api_url = "https://api.travelpayouts.com/links/v1/create"
-    token = os.getenv("TRAVELPAYOUTS_API_TOKEN", "").strip()
-
-    if not token or not marker or not trs:
-        logger.warning("⚠️ TRAVELPAYOUTS_API_TOKEN, marker или trs не заданы")
-        return original_url
-
-    payload = {
-        "trs": int(trs),
-        "marker": int(marker),
-        "shorten": False,
-        "links": [{"url": original_url, "sub_id": sub_id}]
-    }
-
-    headers = {"X-Access-Token": token}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, json=payload, headers=headers, timeout=10) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"❌ Partner Links API error ({resp.status}): {error_text}")
-                    return original_url
-
-                data = await resp.json()
-                if data.get("code") == "success":
-                    partner_url = data["result"]["links"][0].get("partner_url")
-                    if partner_url:
-                        logger.info("✅ Partner link created successfully")
-                        return partner_url
-                else:
-                    logger.error(f"❌ Partner Links API failed: {data}")
-
-    except Exception as e:
-        logger.error(f"❌ Exception in create_partner_link: {e}")
-
-    return original_url

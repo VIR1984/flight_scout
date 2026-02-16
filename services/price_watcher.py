@@ -13,6 +13,52 @@ from utils.logger import logger
 from utils.cities import IATA_TO_CITY
 
 
+# === НОВАЯ ФУНКЦИЯ: преобразование ссылки через Travelpayouts API ===
+async def convert_to_partner_link(clean_link: str) -> str:
+    """
+    Преобразует чистую ссылку в партнёрскую через Travelpayouts API.
+    Автоматически очищает от существующих marker/sub_id перед отправкой в API.
+    """
+    # ОЧИСТКА от старых параметров marker/sub_id
+    parsed = urlparse(clean_link)
+    query_params = parse_qs(parsed.query)
+    query_params.pop('marker', None)
+    query_params.pop('sub_id', None)
+    new_query = urlencode(query_params, doseq=True)
+    clean_link = urlunparse(parsed._replace(query=new_query))
+    
+    api_token = os.getenv("TRAVELPAYOUTS_API_TOKEN") or os.getenv("AVIASALES_TOKEN")
+    marker = os.getenv("TRAFFIC_SOURCE", "700812").strip()
+    sub_id = os.getenv("TRAFFIC_SUB_ID", "telegram").strip()
+    
+    if not api_token or not clean_link or not clean_link.startswith(('http://', 'https://')):
+        return clean_link
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.travelpayouts.com/v2/tp/prices/create_partner_link",
+                headers={"X-Access-Token": api_token},
+                json={"link": clean_link, "marker": marker, "subid": sub_id},
+                timeout=10
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    partner_link = data.get("partner_link")
+                    if partner_link:
+                        logger.info(f"✅ PriceWatcher: partner link generated for {clean_link[:40]}...")
+                        return partner_link
+                logger.warning(f"⚠️ TP API error ({resp.status}) in price watcher: {await resp.text()}")
+                return clean_link
+    except asyncio.TimeoutError:
+        logger.error("❌ Timeout converting link in price watcher")
+        return clean_link
+    except Exception as e:
+        logger.error(f"❌ Error converting link in price watcher: {e}")
+        return clean_link
+        
+        
+
 class PriceWatcher:
     """Фоновый сервис для отслеживания изменения цен на авиабилеты"""
     
@@ -201,7 +247,7 @@ class PriceWatcher:
             logger.error(f"❌ Ошибка при поиске цен {origin}→{dest}: {e}")
             return None
     
-    async def _send_price_notification(
+     async def _send_price_notification(
         self,
         user_id: int,
         watch: Dict,
@@ -217,14 +263,12 @@ class PriceWatcher:
             passenger_desc = self._format_passengers(watch.get("passengers", "1"))
             
             message = (
-                f"{emoji} <b>Цена изменилась!</b>\n\n"
+                f"{emoji} <b>Цена изменилась!</b>\n"
                 f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
                 f"📅 <b>Вылет:</b> {watch['depart_date']}\n"
             )
-            
             if watch.get("return_date"):
                 message += f"📅 <b>Возврат:</b> {watch['return_date']}\n"
-            
             if passenger_desc:
                 message += f"👥 <b>Пассажиры:</b> {passenger_desc}\n"
             
@@ -232,7 +276,7 @@ class PriceWatcher:
                 f"\n"
                 f"💰 <b>Было:</b> {watch['current_price']} ₽\n"
                 f"💰 <b>Стало:</b> {new_price} ₽\n"
-                f"{emoji} <b>Разница:</b> {abs(price_change)} ₽\n\n"
+                f"{emoji} <b>Разница:</b> {abs(price_change)} ₽\n"
                 f"✈️ <b>Спешите забронировать — цены могут вырасти!</b>"
             )
             
@@ -242,7 +286,8 @@ class PriceWatcher:
                 "destination": watch["dest"]
             }
             
-            booking_link = generate_booking_link(
+            # === ГЕНЕРИРУЕМ ЧИСТУЮ ССЫЛКУ ===
+            clean_booking_link = generate_booking_link(
                 flight=dummy_flight,
                 origin=watch["origin"],
                 dest=watch["dest"],
@@ -250,6 +295,10 @@ class PriceWatcher:
                 passengers_code=watch.get("passengers", "1"),
                 return_date=watch.get("return_date")
             )
+            
+            # === ПРЕОБРАЗУЕМ В ПАРТНЁРСКУЮ ЧЕРЕЗ API ===
+            partner_booking_link = await convert_to_partner_link(clean_booking_link)
+            
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=f"✈️ Забронировать за {new_price} ₽", url=booking_link)],
@@ -278,7 +327,8 @@ class PriceWatcher:
             return False
         except Exception as e:
             logger.error(f"❌ Неизвестная ошибка при отправке уведомления {user_id}: {e}")
-            raise  # Пробрасываем исключение для обработки в check_single_watch
+            raise
+
     
     @staticmethod
     def _format_passengers(code: str) -> str:
@@ -287,12 +337,10 @@ class PriceWatcher:
             adults = int(code[0])
             children = int(code[1]) if len(code) > 1 else 0
             infants = int(code[2]) if len(code) > 2 else 0
-            
             parts = []
             if adults: parts.append(f"{adults} взр.")
             if children: parts.append(f"{children} реб.")
             if infants: parts.append(f"{infants} мл.")
-            
             return ", ".join(parts) if parts else ""
         except:
             return ""
