@@ -29,7 +29,7 @@ from utils.link_converter import convert_to_partner_link
 router = Router()
 
 CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+    [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
 ])
 
 class FlightSearch(StatesGroup):
@@ -257,7 +257,7 @@ async def process_depart_date(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, нужен", callback_data="need_return_yes")],
         [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="need_return_no")],
-        [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
     await message.answer(
         # f"✅ Дата вылета: <b>{message.text}</b>\n"
@@ -308,7 +308,7 @@ async def ask_flight_type(message_or_callback, state: FSMContext):
             InlineKeyboardButton(text="📊 Все варианты", callback_data="flight_type_all"),
         ],
         [
-            InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
+            InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
         ]
     ])
     text = (
@@ -346,7 +346,7 @@ async def ask_adults(message_or_callback, state: FSMContext):
             InlineKeyboardButton(text="9", callback_data="adults_9"),
         ],
         [
-            InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
+            InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
         ]
     ])
     text = "👥 Сколько взрослых пассажиров (от 12 лет)?\n"
@@ -374,7 +374,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
                 row = []
         if row:
             kb_buttons.append(row)
-        kb_buttons.append([InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")])
+        kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
             # f"👥 Взрослых: <b>{adults}</b>\n"
@@ -407,7 +407,7 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
                 row = []
         if row:
             kb_buttons.append(row)
-        kb_buttons.append([InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")])
+        kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
             # f"👥 Взрослых: <b>{adults}</b>\n"
@@ -586,7 +586,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
                     callback_data=f"retry_with_transfers_{callback.message.message_id}"
                 )
             ],
-            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
             "😔 Прямых рейсов на эти даты не найдено.\n"
@@ -605,7 +605,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         partner_link = await convert_to_partner_link(clean_link)  # ← Преобразование через API
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=partner_link)],
-            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
             "😔 Билеты не найдены.\n"
@@ -804,7 +804,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     ])
     # Меню
     kb_buttons.append([
-        InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
+        InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
     ])
     
     SUPPORTED_TRANSFER_AIRPORTS = [
@@ -944,7 +944,7 @@ async def handle_flight_request(message: Message):
                     callback_data="show_transfers_fallback"
                 )
             ],
-            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
         ])
         await message.answer(
             "😔 Прямых рейсов на эти даты не найдено.\n"
@@ -962,7 +962,7 @@ async def handle_flight_request(message: Message):
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=partner_link)],
-            [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
             "😔 Билеты не найдены.\nНа Aviasales могут быть рейсы с пересадками — попробуйте:",
@@ -1211,16 +1211,14 @@ async def handle_watch_price(callback: CallbackQuery):
     dest_name = IATA_TO_CITY.get(dest, dest) if dest else "Везде"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📉 Любое изменение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="📉 Изменение на сотни ₽", callback_data=f"set_threshold:100:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="📉 Изменение на тысячи ₽", callback_data=f"set_threshold:1000:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text=" Любое изменение цены", callback_data=f"set_threshold:0:{cache_id}:{price}")],
+        [InlineKeyboardButton(text=" Изменение на сотни ₽", callback_data=f"set_threshold:100:{cache_id}:{price}")],
+        [InlineKeyboardButton(text=" Изменение на тысячи ₽", callback_data=f"set_threshold:1000:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
     await callback.message.answer(
-        f"🔔 <b>Выберите условия уведомлений</b>\n"
-        f"📍 Маршрут: {origin_name} → {dest_name}\n"
-        f"📅 Вылет: {data['display_depart']}\n"
-        f"💰 Текущая цена: {price} ₽",
+        f"🔔 <b>Выберите условия уведомлений</b>\n",
+        
         reply_markup=kb
     )
     await callback.answer()
@@ -1267,6 +1265,7 @@ async def handle_set_threshold(callback: CallbackQuery):
     ])
     response_text = (
         f"✅ <b>Отлично! Я буду следить за ценами</b>\n"
+        f"📲 Пришлю уведомление, если цена изменится!"
         f"📍 Маршрут: {origin_name} → {dest_name}\n"
         f"📅 Вылет: {data['display_depart']}\n"
     )
@@ -1275,7 +1274,7 @@ async def handle_set_threshold(callback: CallbackQuery):
     response_text += (
         f"💰 Текущая цена: {price} ₽\n"
         f"📉 Уведомлять при: {condition_text}\n"
-        f"📲 Пришлю уведомление, если цена изменится!"
+        
     )
     await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
@@ -1417,7 +1416,7 @@ async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state:
         await message.answer(
-            "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В меню",
+            "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
             reply_markup=CANCEL_KB
         )
         return
