@@ -820,7 +820,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         return_date=data["return_date"] if data.get("need_return") else None
     )
     if not fallback_link.startswith(('http://', 'https://')):
-        fallback_link = f"https://www.aviasales.ru{fallback_link}
+        fallback_link = f"https://www.aviasales.ru{fallback_link}"
     
     # === ПРЕОБРАЗУЕМ В ПАРТНЁРСКИЕ ЧЕРЕЗ API ===
     booking_link = await convert_to_partner_link(booking_link)
