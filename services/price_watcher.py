@@ -257,11 +257,12 @@ class PriceWatcher:
             partner_booking_link = await convert_to_partner_link(clean_booking_link)
             
             
+            # ✅ ИСПРАВЛЕНО: Удалено дублирование строки и закрыта скобка
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=f"✈️ Забронировать за {new_price} ₽", url=partner_booking_link)],
                 [InlineKeyboardButton(text="❌ Больше не следить", callback_data=f"unwatch_{key}")]
             ])
+
             
             await self.bot.send_message(
                 chat_id=user_id,
