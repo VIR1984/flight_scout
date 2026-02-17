@@ -755,7 +755,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     print(f"[DEBUG confirm_search] top_flight.get('deep_link'): {top_flight.get('deep_link')}")
     
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
-     booking_link = top_flight.get("link") or top_flight.get("deep_link")
+    booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passenger_code", "1")
     if booking_link:
         print(f"[DEBUG confirm_search] Обновляем пассажиров в существующей ссылке: {booking_link}")
