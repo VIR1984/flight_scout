@@ -598,19 +598,19 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     
     if not all_flights:
     # Получаем данные из состояния
-    origin_iata = origins[0]
-    passengers_code = data.get("passenger_code", "1")
+        origin_iata = origins[0]
+        passengers_code = data.get("passenger_code", "1")
     
     # Генерируем ЧИСТУЮ ссылку с правильным количеством пассажиров
     # Используем ту же логику, что и для fallback_link в основном потоке
-    clean_link = generate_booking_link(
-        flight=None,  # рейсов нет, поэтому None
-        origin=origin_iata,
-        dest=destinations[0],
-        depart_date=data["depart_date"],
-        passengers_code=passengers_code,
-        return_date=data["return_date"] if data.get("return_date") else None
-    )
+        clean_link = generate_booking_link(
+            flight=None,  # рейсов нет, поэтому None
+            origin=origin_iata,
+            dest=destinations[0],
+            depart_date=data["depart_date"],
+            passengers_code=passengers_code,
+            return_date=data["return_date"] if data.get("return_date") else None
+        )
     
     # Делаем ссылку абсолютной, если она относительная
     if not clean_link.startswith(('http://', 'https://')):
