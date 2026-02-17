@@ -597,26 +597,42 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         return
     
     if not all_flights:
-        origin_iata = origins[0]
-        d1 = format_avia_link_date(data["depart_date"])
-        d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
-        route = f"{origin_iata}{d1}{destinations[0]}{d2}1"
-        # clean_link = f"https://www.aviasales.ru/search/{route}"  # ← ЧИСТАЯ ссылка
-        fallback_link = await convert_to_partner_link(fallback_link) # ← Преобразование через API
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=fallback_link)],
-            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
-        ])
-        await callback.message.edit_text(
-            "😔 Билеты не найдены.\n"
-            "На Aviasales могут быть рейсы с пересадками — попробуйте:",
-            reply_markup=kb
-        )
-        await state.clear()
-        return
-        
+    # Получаем данные из состояния
+    origin_iata = origins[0]
+    passengers_code = data.get("passenger_code", "1")
     
+    # Генерируем ЧИСТУЮ ссылку с правильным количеством пассажиров
+    # Используем ту же логику, что и для fallback_link в основном потоке
+    clean_link = generate_booking_link(
+        flight=None,  # рейсов нет, поэтому None
+        origin=origin_iata,
+        dest=destinations[0],
+        depart_date=data["depart_date"],
+        passengers_code=passengers_code,
+        return_date=data["return_date"] if data.get("return_date") else None
+    )
     
+    # Делаем ссылку абсолютной, если она относительная
+    if not clean_link.startswith(('http://', 'https://')):
+        clean_link = f"https://www.aviasales.ru{clean_link}"
+    
+    # ДОПОЛНИТЕЛЬНАЯ ОБРАБОТКА: убедимся, что пассажиры обработаны корректно
+    clean_link = update_passengers_in_link(clean_link, passengers_code)
+    
+    # Преобразуем в партнёрскую ссылку через API
+    partner_link = await convert_to_partner_link(clean_link)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=partner_link)],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+    ])
+    await callback.message.edit_text(
+        "😔 Билеты не найдены.\n"
+        "На Aviasales могут быть рейсы с пересадками — попробуйте:",
+        reply_markup=kb
+    )
+    await state.clear()
+    return
     
     cache_id = str(uuid4())
     display_depart = format_user_date(data["depart_date"])
