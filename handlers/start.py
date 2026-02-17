@@ -601,10 +601,10 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         d1 = format_avia_link_date(data["depart_date"])
         d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
         route = f"{origin_iata}{d1}{destinations[0]}{d2}1"
-        clean_link = f"https://www.aviasales.ru/search/{route}"  # ← ЧИСТАЯ ссылка
-        partner_link = await convert_to_partner_link(clean_link)  # ← Преобразование через API
+        # clean_link = f"https://www.aviasales.ru/search/{route}"  # ← ЧИСТАЯ ссылка
+        fallback_link = await convert_to_partner_link(fallback_link) # ← Преобразование через API
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=partner_link)],
+            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=fallback_link)],
             [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
@@ -614,6 +614,9 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         )
         await state.clear()
         return
+        
+    
+    
     
     cache_id = str(uuid4())
     display_depart = format_user_date(data["depart_date"])
