@@ -749,16 +749,22 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
 
     # Предупреждение
     # text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
-    
+    # === ФОРМИРОВАНИЕ ЧИСТЫХ ССЫЛОК (БЕЗ МАРКЕРА) ===
+    print(f"[DEBUG confirm_search] Формирование чистых ссылок...")
+    print(f"[DEBUG confirm_search] top_flight.get('link'): {top_flight.get('link')}")
+    print(f"[DEBUG confirm_search] top_flight.get('deep_link'): {top_flight.get('deep_link')}")
     
     # === ОСНОВНАЯ ССЫЛКА: flight["link"] с исправленным числом пассажиров ===
-    booking_link = top_flight.get("link") or top_flight.get("deep_link")
+     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     passengers_code = data.get("passenger_code", "1")
     if booking_link:
+        print(f"[DEBUG confirm_search] Обновляем пассажиров в существующей ссылке: {booking_link}")
         booking_link = update_passengers_in_link(booking_link, passengers_code)
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
+            print(f"[DEBUG confirm_search] Добавлен префикс: {booking_link}")
     else:
+        print(f"[DEBUG confirm_search] Генерируем новую ссылку через generate_booking_link")
         booking_link = generate_booking_link(
             flight=top_flight,
             origin=origin_iata,
@@ -769,6 +775,13 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         )
         if not booking_link.startswith(('http://', 'https://')):
             booking_link = f"https://www.aviasales.ru{booking_link}"
+            print(f"[DEBUG confirm_search] Добавлен префикс: {booking_link}")
+    print(f"[DEBUG confirm_search] Чистая ссылка после обновления пассажиров: {booking_link}")
+    
+    # === ПРЕОБРАЗУЕМ В ПАРТНЁРСКУЮ ЧЕРЕЗ API ===
+    print(f"[DEBUG confirm_search] Вызываем convert_to_partner_link для: {booking_link}")
+    booking_link = await convert_to_partner_link(booking_link)
+    print(f"[DEBUG confirm_search] Получена партнёрская ссылка: {booking_link}")
     
     # === АЛЬТЕРНАТИВНАЯ ССЫЛКА: generate_booking_link() ==
     

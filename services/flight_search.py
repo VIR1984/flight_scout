@@ -112,47 +112,34 @@ async def search_flights(
 
 
 def generate_booking_link(
-        flight: Dict,
-        origin: str,
-        dest: str,
-        depart_date: str,
-        passengers_code: str = "1",
-        return_date: Optional[str] = None
+    flight: Dict,
+    origin: str,
+    dest: str,
+    depart_date: str,
+    passengers_code: str = "1",
+    return_date: Optional[str] = None
 ) -> str:
     """
     Генерирует ссылку для бронирования на Aviasales с ПОЛНЫМ кодом пассажиров.
-
-    Формат маршрута:
-      • Туда-обратно: ORIGDDMMDESTDDMM[PASS]  (например, MOW1003AER1503211)
-      • В одну сторону: ORIGDDMMDEST[PASS]     (например, AER1003MOW211)
-
-    Где [PASS] — полный код пассажиров (1-3 цифры):
-      • "1"   → 1 взрослый
-      • "2"   → 2 взрослых
-      • "21"  → 2 взр. + 1 реб.
-      • "211" → 2 взр. + 1 реб. + 1 мл.
+    """
+    print(f"[DEBUG generate_booking_link] Вход: origin='{origin}', dest='{dest}', depart_date='{depart_date}', return_date='{return_date}', passengers_code='{passengers_code}'")
     
-     """
-    print(f"[DEBUG generate_booking_link] Вход: origin='{origin}', dest='{dest}', depart_date='{depart_date}', return_date='{return_date}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
-
     # Валидация и нормализация кода пассажиров
     if not passengers_code or not isinstance(passengers_code, str):
         passengers_code = "1"
-
     # Убираем всё кроме цифр и оставляем максимум 3 цифры
     passengers_code = re.sub(r'\D', '', passengers_code)[:3]
-
     # Если после очистки пусто или начинается с 0 — используем "1"
     if not passengers_code or passengers_code[0] == '0':
         passengers_code = "1"
-
+    
+    print(f"[DEBUG generate_booking_link] Нормализованный passengers_code: '{passengers_code}'")
+    
     # Форматируем даты для ссылки (ДДММ)
     d1 = format_avia_link_date(depart_date)
     d2 = format_avia_link_date(return_date) if return_date else ""
+    print(f"[DEBUG generate_booking_link] Отформатированные даты: d1='{d1}', d2='{d2}'")
     
-    print(f"[DEBUG generate_booking_link] Отформатированные даты: d1='{d1}', d2='{d2}'") # <-- ДОБАВИТЬ
-
-
     # Формируем маршрут с ПОЛНЫМ кодом пассажиров
     if return_date:
         # Туда-обратно: MOW1003AER1503211
@@ -160,14 +147,13 @@ def generate_booking_link(
     else:
         # В одну сторону: AER1003MOW211
         route = f"{origin}{d1}{dest}{passengers_code}"
-        
-    print(f"[DEBUG generate_booking_link] Сформированный маршрут: '{route}'") # <-- ДОБАВИТЬ
-
-
-    base_url = f"https://www.aviasales.ru/search/{route}"
-
     
-
+    print(f"[DEBUG generate_booking_link] Сформированный маршрут: '{route}'")
+    
+    base_url = f"https://www.aviasales.ru/search/{route}"
+    print(f"[DEBUG generate_booking_link] Сгенерирована ЧИСТАЯ ссылка: '{base_url}'")
+    
+    # Возвращаем ЧИСТУЮ ссылку без маркера (преобразование происходит в start.py/everywhere_search.py)
     return base_url
 
 def find_cheapest_flight_on_exact_date(
@@ -202,65 +188,76 @@ def find_cheapest_flight_on_exact_date(
     
     # Добавлено тестирование
 def update_passengers_in_link(link: str, passengers_code: str) -> str:
-    
+    """Обновляет количество пассажиров в ссылке"""
     print(f"[DEBUG update_passengers_in_link] Вход: link='{link}', passengers_code='{passengers_code}'")
     
-    import re
-    from urllib.parse import urlparse, urlunparse
-
-    if not link or not passengers_code or not passengers_code.isdigit():
-        print(f"[DEBUG update_passengers_in_link] Возврат: нет ссылки или кода пассажиров (link='{link}', passengers_code='{passengers_code}')")
-        return link
-
-    if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
-        print(f"[DEBUG update_passengers_in_link] Возврат: невалидный код пассажиров '{passengers_code}'")
-        return link
-
-    is_relative = link.startswith('/')
-    parsed = None if is_relative else urlparse(link)
-    path = link if is_relative else parsed.path
-
+    # Определяем тип ссылки (абсолютная или относительная)
+    is_relative = not link.startswith(('http://', 'https://'))
+    if is_relative:
+        path = link
+        prefix = ''
+    else:
+        parsed = urlparse(link)
+        path = parsed.path
+        prefix = f"{parsed.scheme}://{parsed.netloc}"
+    
     print(f"[DEBUG update_passengers_in_link] Извлеченный путь: '{path}'")
     print(f"[DEBUG update_passengers_in_link] Тип ссылки: {'относительная' if is_relative else 'абсолютная'}")
-
-    if '/search/' not in path:
-        print(f"[DEBUG update_passengers_in_link] Возврат: путь не содержит '/search/'. Исходная ссылка: '{link}'")
-        return link
-
-    path_parts = path.split('/search/', 1)
-    if len(path_parts) < 2:
-        print(f"[DEBUG update_passengers_in_link] Возврат: не удалось разделить путь по '/search/'. Исходная ссылка: '{link}'")
-        return link
-
-    prefix, search_part = path_parts
-    print(f"[DEBUG update_passengers_in_link] Префикс пути: '{prefix}'")
-    print(f"[DEBUG update_passengers_in_link] Часть после /search/: '{search_part}'")
-
-    if '?' in search_part:
-        route, query = search_part.split('?', 1)
-        has_query = True
-        print(f"[DEBUG update_passengers_in_link] Найдена строка запроса. Маршрут: '{route}', параметры: '{query}'")
+    
+    # Ищем часть после /search/
+    if '/search/' in path:
+        route_part = path.split('/search/', 1)[1]
+        print(f"[DEBUG update_passengers_in_link] Префикс пути: '{prefix + '/search/'}'")
+        print(f"[DEBUG update_passengers_in_link] Часть после /search/: '{route_part}'")
+        
+        # Проверяем, есть ли строка запроса
+        if '?' in route_part:
+            route, query = route_part.split('?', 1)
+            has_query = True
+            print(f"[DEBUG update_passengers_in_link] Найдена строка запроса. Маршрут: '{route}', параметры: '{query}'")
+        else:
+            route = route_part
+            query = ''
+            has_query = False
+            print(f"[DEBUG update_passengers_in_link] Строки запроса нет. Маршрут: '{route}'")
+        
+        # Определяем длину кода пассажиров (должна быть 1 цифра!)
+        passengers_digits = 1  # Aviasales ожидает ТОЛЬКО количество взрослых здесь
+        
+        # Извлекаем код пассажиров (последняя цифра)
+        if len(route) > passengers_digits and route[-passengers_digits:].isdigit():
+            old_passengers = route[-passengers_digits:]
+            new_route = route[:-passengers_digits] + passengers_code[0]  # Берем ТОЛЬКО количество взрослых
+            print(f"[DEBUG update_passengers_in_link] Заменяем код пассажиров. Было: '{old_passengers}', стало: '{passengers_code[0]}'")
+        else:
+            new_route = route + passengers_code[0]  # Добавляем количество взрослых
+            print(f"[DEBUG update_passengers_in_link] Добавляем код пассажиров. Было: '{route}', стало: '{new_route}'")
+        
+        # ДОБАВЛЯЕМ полную информацию о пассажирах в параметры запроса
+        if has_query:
+            # Парсим параметры запроса
+            query_params = parse_qs(query)
+            
+            # Обновляем параметры пассажиров
+            query_params['passengers'] = [{
+                'adults': int(passengers_code[0]),
+                'children': int(passengers_code[1]) if len(passengers_code) > 1 else 0,
+                'infants': int(passengers_code[2]) if len(passengers_code) > 2 else 0
+            }]
+            
+            # Формируем новую строку запроса
+            new_query = urlencode(query_params, doseq=True)
+            new_path = f"/search/{new_route}?{new_query}"
+            print(f"[DEBUG update_passengers_in_link] Обновленные параметры запроса: '{new_query}'")
+        else:
+            new_path = f"/search/{new_route}"
+        
+        print(f"[DEBUG update_passengers_in_link] Сформирован новый путь: '{new_path}'")
     else:
-        route, query = search_part, ""
-        has_query = False
-        print(f"[DEBUG update_passengers_in_link] Нет строки запроса. Маршрут: '{route}'")
-
-    # === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ===
-    # Удаляем последнюю цифру (старое количество пассажиров) и добавляем новый код
-    if route and route[-1].isdigit():
-        new_route = route[:-1] + passengers_code
-        print(f"[DEBUG update_passengers_in_link] Заменяем последнюю цифру. Было: '{route}', стало: '{new_route}'")
-    else:
-        # Если нет цифры в конце (маловероятно для ссылок от API), добавляем в конец
-        new_route = route + passengers_code
-        print(f"[DEBUG update_passengers_in_link] Нет цифры в конце маршрута, добавляем код в конец. Было: '{route}', стало: '{new_route}'")
-
-    # Собираем путь обратно
-    new_path = f"/search/{new_route}"
-    if has_query:
-        new_path += f"?{query}"
-        print(f"[DEBUG update_passengers_in_link] Добавлена строка запроса: '{new_path}'")
-
+        # Это не ссылка поиска - возвращаем как есть
+        print(f"[DEBUG update_passengers_in_link] Это не ссылка поиска - возвращаем как есть: '{link}'")
+        return link
+    
     # Возвращаем в исходном формате (сохраняем относительность/абсолютность)
     result = new_path if is_relative else urlunparse(parsed._replace(path=new_path))
     print(f"[DEBUG update_passengers_in_link] Выход: '{result}'")
