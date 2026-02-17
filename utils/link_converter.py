@@ -1,3 +1,9 @@
+import os
+import asyncio
+import aiohttp
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from utils.logger import logger
+
 async def convert_to_partner_link(clean_link: str) -> str:
     """
     Единая точка преобразования ссылок через Travelpayouts API (links/v1/create).
