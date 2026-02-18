@@ -189,7 +189,7 @@ class PriceWatcher:
             json.dumps(watch, ensure_ascii=False)
         )
         logger.info(f"✅ Уведомление отправлено {user_id}: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
-        return True
+    return True
     else:
         # Пользователь недоступен — удаляем отслеживание
         await redis_client.remove_watch(user_id, key)
