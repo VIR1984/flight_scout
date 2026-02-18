@@ -15,6 +15,12 @@ from services.flight_search import (
     # add_marker_to_url,  # ← УДАЛЕНО: больше не используется
     format_duration as format_duration_helper
 )
+from utils.date_validator import (
+    is_valid_departure_date,
+    is_valid_return_date,
+    validate_flight_dates
+)
+
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
 from utils.logger import logger  # ← ДОБАВЛЕНО

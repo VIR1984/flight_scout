@@ -13,6 +13,11 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
+from utils.date_validator import (
+    is_valid_departure_date,
+    is_valid_return_date,
+    validate_flight_dates
+)
 from handlers.everywhere_search import (
     search_origin_everywhere,
     search_destination_everywhere,
@@ -241,27 +246,38 @@ async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n"
-            "Введите в формате <code>ДД.ММ</code> (например: 10.03)",
+            "Введите в формате `ДД.ММ` (например: 10.03)",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
+    
+    # ИСПОЛЬЗУЕМ ЕДИНУЮ ЛОГИКУ ПРОВЕРКИ
+    is_valid, error_msg = is_valid_departure_date(message.text)
+    if not is_valid:
+        await message.answer(
+            error_msg,
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
+    
     await state.update_data(depart_date=message.text)
     data = await state.get_data()
     is_origin_everywhere = data["origin"] == "везде"
     is_dest_everywhere = data["dest"] == "везде"
     if is_origin_everywhere or is_dest_everywhere:
         await state.update_data(need_return=False, return_date=None)
-        await ask_flight_type(message, state)  # ← ИЗМЕНЕНО: переход к выбору типа рейса
+        await ask_flight_type(message, state)
         return
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, нужен", callback_data="need_return_yes")],
         [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="need_return_no")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
     await message.answer(
-        # f"✅ Дата вылета: <b>{message.text}</b>\n"
-        "🔄 Нужен ли обратный билет?",
+        "🔄 Нужен ли обратный билет? ",
         parse_mode="HTML",
         reply_markup=kb
     )

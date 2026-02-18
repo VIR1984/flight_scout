@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from datetime import datetime
 from utils.logger import logger
+from utils.date_validator import validate_flight_dates
 
 
 # Конфигурация API
@@ -38,77 +39,132 @@ async def search_flights(
     depart_date: str,
     return_date: Optional[str] = None,
     currency: str = "rub",
-    direct: bool = False
+    direct: bool = False,
+    adults: int = 1,
+    children: int = 0,
+    infants: int = 0
 ) -> List[Dict]:
     """
     Ищет авиабилеты через Travelpayouts API (grouped_prices).
-    Возвращает список рейсов, совместимый с остальным кодом.
+    
+    Args:
+        origin: IATA-код аэропорта отправления
+        destination: IATA-код аэропорта назначения
+        depart_date: Дата вылета в формате ДД.ММ
+        return_date: Дата возврата в формате ДД.ММ (опционально)
+        currency: Валюта для отображения цен (по умолчанию "rub")
+        direct: Флаг поиска только прямых рейсов
+        adults: Количество взрослых пассажиров (по умолчанию 1)
+        children: Количество детей (по умолчанию 0)
+        infants: Количество младенцев (по умолчанию 0)
+    
+    Returns:
+        Список найденных рейсов в формате, совместимом с остальным кодом
     """
+    logger.debug(f"🔍 Запрос поиска рейсов: {origin} → {destination} на {depart_date} "
+                f"{'→ ' + return_date if return_date else ''} "
+                f"(прямые: {direct}, пассажиры: {adults}взр/{children}дет/{infants}мл)")
+    
+    # Проверяем наличие токена API
     if not AVIASALES_TOKEN:
-        logger.warning("⚠️ AVIASALES_TOKEN не установлен — поиск авиабилетов недоступен")
+        logger.error("❌ AVIASALES_TOKEN не установлен — поиск авиабилетов недоступен")
         return []
-
+    
+    # Нормализуем и проверяем даты
+    normalized_depart_date = normalize_date(depart_date)
+    normalized_return_date = normalize_date(return_date) if return_date else None
+    
+    # Проверяем корректность дат
+    is_valid, error_msg = validate_flight_dates(normalized_depart_date, normalized_return_date)
+    if not is_valid:
+        logger.error(f"❌ Некорректные даты: {error_msg}")
+        return []
+    
+    logger.debug(f"📅 Используемые даты: вылет={normalized_depart_date}, возврат={normalized_return_date}")
+    
+    # Формируем параметры запроса
     params = {
         "origin": origin,
         "destination": destination,
-        "departure_at": depart_date,
+        "departure_at": normalized_depart_date,
         "currency": currency,
         "token": AVIASALES_TOKEN,
         "group_by": "departure_at",
         "direct": "true" if direct else "false"
     }
-
-    if return_date:
-        params["return_at"] = return_date
-        # Опционально: задать длительность поездки (в днях)===
+    
+    # Добавляем дату возврата, если указана
+    if normalized_return_date:
+        params["return_at"] = normalized_return_date
+        
+        # Вычисляем длительность поездки и устанавливаем параметры
         try:
-            d1 = datetime.fromisoformat(depart_date)
-            d2 = datetime.fromisoformat(return_date)
+            d1 = datetime.strptime(normalized_depart_date, "%Y-%m-%d")
+            d2 = datetime.strptime(normalized_return_date, "%Y-%m-%d")
             trip_days = (d2 - d1).days
+            
             if trip_days > 0:
                 params["min_trip_duration"] = trip_days
                 params["max_trip_duration"] = trip_days
-        except Exception:
-            pass  # игнорируем ошибки парсинга
-
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(AVIASALES_GROUPED_URL, params=params, timeout=10) as response:
-                if response.status == 429:
-                    logger.warning("⚠️ Достигнут лимит API Aviasales (429). Ждём 60 секунд...")
-                    await asyncio.sleep(60)
-                    return []
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
-                    return []
-                
-                data = await response.json()
-                if not data.get("success"):
-                    logger.error(f"❌ API вернул ошибку: {data.get('error')}")
-                    return []
-                
-                grouped_flights = data.get("data", {})
-                flights = []
-                for date_key, flight in grouped_flights.items():
-                    # Приводим к формату, совместимому с остальным кодом
-                    flight["value"] = flight.get("price")
-                    flight["departure_at"] = flight.get("departure_at", f"{date_key}T00:00:00+03:00")
-                    flight["return_at"] = flight.get("return_at", "")
-                    flight["origin"] = flight.get("origin", origin)
-                    flight["destination"] = flight.get("destination", destination)
-                    flights.append(flight)
-
-                
-
-                return flights
-
-        except asyncio.TimeoutError:
-            logger.error("❌ Таймаут при запросе к Aviasales API")
-            return []
         except Exception as e:
-            logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
-            return []
+            logger.debug(f"⚠️ Не удалось вычислить длительность поездки: {str(e)}")
+    
+    # Добавляем информацию о пассажирах
+    params["passengers"] = {
+        "adults": adults,
+        "children": children,
+        "infants": infants
+    }
+    
+    # Логируем параметры запроса (без токена)
+    safe_params = params.copy()
+    safe_params["token"] = "REDACTED"
+    logger.debug(f"📡 Параметры запроса к API: {safe_params}")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.travelpayouts.com/v2/prices/grouped",
+                params=params,
+                timeout=15
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    flights = []
+                    
+                    # Обрабатываем данные из API
+                    for date, items in data.get("data", {}).items():
+                        for item in items:
+                            # Форматируем данные в наш формат
+                            flight = {
+                                "origin": origin,
+                                "destination": destination,
+                                "departure_at": item.get("departure_at", ""),
+                                "return_at": item.get("return_at", ""),
+                                "price": item.get("price", 0),
+                                "transfers": item.get("transfers", 0),
+                                "airline": item.get("airline", ""),
+                                "flight_number": item.get("flight_number", ""),
+                                "link": item.get("link", ""),
+                                "deep_link": item.get("deep_link", "")
+                            }
+                            flights.append(flight)
+                    
+                    logger.info(f"✅ Найдено {len(flights)} рейсов для {origin} → {destination} на {normalized_depart_date}")
+                    return flights
+                else:
+                    error_text = await resp.text()
+                    logger.error(f"❌ Ошибка API Travelpayouts (HTTP {resp.status}): {error_text[:200]}")
+                    return []
+    except asyncio.TimeoutError:
+        logger.error("❌ Таймаут при запросе к Travelpayouts API")
+        return []
+    except aiohttp.ClientError as e:
+        logger.error(f"❌ Ошибка соединения с Travelpayouts API: {str(e)}")
+        return []
+    except Exception as e:
+        logger.exception(f"💥 Критическая ошибка при запросе к Travelpayouts API: {str(e)}")
+        return []
 
 
 def generate_booking_link(

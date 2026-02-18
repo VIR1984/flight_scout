@@ -13,6 +13,7 @@ from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.cities import IATA_TO_CITY
 from utils.link_converter import convert_to_partner_link
+from utils.date_validator import validate_flight_dates
 
 
 
@@ -115,6 +116,14 @@ class PriceWatcher:
         passengers = watch.get("passengers", "1")
         last_notified = watch.get("last_notified", 0)
         
+        # === ДОБАВЛЕНА ПРОВЕРКА КОРРЕКТНОСТИ ДАТ ===
+        is_valid, error_msg = validate_flight_dates(depart_date, return_date)
+        if not is_valid:
+            logger.warning(f"⚠️ Некорректные даты в отслеживании {key}: {error_msg}")
+            # Удаляем отслеживание с некорректными датами
+            await redis_client.remove_watch(user_id, key)
+            return "removed"
+        
         # Защита от спама: не уведомлять чаще чем раз в 24 часа
         hours_since_last = (time.time() - last_notified) / 3600
         if hours_since_last < 24:
@@ -169,24 +178,23 @@ class PriceWatcher:
                 await redis_client.remove_watch(user_id, key)
                 logger.info(f"Автоматически удалено отслеживание для заблокировавшего пользователя {user_id}")
             return "removed"
-        # === КОНЕЦ ВСТРОЕННОГО ФРАГМЕНТА ===
-        
-        if success:
-            watch["current_price"] = new_price
-            watch["last_notified"] = int(time.time())
-            await redis_client.client.setex(
-                key,
-                86400 * 30,
-                json.dumps(watch, ensure_ascii=False)
-            )
-            logger.info(f"✅ Уведомление отправлено {user_id}: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
-            return True
-        else:
-            # Пользователь недоступен — удаляем отслеживание
-            await redis_client.remove_watch(user_id, key)
-            logger.warning(f"🗑️ Удалено отслеживание для недоступного пользователя {user_id}")
-            return "removed"
+    # === КОНЕЦ ВСТРОЕННОГО ФРАГМЕНТА ===
     
+    if success:
+        watch["current_price"] = new_price
+        watch["last_notified"] = int(time.time())
+        await redis_client.client.setex(
+            key,
+            86400 * 30,
+            json.dumps(watch, ensure_ascii=False)
+        )
+        logger.info(f"✅ Уведомление отправлено {user_id}: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
+        return True
+    else:
+        # Пользователь недоступен — удаляем отслеживание
+        await redis_client.remove_watch(user_id, key)
+        logger.warning(f"🗑️ Удалено отслеживание для недоступного пользователя {user_id}")
+        return "removed"
     async def _fetch_min_price(self, origin: str, dest: str, depart_date: str, return_date: Optional[str]) -> Optional[int]:
         """Получить минимальную цену для маршрута"""
         try:
