@@ -13,7 +13,6 @@ from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.cities import IATA_TO_CITY
 from utils.link_converter import convert_to_partner_link
-from utils.date_validator import validate_flight_dates
 
 
 
@@ -106,95 +105,113 @@ class PriceWatcher:
     
     async def check_single_watch(self, watch: Dict, key: str) -> Optional[str]:
         """Проверить одно отслеживание. Возвращает: True если отправлено уведомление, 'removed' если удалено, иначе False"""
-        user_id = watch["user_id"]
-        origin = watch["origin"]
-        dest = watch["dest"]
-        depart_date = watch["depart_date"]
-        return_date = watch.get("return_date")
-        current_price = watch["current_price"]
-        threshold = watch.get("threshold", 0)
-        passengers = watch.get("passengers", "1")
-        last_notified = watch.get("last_notified", 0)
-        
-        # === ДОБАВЛЕНА ПРОВЕРКА КОРРЕКТНОСТИ ДАТ ===
-        is_valid, error_msg = validate_flight_dates(depart_date, return_date)
-        if not is_valid:
-            logger.warning(f"⚠️ Некорректные даты в отслеживании {key}: {error_msg}")
-            # Удаляем отслеживание с некорректными датами
-            await redis_client.remove_watch(user_id, key)
-            return "removed"
-        
-        # Защита от спама: не уведомлять чаще чем раз в 24 часа
-        hours_since_last = (time.time() - last_notified) / 3600
-        if hours_since_last < 24:
-            return False
-        
-        # Кэширование результатов поиска для одного маршрута
-        cache_key = f"{origin}:{dest}:{depart_date}:{return_date or ''}"
-        if cache_key in self.route_cache:
-            cached_price, cached_time = self.route_cache[cache_key]
-            if time.time() - cached_time < self.cache_ttl:
-                new_price = cached_price
+        try:
+            user_id = watch["user_id"]
+            origin = watch["origin"]
+            dest = watch["dest"]
+            depart_date = watch["depart_date"]
+            return_date = watch.get("return_date")
+            current_price = watch["current_price"]
+            threshold = watch.get("threshold", 0)
+            passengers = watch.get("passengers", "1")
+            last_notified = watch.get("last_notified", 0)
+            
+            # === УЛУЧШЕННАЯ ПРОВЕРКА КОРРЕКТНОСТИ ДАТ ===
+            is_valid, error_msg = validate_flight_dates(depart_date, return_date)
+            if not is_valid:
+                logger.warning(f"⚠️ Некорректные даты в отслеживании {key}: {error_msg}")
+                # Удаляем отслеживание с некорректными датами
+                await redis_client.remove_watch(user_id, key)
+                return "removed"
+            
+            # Защита от спама: не уведомлять чаще чем раз в 24 часа
+            hours_since_last = (time.time() - last_notified) / 3600
+            if hours_since_last < 24:
+                logger.debug(f"⏳ Пропущена проверка для {key}: уведомления отправляются не чаще чем раз в 24 часа ({hours_since_last:.1f}ч прошло)")
+                return False
+            
+            # Кэширование результатов поиска для одного маршрута
+            cache_key = f"{origin}:{dest}:{depart_date}:{return_date or ''}"
+            if cache_key in self.route_cache:
+                cached_price, cached_time = self.route_cache[cache_key]
+                if time.time() - cached_time < self.cache_ttl:
+                    logger.debug(f"💾 Использован кэш для маршрута {cache_key}")
+                    new_price = cached_price
+                else:
+                    logger.debug(f"🧹 Кэш устарел для маршрута {cache_key}, удаляем")
+                    del self.route_cache[cache_key]
+                    new_price = await self._fetch_min_price(origin, dest, depart_date, return_date)
             else:
-                del self.route_cache[cache_key]
+                logger.debug(f"🔍 Запрос новых данных для маршрута {cache_key}")
                 new_price = await self._fetch_min_price(origin, dest, depart_date, return_date)
-        else:
-            new_price = await self._fetch_min_price(origin, dest, depart_date, return_date)
-            if new_price:
-                self.route_cache[cache_key] = (new_price, time.time())
+                if new_price:
+                    self.route_cache[cache_key] = (new_price, time.time())
+            
+            if not new_price:
+                logger.warning(f"⚠️ Не удалось получить цену для маршрута {origin}→{dest} на даты {depart_date}/{return_date or '—'}")
+                return False
+            
+            # Рассчитываем изменение с минимальным порогом 50₽ для избежания "дрожания"
+            price_change = current_price - new_price
+            abs_change = abs(price_change)
+            should_notify = price_change != 0 and abs_change >= max(50, threshold)
+            
+            if not should_notify:
+                # Тихо обновляем цену без уведомления
+                if abs_change > 0:
+                    logger.debug(f"🔄 Обновлена цена без уведомления: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
+                    watch["current_price"] = new_price
+                    await redis_client.client.setex(
+                        key,
+                        86400 * 30,
+                        json.dumps(watch, ensure_ascii=False)
+                    )
+                return False
+            
+            # === ВСТРОЕННЫЙ ФРАГМЕНТ ОБРАБОТКИ БЛОКИРОВОК ===
+            try:
+                logger.info(f"📨 Подготовка уведомления для {user_id}: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
+                success = await self._send_price_notification(
+                    user_id=user_id,
+                    watch=watch,
+                    new_price=new_price,
+                    price_change=price_change,
+                    key=key
+                )
+            except Exception as e:
+                logger.error(f"❌ Не удалось отправить уведомление пользователю {user_id}: {e}")
+                # Если пользователь заблокировал бота — удаляем отслеживание автоматически
+                error_str = str(e).lower()
+                if "blocked" in error_str or "user not found" in error_str or "bot was blocked" in error_str:
+                    logger.warning(f"🚫 Пользователь {user_id} заблокировал бота, удаляем отслеживание {key}")
+                    await redis_client.remove_watch(user_id, key)
+                    return "removed"
+                return "removed"
+        # === КОНЕЦ ВСТРОЕННОГО ФРАГМЕНТА ===
         
-        if not new_price:
-            return False
-        
-        # Рассчитываем изменение с минимальным порогом 50₽ для избежания "дрожания"
-        price_change = current_price - new_price
-        abs_change = abs(price_change)
-        should_notify = price_change != 0 and abs_change >= max(50, threshold)
-        
-        if not should_notify:
-            # Тихо обновляем цену без уведомления
-            if abs_change > 0:
+            if success:
                 watch["current_price"] = new_price
+                watch["last_notified"] = int(time.time())
                 await redis_client.client.setex(
                     key,
                     86400 * 30,
                     json.dumps(watch, ensure_ascii=False)
                 )
-            return False
-        
-        # === ВСТРОЕННЫЙ ФРАГМЕНТ ОБРАБОТКИ БЛОКИРОВОК ===
-        try:
-            success = await self._send_price_notification(
-                user_id=user_id,
-                watch=watch,
-                new_price=new_price,
-                price_change=price_change,
-                key=key
-            )
-        except Exception as e:
-            logger.error(f"❌ Не удалось отправить уведомление пользователю {user_id}: {e}")
-            # Если пользователь заблокировал бота — удаляем отслеживание автоматически
-            if "blocked" in str(e).lower() or "user not found" in str(e).lower():
+                logger.info(f"✅ Уведомление отправлено {user_id}: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
+                return True
+            else:
+                # Пользователь недоступен — удаляем отслеживание
+                logger.warning(f"❌ Не удалось отправить уведомление пользователю {user_id}, удаляем отслеживание")
                 await redis_client.remove_watch(user_id, key)
-                logger.info(f"Автоматически удалено отслеживание для заблокировавшего пользователя {user_id}")
+                return "removed"
+        except KeyError as e:
+            logger.error(f"❌ Ошибка структуры данных в отслеживании {key}: отсутствует поле {str(e)}")
+            await redis_client.remove_watch(user_id, key) if 'user_id' in locals() else None
             return "removed"
-    # === КОНЕЦ ВСТРОЕННОГО ФРАГМЕНТА ===
+        except Exception as e:
+            logger.exception(f"💥 Критическая ошибка при проверке отслеживания {key}: {str(e)}")
+            return False
     
-    if success:
-        watch["current_price"] = new_price
-        watch["last_notified"] = int(time.time())
-        await redis_client.client.setex(
-            key,
-            86400 * 30,
-            json.dumps(watch, ensure_ascii=False)
-        )
-        logger.info(f"✅ Уведомление отправлено {user_id}: {current_price} ₽ → {new_price} ₽ ({price_change:+d} ₽)")
-    return True
-    else:
-        # Пользователь недоступен — удаляем отслеживание
-        await redis_client.remove_watch(user_id, key)
-        logger.warning(f"🗑️ Удалено отслеживание для недоступного пользователя {user_id}")
-        return "removed"
     async def _fetch_min_price(self, origin: str, dest: str, depart_date: str, return_date: Optional[str]) -> Optional[int]:
         """Получить минимальную цену для маршрута"""
         try:
