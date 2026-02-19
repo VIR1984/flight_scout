@@ -715,8 +715,8 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     
     # Обратный рейс (если есть)
     if data.get("need_return", False) and display_return:
+        text += f"\n↩️ <b>Туда:</b> {display_depart}",
         text += f"\n↩️ <b>Обратно:</b> {display_return}"
-
 
     # Добавляем уточнение о детях/младенцах только если они есть
     # if (data.get("children", 0) > 0 or data.get("infants", 0) > 0) and num_adults > 1:
@@ -1094,7 +1094,7 @@ async def handle_flight_request(message: Message):
 
     # --- КОНЕЦ ЛОГИКИ РАСЧЁТА ЦЕНЫ ---
 
-    if data.get("need_return", False) and display_return and :
+    if data.get("need_return", False) and display_return:
         text += f"\n↩️ Обратно: {display_return}"
     # text += f"\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
   
