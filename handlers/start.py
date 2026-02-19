@@ -724,7 +724,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     text += f"\n📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
 
     # Дата вылета (добавлено)
-    text += f"\n📅 <b>Дата вылета:</b> {display_depart}"
+    text += f"\n📅 <b>Туда:</b> {display_depart}"
 
     # Обратный рейс (если есть) - исправлено положение и форматирование
     if data.get("need_return", False) and display_return:
@@ -1093,6 +1093,8 @@ async def handle_flight_request(message: Message):
             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
 
     # --- КОНЕЦ ЛОГИКИ РАСЧЁТА ЦЕНЫ ---
+    
+    text += f"\n📅 <b>Туда:</b> {display_depart}"
 
     if data.get("need_return", False) and display_return:
         text += f"\n↩️ Обратно: {display_return}"
