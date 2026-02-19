@@ -690,7 +690,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         transfer_text = f"✈️ {transfers} пересадки"
     
         
-        # === ФОРМИРОВАНИЕ ТЕКСТА В ТРЕБУЕМОМ ПОРЯДКЕ ===
+      # === ФОРМИРОВАНИЕ ТЕКСТА В ТРЕБУЕМОМ ПОРЯДКЕ ===
     text = "✅ <b>Самый дешёвый вариант</b>\n"
 
     # --- ЛОГИКА РАСЧЁТА ЦЕНЫ ---
@@ -705,30 +705,30 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
 
     if price != "?":
-        text += f"💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
+        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
         if num_adults > 1:
             text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
     else:
-        text += f"💰 <b>Цена за 1 пассажира:</b> {price} ₽"
+        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
         if num_adults > 1:
             text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-    
-    # Обратный рейс (если есть)
-    if data.get("need_return", False) and display_return:
-        text += f"\n↩️ <b>Туда:</b> {display_depart}",
-        text += f"\n↩️ <b>Обратно:</b> {display_return}"
-
-    # Добавляем уточнение о детях/младенцах только если они есть
-    # if (data.get("children", 0) > 0 or data.get("infants", 0) > 0) and num_adults > 1:
-        # text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-
-    
+        
+    # Добавляем уточнение о детях/младенцах
+    if (data.get("children", 0) > 0 or data.get("infants", 0) > 0):
+        text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
 
     # Рейс
-    text += f"\n🛫 <b>Рейс:</b> {origin_name} → {dest_name}"
+    text += f"\n\n🛫 <b>Рейс:</b> {origin_name} → {dest_name}"
 
     # Города и коды аэропортов
     text += f"\n📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
+
+    # Дата вылета (добавлено)
+    text += f"\n📅 <b>Дата вылета:</b> {display_depart}"
+
+    # Обратный рейс (если есть) - исправлено положение и форматирование
+    if data.get("need_return", False) and display_return:
+        text += f"\n↩️ <b>Обратно:</b> {display_return}"
 
     # Продолжительность
     text += f"\n⏱️ <b>Продолжительность:</b> {duration}"
