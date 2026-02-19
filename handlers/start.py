@@ -13,11 +13,6 @@ from services.flight_search import search_flights, generate_booking_link, normal
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
 from utils.redis_client import redis_client
-from utils.date_validator import (
-    is_valid_departure_date,
-    is_valid_return_date,
-    validate_flight_dates
-)
 from handlers.everywhere_search import (
     search_origin_everywhere,
     search_destination_everywhere,
@@ -62,6 +57,8 @@ def validate_route(text: str) -> tuple:
     dest = parts[1].strip()
     origin = origin.replace("санкт петербург", "санкт-петербург")
     dest = dest.replace("ростов на дону", "ростов-на-дону")
+    
+    print(f"[DEBUG validate_route] Origin: '{origin}', Dest: '{dest}'")  # <-- ДОБАВИТЬ
     return origin, dest
 
 def validate_date(date_str: str) -> bool:
@@ -188,11 +185,24 @@ async def process_route(message: Message, state: FSMContext):
     if not origin or not dest:
         await message.answer(
             "❌ Неверный формат маршрута.\n"
-            "Попробуйте ещё раз: <code>Москва - Сочи</code>",
+            "Попробуйте ещё раз: `Москва - Сочи`",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
+    
+    # ===== НОВАЯ ПРОВЕРКА: одинаковые города =====
+    if origin == dest and origin != "везде":
+        print(f"[DEBUG process_route] ОТКЛОНЕНО: одинаковые города '{origin}'")  # <-- ДОБАВИТЬ
+        await message.answer(
+            "❌ Город отправления и прибытия не могут совпадать!\n"
+            f"Вы ввели: {origin} - {dest}\n"
+            "Пожалуйста, укажите разные города.",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
+    
     if origin != "везде":
         orig_iata = CITY_TO_IATA.get(origin)
         if not orig_iata:
@@ -202,6 +212,7 @@ async def process_route(message: Message, state: FSMContext):
     else:
         orig_iata = None
         origin_name = "Везде"
+    
     if dest != "везде":
         dest_iata = CITY_TO_IATA.get(dest)
         if not dest_iata:
@@ -211,6 +222,19 @@ async def process_route(message: Message, state: FSMContext):
     else:
         dest_iata = None
         dest_name = "Везде"
+    
+    # ===== ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: одинаковые IATA коды =====
+    if orig_iata and dest_iata and orig_iata == dest_iata:
+        print(f"[DEBUG process_route] ОТКЛОНЕНО: одинаковые IATA '{orig_iata}'")  # <-- ДОБАВИТЬ
+        await message.answer(
+            "❌ Город отправления и прибытия не могут совпадать!\n"
+            f"Код аэропорта: {orig_iata}\n"
+            "Пожалуйста, укажите разные города.",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
+    
     if origin == "везде" and dest == "везде":
         await message.answer(
             "❌ Нельзя искать «Везде → Везде».\n"
@@ -218,6 +242,9 @@ async def process_route(message: Message, state: FSMContext):
             reply_markup=CANCEL_KB
         )
         return
+    
+    print(f"[DEBUG process_route] Маршрут принят: {origin_name} → {dest_name}")  # <-- ДОБАВИТЬ
+    
     await state.update_data(
         origin=origin,
         origin_iata=orig_iata,
@@ -226,58 +253,34 @@ async def process_route(message: Message, state: FSMContext):
         origin_name=origin_name,
         dest_name=dest_name
     )
-    if dest == "везде":
-        hint = f"✈️ Буду искать рейсы из <b>{origin_name}</b> во все популярные города мира (покажу топ-3)"
-    elif origin == "везде":
-        hint = f"✈️ Буду искать рейсы из всех городов России в <b>{dest_name}</b>"
-    else:
-        hint = f"✈️ Маршрут: <b>{origin_name} → {dest_name}</b>"
-    await message.answer(
-        # hint + "\n"
-        "📅 Введите дату вылета в формате <code>ДД.ММ</code>\n"
-        "📌 <b>Пример:</b> 10.03",
-        parse_mode="HTML",
-        # reply_markup=CANCEL_KB
-    )
-    await state.set_state(FlightSearch.depart_date)
+    # ... остальной код без изменений
 
 @router.message(FlightSearch.depart_date)
 async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n"
-            "Введите в формате `ДД.ММ` (например: 10.03)",
+            "Введите в формате <code>ДД.ММ</code> (например: 10.03)",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
-    
-    # ИСПОЛЬЗУЕМ ЕДИНУЮ ЛОГИКУ ПРОВЕРКИ
-    is_valid, error_msg = is_valid_departure_date(message.text)
-    if not is_valid:
-        await message.answer(
-            error_msg,
-            parse_mode="HTML",
-            reply_markup=CANCEL_KB
-        )
-        return
-    
     await state.update_data(depart_date=message.text)
     data = await state.get_data()
     is_origin_everywhere = data["origin"] == "везде"
     is_dest_everywhere = data["dest"] == "везде"
     if is_origin_everywhere or is_dest_everywhere:
         await state.update_data(need_return=False, return_date=None)
-        await ask_flight_type(message, state)
+        await ask_flight_type(message, state)  # ← ИЗМЕНЕНО: переход к выбору типа рейса
         return
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, нужен", callback_data="need_return_yes")],
         [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="need_return_no")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
     await message.answer(
-        "🔄 Нужен ли обратный билет? ",
+        # f"✅ Дата вылета: <b>{message.text}</b>\n"
+        "🔄 Нужен ли обратный билет?",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -299,18 +302,64 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
         await state.update_data(return_date=None)
         await ask_flight_type(callback.message, state)  # ← ИЗМЕНЕНО: переход к выбору типа рейса
     await callback.answer()
+    
+# ===== НОВЫЙ ФУНКЦИЯ: ПРОВЕРКА ДАТ =====
+def validate_dates_order(depart_date: str, return_date: str) -> bool:
+    """Проверяет, что дата возврата не раньше даты вылета"""
+    try:
+        from datetime import datetime
+        depart_day, depart_month = map(int, depart_date.split('.'))
+        return_day, return_month = map(int, return_date.split('.'))
+        
+        # Определяем год (2026 или 2027)
+        depart_year = 2026
+        if depart_month < 2 or (depart_month == 2 and depart_day < 8):
+            depart_year = 2027
+            
+        return_year = 2026
+        if return_month < 2 or (return_month == 2 and return_day < 8):
+            return_year = 2027
+        
+        depart_dt = datetime(depart_year, depart_month, depart_day)
+        return_dt = datetime(return_year, return_month, return_day)
+        
+        print(f"[DEBUG validate_dates_order] Вылет: {depart_dt}, Возврат: {return_dt}")  # <-- ДОБАВИТЬ
+        
+        return return_dt >= depart_dt
+    except Exception as e:
+        print(f"[DEBUG validate_dates_order] Ошибка: {e}")  # <-- ДОБАВИТЬ
+        return False
 
 @router.message(FlightSearch.return_date)
 async def process_return_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n"
-            "Введите в формате <code>ДД.ММ</code> (например: 15.03)",
+            "Введите в формате `ДД.ММ` (например: 15.03)",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
+    
+    # ===== НОВАЯ ПРОВЕРКА: дата возврата не раньше вылета =====
+    data = await state.get_data()
+    depart_date = data.get("depart_date")
+    
+    print(f"[DEBUG process_return_date] Ввод возврата: {message.text}, Вылет: {depart_date}")  # <-- ДОБАВИТЬ
+    
+    if depart_date and not validate_dates_order(depart_date, message.text):
+        await message.answer(
+            "❌ Дата возврата не может быть раньше даты вылета!\n"
+            f"Вылет: {depart_date}, Возврат: {message.text}\n"
+            "Пожалуйста, введите корректную дату.",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        print(f"[DEBUG process_return_date] ОТКЛОНЕНО: возврат раньше вылета")  # <-- ДОБАВИТЬ
+        return
+    
     await state.update_data(return_date=message.text)
+    print(f"[DEBUG process_return_date] Дата возврата сохранена: {message.text}")  # <-- ДОБАВИТЬ
     await ask_flight_type(message, state)  # ← ИЗМЕНЕНО: переход к выбору типа рейса
 
 # ===== НОВЫЙ ШАГ: ВЫБОР ТИПА РЕЙСА =====
@@ -870,7 +919,32 @@ async def handle_flight_request(message: Message):
         return
     
     origin_city, dest_city, depart_date, return_date, passengers_part = match.groups()
+    print(f"[DEBUG handle_flight_request] Origin: '{origin_city}', Dest: '{dest_city}'")  # <-- ДОБАВИТЬ
+    print(f"[DEBUG handle_flight_request] Depart: '{depart_date}', Return: '{return_date}'")  # <-- ДОБАВИТЬ
+    
+    # ===== ПРОВЕРКА: одинаковые города =====
+    if origin_city.strip().lower() == dest_city.strip().lower() and origin_city.strip().lower() != "везде":
+        print(f"[DEBUG handle_flight_request] ОТКЛОНЕНО: одинаковые города")  # <-- ДОБАВИТЬ
+        await message.answer(
+            "❌ Город отправления и прибытия не могут совпадать!\n"
+            f"Вы ввели: {origin_city.strip()} - {dest_city.strip()}",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
+    
     is_roundtrip = bool(return_date)
+    
+    # ===== ПРОВЕРКА: дата возврата раньше вылета =====
+    if return_date and not validate_dates_order(depart_date, return_date):
+        print(f"[DEBUG handle_flight_request] ОТКЛОНЕНО: возврат раньше вылета")  # <-- ДОБАВИТЬ
+        await message.answer(
+            "❌ Дата возврата не может быть раньше даты вылета!\n"
+            f"Вылет: {depart_date}, Возврат: {return_date}",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
     is_origin_everywhere = origin_city.strip() == "везде"
     is_dest_everywhere = dest_city.strip() == "везде"
     
