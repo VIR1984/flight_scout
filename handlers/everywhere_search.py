@@ -15,14 +15,8 @@ from services.flight_search import (
     # add_marker_to_url,  # ← УДАЛЕНО: больше не используется
     format_duration as format_duration_helper
 )
-from utils.cities_loader import (
-    get_iata, 
-    get_city_name, 
-    CITY_TO_IATA,      
-    IATA_TO_CITY,      
-    GLOBAL_HUBS,
-    _normalize_name    
-)
+from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
+from utils.cities import GLOBAL_HUBS 
 from utils.redis_client import redis_client
 from utils.logger import logger  # ← ДОБАВЛЕНО
 from utils.link_converter import convert_to_partner_link

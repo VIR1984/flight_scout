@@ -11,14 +11,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, update_passengers_in_link, format_passenger_desc
 from services.transfer_search import search_transfers, generate_transfer_link
-from utils.cities_loader import (
-    get_iata, 
-    get_city_name, 
-    CITY_TO_IATA, 
-    IATA_TO_CITY, 
-    GLOBAL_HUBS,
-    _normalize_name  
-)
+from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
+from utils.cities import GLOBAL_HUBS 
 from utils.redis_client import redis_client
 from handlers.everywhere_search import (
     search_origin_everywhere,
