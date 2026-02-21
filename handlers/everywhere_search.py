@@ -4,7 +4,6 @@ import asyncio
 import os
 from typing import Dict, Any, List, Tuple
 from uuid import uuid4
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from services.flight_search import (
     search_flights,
@@ -20,7 +19,7 @@ from utils.cities import GLOBAL_HUBS
 from utils.redis_client import redis_client
 from utils.logger import logger  # ← ДОБАВЛЕНО
 from utils.link_converter import convert_to_partner_link
-
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
         
 def format_user_date(date_str: str) -> str:
