@@ -435,9 +435,12 @@ async def process_infants(callback: CallbackQuery, state: FSMContext):
 
 async def show_summary(message, state: FSMContext):
     data = await state.get_data()
+    print(f"[DEBUG process_infants] Текущее состояние после сохранения: {data}")
     adults = data["adults"]
     children = data.get("children", 0)
     infants = data.get("infants", 0)
+    
+     await state.set_state(FlightSearch.confirm)
     
     print(f"[DEBUG] Перед вызовом build_passenger_code: adults={adults}, children={children}, infants={infants}")
     passenger_code = build_passenger_code(adults, children, infants)

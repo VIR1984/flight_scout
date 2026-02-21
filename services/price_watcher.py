@@ -261,6 +261,7 @@ class PriceWatcher:
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=f"✈️ Забронировать за {new_price} ₽", url=partner_booking_link)],
                 [InlineKeyboardButton(text="❌ Больше не следить", callback_data=f"unwatch_{key}")]
+                [InlineKeyboardButton(text="Продолжить поиск билетов", callback_data="main_menu")]
             ])
 
             
