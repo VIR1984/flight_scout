@@ -1,3 +1,4 @@
+# main.py
 import asyncio
 import os
 import logging
@@ -11,6 +12,7 @@ from utils.logger import logger
 from utils.redis_client import redis_client
 from services.price_watcher import PriceWatcher
 from utils.link_converter import convert_to_partner_link
+from utils.cities_loader import load_cities_from_api  # ← ДОБАВИТЬ
 
 logging.basicConfig(level=logging.DEBUG)
 load_dotenv()
@@ -22,6 +24,10 @@ async def main():
     except Exception as e:
         logger.error(f"Ошибка подключения к Redis: {e}")
         logger.info("Продолжаю работу без кэширования...")
+    
+    # 🌍 ЗАГРУЗКА ГОРОДОВ (НОВОЕ - ДОБАВИТЬ)
+    logger.info("🌍 Инициализация базы городов...")
+    await load_cities_from_api()
     
     # Инициализация бота
     bot = Bot(
