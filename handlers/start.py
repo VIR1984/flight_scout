@@ -22,7 +22,6 @@ from handlers.everywhere_search import (
     format_user_date,
     build_passenger_desc
 )
-from flight_states import FlightSearch
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
 
@@ -31,7 +30,16 @@ CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
 ])
 
-
+class FlightSearch(StatesGroup):
+    route = State()
+    depart_date = State()
+    need_return = State()
+    return_date = State()
+    flight_type = State()
+    adults = State()
+    children = State()
+    infants = State()
+    confirm = State()
 
 def validate_route(text: str) -> tuple:
     text = text.strip().lower()

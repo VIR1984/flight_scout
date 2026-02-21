@@ -22,6 +22,8 @@ class FlyStackTrack(StatesGroup):
 @router.callback_query(F.data == "track_flight")
 async def start_track_flight(callback: CallbackQuery, state: FSMContext):
     """Начало отслеживания рейса"""
+    await state.clear() 
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
     ])
