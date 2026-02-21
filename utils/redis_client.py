@@ -131,6 +131,28 @@ class RedisClient:
             cursor, batch = await self.client.scan(cursor=cursor, match=pattern, count=100)
             keys.extend(batch)
         return keys
+        
+    # ===== FlyStack usage tracking =====
+    async def get_flystack_usage(self, user_id: int, month: str) -> int:
+        """Получить количество использованных запросов FlyStack за месяц"""
+        if not self.client:
+            return 0
+        key = f"{self.prefix}flystack:{user_id}:{month}"
+        count = await self.client.get(key)
+        return int(count) if count else 0
+
+    async def increment_flystack_usage(self, user_id: int, month: str, limit: int = 3) -> bool:
+        """Увеличить счётчик. Возвращает True если лимит не превышен."""
+        if not self.client:
+            return True
+        key = f"{self.prefix}flystack:{user_id}:{month}"
+        current = await self.client.get(key)
+        current = int(current) if current else 0
+        if current >= limit:
+            return False
+        await self.client.incr(key)
+        await self.client.expire(key, 86400 * 35)
+        return True  
 
 # Singleton
 redis_client = RedisClient()

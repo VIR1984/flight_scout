@@ -97,11 +97,32 @@ def build_passenger_code(adults: int, children: int = 0, infants: int = 0) -> st
 async def cmd_start(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
+        [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],  # ← НОВАЯ
     ])
     await message.answer(
         "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
         reply_markup=kb
     )
+
+@router.callback_query(F.data == "main_menu")
+async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
+    if state:
+        await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
+        [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],  # ← НОВАЯ
+    ])
+    try:
+        await callback.message.edit_text(
+            "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
+            reply_markup=kb
+        )
+    except:
+        await callback.message.answer(
+            "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
+            reply_markup=kb
+        )
+    await callback.answer()
 
 @router.callback_query(F.data == "main_menu")
 async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):

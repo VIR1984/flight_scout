@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import os
 import logging
@@ -7,59 +6,66 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+
+# Импорт роутеров
 from handlers.start import router as start_router
+from handlers.flystack_track import router as flystack_router
+from handlers.everywhere_search import router as everywhere_router
+
+# Импорт утилит и сервисов
 from utils.logger import logger
 from utils.redis_client import redis_client
+from utils.cities_loader import load_cities_from_api
 from services.price_watcher import PriceWatcher
 from utils.link_converter import convert_to_partner_link
-from utils.cities_loader import load_cities_from_api  # ← ДОБАВИТЬ
 
-logging.basicConfig(level=logging.DEBUG)
+# Настройка базового логирования
+logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 async def main():
-    # Подключение к Redis
+    # ─── 1. Подключение к Redis ───
     try:
         await redis_client.connect()
     except Exception as e:
-        logger.error(f"Ошибка подключения к Redis: {e}")
-        logger.info("Продолжаю работу без кэширования...")
+        logger.error(f"❌ Ошибка подключения к Redis: {e}")
+        logger.info("⚠️ Продолжаю работу без кэширования...")
     
-    # 🌍 ЗАГРУЗКА ГОРОДОВ (НОВОЕ - ДОБАВИТЬ)
+    # ─── 2. Загрузка базы городов ───
     logger.info("🌍 Инициализация базы городов...")
     await load_cities_from_api()
     
-    # Инициализация бота
+    # ─── 3. Инициализация бота ───
     bot = Bot(
         token=os.getenv("BOT_TOKEN"),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
-    # Инициализация диспетчера с хранилищем для FSM
+    # ─── 4. Инициализация диспетчера ───
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     
-    # Регистрация роутеров
-    dp.include_router(start_router)
+    # ─── 5. Регистрация роутеров ───
+    dp.include_router(start_router)          # Основное меню и пошаговый поиск
+    dp.include_router(flystack_router)       # Информация о рейсе (FlyStack)
+    dp.include_router(everywhere_router)     # Поиск "Везде"
     
-    # Инициализация наблюдателя за ценами
+    # ─── 6. Запуск фоновых задач ───
     price_watcher = PriceWatcher(bot)
+    watcher_task = asyncio.create_task(price_watcher.start())
     
     logger.info("🚀 Бот запущен!")
     
-    # Запуск наблюдателя в фоне
-    watcher_task = asyncio.create_task(price_watcher.start())
-    
+    # ─── 7. Запуск polling ───
     try:
         await dp.start_polling(bot)
     finally:
-        # Остановка наблюдателя
+        # Остановка при выключении
         price_watcher.running = False
         watcher_task.cancel()
-        
-        # Закрытие соединения с Redis
         await redis_client.close()
-        logger.info("✅ Redis соединение закрыто")
+        await bot.session.close()
+        logger.info("✅ Бот остановлен, соединения закрыты")
 
 if __name__ == "__main__":
     asyncio.run(main())

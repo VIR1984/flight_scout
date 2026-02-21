@@ -2,8 +2,11 @@
 import json
 import asyncio
 import os
+import re
 from typing import Dict, Any, List, Tuple
 from uuid import uuid4
+from aiogram import Router, F
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from services.flight_search import (
     search_flights,
@@ -11,18 +14,24 @@ from services.flight_search import (
     normalize_date,
     format_avia_link_date,
     update_passengers_in_link,
-    # add_marker_to_url,  # ← УДАЛЕНО: больше не используется
     format_duration as format_duration_helper
 )
 from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
-from utils.cities import GLOBAL_HUBS 
+from utils.cities import GLOBAL_HUBS
 from utils.redis_client import redis_client
-from utils.logger import logger  # ← ДОБАВЛЕНО
+from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-        
+# ← ДОБАВЛЕНО: CANCEL_KB для кнопок отмены
+CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+])
+
+# ← ДОБАВЛЕНО: Router для этого модуля
+router = Router()
+
 def format_user_date(date_str: str) -> str:
+    """Форматирует дату ДД.ММ в ДД.ММ.ГГГГ"""
     try:
         d, m = map(int, date_str.split('.'))
         year = 2026
@@ -33,14 +42,18 @@ def format_user_date(date_str: str) -> str:
         return date_str
 
 def build_passenger_desc(code: str) -> str:
+    """Форматирует код пассажиров в читаемое описание"""
     try:
         adults = int(code[0])
         children = int(code[1]) if len(code) > 1 else 0
         infants = int(code[2]) if len(code) > 2 else 0
         parts = []
-        if adults: parts.append(f"{adults} взр.")
-        if children: parts.append(f"{children} реб.")
-        if infants: parts.append(f"{infants} мл.")
+        if adults:
+            parts.append(f"{adults} взр.")
+        if children:
+            parts.append(f"{children} реб.")
+        if infants:
+            parts.append(f"{infants} мл.")
         return ", ".join(parts) if parts else "1 взр."
     except:
         return "1 взр."
@@ -50,27 +63,35 @@ async def search_origin_everywhere(
     depart_date: str,
     flight_type: str = "all"
 ) -> List[Dict]:
+    """Поиск рейсов из всех городов в указанный"""
     origins = GLOBAL_HUBS[:5]
     all_flights = []
+    
     for orig in origins:
         if orig == dest_iata:
             continue
+        
         flights = await search_flights(
             orig,
             dest_iata,
             normalize_date(depart_date),
             None
         )
+        
         # Фильтрация по типу рейса
         if flight_type == "direct":
             flights = [f for f in flights if f.get("transfers", 999) == 0]
         elif flight_type == "transfer":
             flights = [f for f in flights if f.get("transfers", 0) > 0]
+        
         flights = [f for f in flights if f.get("destination") == dest_iata]
+        
         for f in flights:
             f["origin"] = orig
+        
         all_flights.extend(flights)
         await asyncio.sleep(0.5)
+    
     return all_flights
 
 async def search_destination_everywhere(
@@ -78,26 +99,33 @@ async def search_destination_everywhere(
     depart_date: str,
     flight_type: str = "all"
 ) -> List[Dict]:
+    """Поиск рейсов из указанного города во все направления"""
     destinations = GLOBAL_HUBS[:5]
     all_flights = []
+    
     for dest in destinations:
         if dest == origin_iata:
             continue
+        
         flights = await search_flights(
             origin_iata,
             dest,
             normalize_date(depart_date),
             None
         )
+        
         # Фильтрация по типу рейса
         if flight_type == "direct":
             flights = [f for f in flights if f.get("transfers", 999) == 0]
         elif flight_type == "transfer":
             flights = [f for f in flights if f.get("transfers", 0) > 0]
+        
         for f in flights:
             f["destination"] = dest
+        
         all_flights.extend(flights)
         await asyncio.sleep(0.5)
+    
     return all_flights
 
 async def process_everywhere_search(
@@ -106,10 +134,10 @@ async def process_everywhere_search(
     all_flights: List[Dict],
     search_type: str
 ) -> bool:
+    """Обработка результатов поиска 'Везде'"""
     if not all_flights:
         return False
-        
-        
+    
     cache_id = str(uuid4())
     display_depart = format_user_date(data["depart_date"])
     is_origin_everywhere = (search_type == "origin_everywhere")
@@ -134,12 +162,8 @@ async def process_everywhere_search(
     price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
     origin_iata = cheapest_flight["origin"]
     dest_iata = cheapest_flight.get("destination")
-    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
-    
-    # Форматирование времени
-    departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
-    arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
+    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
+    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
     
     # Форматирование продолжительности полета
     duration_minutes = cheapest_flight.get("duration", 0)
@@ -214,9 +238,8 @@ async def process_everywhere_search(
             if num_adults > 1:
                 text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-            
-        text += f"\n👥 <b>Пассажиры:</b> {data['passenger_desc']}"
         
+        text += f"\n👥 <b>Пассажиры:</b> {data['passenger_desc']}"
     else:
         # Поиск из всех городов в конкретное направление
         header = f"✅ <b>Самый дешёвый вариант в {data['dest_name']}</b>"
@@ -243,15 +266,15 @@ async def process_everywhere_search(
             if num_adults > 1:
                 text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-            
+        
         text += f"\n👥 <b>Пассажиры:</b> {data['passenger_desc']}"
     
     text += f"\n\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     
-    
-     # === ФОРМИРОВАНИЕ ЧИСТЫХ ССЫЛОК (БЕЗ МАРКЕРА) ===
+    # === ФОРМИРОВАНИЕ ССЫЛОК ===
     booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
     passengers_code = data.get("passenger_code", "1")
+    
     if booking_link:
         booking_link = update_passengers_in_link(booking_link, passengers_code)
         if not booking_link.startswith(('http://', 'https://')):
@@ -270,6 +293,7 @@ async def process_everywhere_search(
     
     booking_link = await convert_to_partner_link(booking_link)
     
+    # === КНОПКИ ===
     kb_buttons = []
     kb_buttons.append([
         InlineKeyboardButton(
@@ -282,7 +306,6 @@ async def process_everywhere_search(
     if is_dest_everywhere:
         d1 = format_avia_link_date(data["depart_date"])
         map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}{d1}{passengers_code}"
-        # === ПРЕОБРАЗУЕМ КАРТУ НАПРАВЛЕНИЙ ЧЕРЕЗ API ===
         map_link = await convert_to_partner_link(map_link)
         kb_buttons.append([
             InlineKeyboardButton(text="🌍 Все направления", url=map_link)
@@ -310,29 +333,34 @@ async def handle_everywhere_search_manual(
     is_origin_everywhere: bool,
     is_dest_everywhere: bool
 ) -> bool:
+    """Обработка ручного ввода с 'Везде'"""
     orig_iata = None
     dest_iata = None
+    
     if is_origin_everywhere:
         origins = GLOBAL_HUBS[:5]
         origin_name = "Везде"
     else:
+        # ← ИСПОЛЬЗУЕМ get_iata() + fallback
         orig_iata = get_iata(origin_city.strip()) or CITY_TO_IATA.get(_normalize_name(origin_city.strip()))
         if not orig_iata:
             await message.answer(f"Не знаю город вылета: {origin_city.strip()}", reply_markup=CANCEL_KB)
             return False
         origins = [orig_iata]
-        # ← Используем get_city_name() + fallback
+        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
         origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin_city.strip().capitalize())
     
     if is_dest_everywhere:
         destinations = GLOBAL_HUBS[:5]
         dest_name = "Везде"
     else:
+        # ← ИСПОЛЬЗУЕМ get_iata() + fallback
         dest_iata = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
         if not dest_iata:
             await message.answer(f"Не знаю город прилёта: {dest_city.strip()}", reply_markup=CANCEL_KB)
             return False
         destinations = [dest_iata]
+        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
         dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
     
     passenger_desc = build_passenger_desc(passengers_code)
@@ -340,21 +368,26 @@ async def handle_everywhere_search_manual(
     
     await message.answer("Ищу билеты (включая с пересадками)...")
     all_flights = []
+    
     for orig in origins:
         for dest in destinations:
             if orig == dest:
                 continue
+            
             flights = await search_flights(
                 orig,
                 dest,
                 normalize_date(depart_date),
                 None
             )
+            
             if not is_dest_everywhere and dest == dest_iata:
                 flights = [f for f in flights if f.get("destination") == dest]
+            
             for f in flights:
                 f["origin"] = orig
                 f["destination"] = dest
+            
             all_flights.extend(flights)
             await asyncio.sleep(0.5)
     
@@ -383,10 +416,6 @@ async def handle_everywhere_search_manual(
     dest_iata = cheapest_flight.get("destination")
     origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
     dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
-    
-    # Форматирование времени
-    departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"
-    arrival_time = cheapest_flight.get("return_at", "").split('T')[1][:5] if cheapest_flight.get("return_at") else "??:??"
     
     # Форматирование продолжительности полета
     duration_minutes = cheapest_flight.get("duration", 0)
@@ -435,7 +464,6 @@ async def handle_everywhere_search_manual(
     
     # Формирование текста в зависимости от типа поиска
     if is_dest_everywhere:
-        # Поиск из конкретного города во все направления
         header = f"✅ <b>Самый дешёвый вариант из {origin_name}</b>"
         route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
         text = (
@@ -449,7 +477,6 @@ async def handle_everywhere_search_manual(
         if airline_display:
             text += f"✈️ {flight_display}\n"
         
-        # Цена
         if price != "?":
             text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
             if num_adults > 1:
@@ -460,11 +487,9 @@ async def handle_everywhere_search_manual(
             if num_adults > 1:
                 text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-            
-        text += f"\n👥 <b>Пассажиры:</b> {passenger_desc}"
         
+        text += f"\n👥 <b>Пассажиры:</b> {passenger_desc}"
     else:
-        # Поиск из всех городов в конкретное направление
         header = f"✅ <b>Самый дешёвый вариант в {dest_name}</b>"
         route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
         text = (
@@ -478,7 +503,6 @@ async def handle_everywhere_search_manual(
         if airline_display:
             text += f"✈️ {flight_display}\n"
         
-        # Цена
         if price != "?":
             text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
             if num_adults > 1:
@@ -489,13 +513,14 @@ async def handle_everywhere_search_manual(
             if num_adults > 1:
                 text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
             text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-            
+        
         text += f"\n👥 <b>Пассажиры:</b> {passenger_desc}"
     
     text += f"\n\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
     
     # === ОБНОВЛЕНИЕ ПАССАЖИРОВ В ССЫЛКЕ ===
     booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
+    
     if booking_link:
         booking_link = update_passengers_in_link(booking_link, passengers_code)
         if not booking_link.startswith(('http://', 'https://')):
@@ -514,6 +539,7 @@ async def handle_everywhere_search_manual(
     
     booking_link = await convert_to_partner_link(booking_link)
     
+    # === КНОПКИ ===
     kb_buttons = []
     kb_buttons.append([
         InlineKeyboardButton(
@@ -526,12 +552,10 @@ async def handle_everywhere_search_manual(
     if is_dest_everywhere:
         d1 = format_avia_link_date(depart_date)
         map_link = f"https://www.aviasales.ru/map?params={origins[0]}{d1}{passengers_code}"
-        # === ПРЕОБРАЗУЕМ КАРТУ НАПРАВЛЕНИЙ ЧЕРЕЗ API ===
         map_link = await convert_to_partner_link(map_link)
         kb_buttons.append([
             InlineKeyboardButton(text="🌍 Все направления", url=map_link)
         ])
-    
     
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
