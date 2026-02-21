@@ -15,7 +15,14 @@ from services.flight_search import (
     # add_marker_to_url,  # ← УДАЛЕНО: больше не используется
     format_duration as format_duration_helper
 )
-from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
+from utils.cities_loader import (
+    get_iata, 
+    get_city_name, 
+    CITY_TO_IATA,      
+    IATA_TO_CITY,      
+    GLOBAL_HUBS,
+    _normalize_name    
+)
 from utils.redis_client import redis_client
 from utils.logger import logger  # ← ДОБАВЛЕНО
 from utils.link_converter import convert_to_partner_link
@@ -316,23 +323,24 @@ async def handle_everywhere_search_manual(
         origins = GLOBAL_HUBS[:5]
         origin_name = "Везде"
     else:
-        orig_iata = CITY_TO_IATA.get(origin_city.strip())
+        orig_iata = get_iata(origin_city.strip()) or CITY_TO_IATA.get(_normalize_name(origin_city.strip()))
         if not orig_iata:
             await message.answer(f"Не знаю город вылета: {origin_city.strip()}", reply_markup=CANCEL_KB)
             return False
         origins = [orig_iata]
-        origin_name = IATA_TO_CITY.get(orig_iata, origin_city.strip().capitalize())
+        # ← Используем get_city_name() + fallback
+        origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin_city.strip().capitalize())
     
     if is_dest_everywhere:
         destinations = GLOBAL_HUBS[:5]
         dest_name = "Везде"
     else:
-        dest_iata = CITY_TO_IATA.get(dest_city.strip())
+        dest_iata = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
         if not dest_iata:
             await message.answer(f"Не знаю город прилёта: {dest_city.strip()}", reply_markup=CANCEL_KB)
             return False
         destinations = [dest_iata]
-        dest_name = IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
+        dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
     
     passenger_desc = build_passenger_desc(passengers_code)
     display_depart = format_user_date(depart_date)
@@ -380,8 +388,8 @@ async def handle_everywhere_search_manual(
     price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
     origin_iata = cheapest_flight["origin"]
     dest_iata = cheapest_flight.get("destination")
-    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
+    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
+    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
     
     # Форматирование времени
     departure_time = cheapest_flight.get("departure_at", "").split('T')[1][:5] if cheapest_flight.get("departure_at") else "??:??"

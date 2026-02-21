@@ -11,7 +11,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, update_passengers_in_link, format_passenger_desc
 from services.transfer_search import search_transfers, generate_transfer_link
-from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
+from utils.cities_loader import (
+    get_iata, 
+    get_city_name, 
+    CITY_TO_IATA, 
+    IATA_TO_CITY, 
+    GLOBAL_HUBS,
+    _normalize_name  
+)
 from utils.redis_client import redis_client
 from handlers.everywhere_search import (
     search_origin_everywhere,
@@ -149,21 +156,25 @@ async def process_route(message: Message, state: FSMContext):
         return
 
     if origin != "везде":
-        orig_iata = CITY_TO_IATA.get(origin)
+        # ← ИСПОЛЬЗУЕМ get_iata() + fallback на старый словарь
+        orig_iata = get_iata(origin) or CITY_TO_IATA.get(_normalize_name(origin))
         if not orig_iata:
             await message.answer(f"❌ Не знаю город отправления: {origin}\nПопробуйте ещё раз.", reply_markup=CANCEL_KB)
             return
-        origin_name = IATA_TO_CITY.get(orig_iata, origin.capitalize())
+        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
+        origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin.capitalize())
     else:
         orig_iata = None
         origin_name = "Везде"
 
     if dest != "везде":
-        dest_iata = CITY_TO_IATA.get(dest)
+        # ← ИСПОЛЬЗУЕМ get_iata() + fallback на старый словарь
+        dest_iata = get_iata(dest) or CITY_TO_IATA.get(_normalize_name(dest))
         if not dest_iata:
             await message.answer(f"❌ Не знаю город прибытия: {dest}\nПопробуйте ещё раз.", reply_markup=CANCEL_KB)
             return
-        dest_name = IATA_TO_CITY.get(dest_iata, dest.capitalize())
+        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
+        dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest.capitalize())
     else:
         dest_iata = None
         dest_name = "Везде"
@@ -811,8 +822,10 @@ async def handle_flight_request(message: Message):
         return
 
     # ← ПРОВЕРКА: Одинаковые города (ручной ввод)
-    orig_iata_check = CITY_TO_IATA.get(origin_city.strip())
-    dest_iata_check = CITY_TO_IATA.get(dest_city.strip())
+    # ← ИСПОЛЬЗУЕМ get_iata() + fallback
+    orig_iata_check = get_iata(origin_city.strip()) or CITY_TO_IATA.get(_normalize_name(origin_city.strip()))
+    dest_iata_check = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
+    
     if orig_iata_check and dest_iata_check and orig_iata_check == dest_iata_check:
         logger.info(f"[DEBUG VALIDATION] Ручной ввод: одинаковые города {orig_iata_check}")
         print(f"[DEBUG VALIDATION] Ручной ввод: одинаковые города {orig_iata_check}")
@@ -852,20 +865,24 @@ async def handle_flight_request(message: Message):
         if success:
             return
 
-    dest_iata = CITY_TO_IATA.get(dest_city.strip())
+    # ← ИСПОЛЬЗУЕМ get_iata() + fallback для dest
+    dest_iata = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
     if not dest_iata:
         await message.answer(f"Не знаю город прилёта: {dest_city.strip()}", reply_markup=CANCEL_KB)
         return
 
     origin_clean = origin_city.strip()
-    orig_iata = CITY_TO_IATA.get(origin_clean)
+    # ← ИСПОЛЬЗУЕМ get_iata() + fallback для origin
+    orig_iata = get_iata(origin_clean) or CITY_TO_IATA.get(_normalize_name(origin_clean))
     if not orig_iata:
         await message.answer(f"Не знаю город вылета: {origin_clean}", reply_markup=CANCEL_KB)
         return
 
     origins = [orig_iata]
-    origin_name = IATA_TO_CITY.get(orig_iata, origin_clean.capitalize())
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
+    # ← ИСПОЛЬЗУЕМ get_city_name() + fallback для названий
+    origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin_clean.capitalize())
+    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
+    
     passengers_code = parse_passengers((passengers_part or "").strip())
     passenger_desc = build_passenger_desc(passengers_code)
     display_depart = format_user_date(depart_date)
@@ -950,8 +967,10 @@ async def handle_flight_request(message: Message):
     price = top_flight.get("value") or top_flight.get("price") or "?"
     origin_iata = top_flight["origin"]
     dest_iata = dest_iata
-    origin_name = IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = IATA_TO_CITY.get(dest_iata, dest_iata)
+    # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
+    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
+    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
+    
 
     def format_datetime(dt_str):
         if not dt_str:
