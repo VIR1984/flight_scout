@@ -46,8 +46,10 @@ async def main():
     dp = Dispatcher(storage=storage)
     
     # ─── 5. Регистрация роутеров ───
-    dp.include_router(start_router)          # Основное меню и пошаговый поиск
-    dp.include_router(flystack_router)       # Информация о рейсе (FlyStack)
+    dp.include_router(start_router)        
+    logger.info("✅ Зарегистрирован роутер: start_router")
+    dp.include_router(flystack_router)       
+    logger.info("✅ Зарегистрирован роутер: flystack_router")
     dp.include_router(everywhere_router)     # Поиск "Везде"
     
     # ─── 6. Запуск фоновых задач ───
@@ -55,6 +57,7 @@ async def main():
     watcher_task = asyncio.create_task(price_watcher.start())
     
     logger.info("🚀 Бот запущен!")
+    logger.info(f"📋 Зарегистрированные роутеры: start_router, flystack_router")
     
     # ─── 7. Запуск polling ───
     try:

@@ -303,7 +303,7 @@ async def process_return_date(message: Message, state: FSMContext):
     if norm_return <= norm_depart:
         await message.answer(
             "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
-            "Проверьте введенные даты.",
+            "Укажите правильную дату возврата.",
             reply_markup=CANCEL_KB
         )
         return
@@ -387,7 +387,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
         kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
-            f"👶 Сколько детей (от 2-11 лет)?\n"
+            f"👶 Сколько детей (от 2 до 11 лет)?\n"
             f"Если у вас младенцы, укажете дальше",
             parse_mode="HTML",
             reply_markup=kb
@@ -419,7 +419,7 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
         kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         await callback.message.edit_text(
-            f"🍼 Сколько младенцев? (младше 2-х лет без места)",
+            f"🍼 Сколько младенцев? (младше 2 лет без места)",
             parse_mode="HTML",
             reply_markup=kb
         )
@@ -755,7 +755,7 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     kb_buttons = []
     if booking_link:
         kb_buttons.append([
-            InlineKeyboardButton(text=f"✈️ Забронировать за {price} ₽", url=booking_link)
+            InlineKeyboardButton(text=f"✈️ Посмотреть детали за {price} ₽", url=booking_link)
         ])
     kb_buttons.append([
         InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)
@@ -860,7 +860,7 @@ async def handle_flight_request(message: Message):
         if norm_return_manual <= norm_depart_manual:
             await message.answer(
                 "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
-                "Проверьте введенные даты.",
+                "Укажите правильную дату возврата.",
                 reply_markup=CANCEL_KB
             )
             return
@@ -1108,7 +1108,7 @@ async def handle_flight_request(message: Message):
     kb_buttons = []
     if booking_link:
         kb_buttons.append([
-            InlineKeyboardButton(text=f"✈️ Забронировать за {price} ₽", url=booking_link)
+            InlineKeyboardButton(text=f"✈️ Посмотреть детали за {price} ₽", url=booking_link)
         ])
     kb_buttons.append([
         InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)
@@ -1376,14 +1376,19 @@ async def handle_show_transfer(callback: CallbackQuery):
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
+    logger.info(f"🔍 [Start] Получено сообщение от {message.from_user.id}: '{message.text}'")
+    logger.debug(f"📝 [Start] Текущее состояние FSM: {current_state}")
     if current_state:
+        logger.warning(f"⚠️ [Start] Пользователь в состоянии {current_state}, отправляем предупреждение")
         await message.answer(
             "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
             reply_markup=CANCEL_KB
         )
         return
     if message.text.startswith("/"):
+        logger.debug(f"📝 [Start] Команда, пропускаем")
         return
+    logger.info(f"✅ [Start] Передаём в handle_flight_request")
     await handle_flight_request(message)
 
 @router.callback_query(F.data.startswith("unwatch_"))
