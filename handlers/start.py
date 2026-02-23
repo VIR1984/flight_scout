@@ -45,6 +45,7 @@ class FlightSearch(StatesGroup):
     return_date = State()
     flight_type = State()
     adults = State()
+    has_children = State()
     children = State()
     infants = State()
     confirm = State()
@@ -423,11 +424,49 @@ async def process_adults(message: Message, state: FSMContext):
         await state.update_data(children=0, infants=0, passenger_desc="9 взр.", passenger_code="9")
         await show_summary(message, state)
     else:
-        await ask_children(message, state)
+        await ask_has_children(message, state)
 
 
 @router.message(FlightSearch.adults, F.text == "В начало")
 async def adults_to_menu(message: Message, state: FSMContext):
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
+        [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],
+    ])
+    await message.answer("👋 Привет! Я найду вам дешёвые авиабилеты.\n", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите действие:", reply_markup=kb)
+
+
+async def ask_has_children(message: Message, state: FSMContext):
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Да"), KeyboardButton(text="Нет")],
+            [KeyboardButton(text="В начало")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await message.answer("С вами летят дети?", parse_mode="HTML", reply_markup=kb)
+    await state.set_state(FlightSearch.has_children)
+
+
+@router.message(FlightSearch.has_children, F.text.in_(["Да", "Нет"]))
+async def process_has_children(message: Message, state: FSMContext):
+    has_children = message.text == "Да"
+    if has_children:
+        await ask_children(message, state)
+    else:
+        data = await state.get_data()
+        adults = data["adults"]
+        await state.update_data(children=0, infants=0)
+        pd = f"{adults} взр."
+        await state.update_data(passenger_desc=pd, passenger_code=str(adults))
+        await show_summary(message, state)
+
+
+@router.message(FlightSearch.has_children, F.text == "В начало")
+async def has_children_to_menu(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
@@ -464,7 +503,6 @@ async def process_children(message: Message, state: FSMContext):
     children = int(message.text)
     if children < 0 or children > max_children:
         return
-    children = int(message.text)
     await state.update_data(children=children)
     remaining = 9 - adults - children
     if remaining == 0:
