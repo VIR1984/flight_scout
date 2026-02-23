@@ -78,24 +78,24 @@ def build_choices_summary(data: dict) -> str:
     """Строит пошаговую сводку выбора пользователя в правильном порядке."""
     lines = []
     n = 1
-    lines.append(f"{n}️⃣ <b>Маршрут:</b> {data.get('origin_name', '')} → {data.get('dest_name', '')}")
+    lines.append(f"{n}. Маршрут: {data.get('origin_name', '')} → {data.get('dest_name', '')}")
     n += 1
-    lines.append(f"{n}️⃣ <b>Дата вылета:</b> {data.get('depart_date', '')}")
+    lines.append(f"{n}. Дата вылета: {data.get('depart_date', '')}")
     n += 1
 
     need_return = data.get("need_return")
     if need_return is not None:
         if need_return and data.get("return_date"):
-            lines.append(f"{n}️⃣ <b>Обратный билет:</b> да, {data['return_date']}")
+            lines.append(f"{n}. Обратный билет: да, {data['return_date']}")
         elif need_return:
-            lines.append(f"{n}️⃣ <b>Обратный билет:</b> да")
+            lines.append(f"{n}. Обратный билет: да")
         else:
-            lines.append(f"{n}️⃣ <b>Обратный билет:</b> нет")
+            lines.append(f"{n}. Обратный билет: нет")
         n += 1
 
     if "flight_type" in data:
         ft_map = {"direct": "прямые рейсы", "transfer": "рейсы с пересадками", "all": "все варианты"}
-        lines.append(f"{n}️⃣ <b>Тип рейса:</b> {ft_map.get(data['flight_type'], 'все варианты')}")
+        lines.append(f"{n}. Тип рейса: {ft_map.get(data['flight_type'], 'все варианты')}")
         n += 1
 
     if "passenger_desc" in data or "adults" in data:
@@ -103,7 +103,7 @@ def build_choices_summary(data: dict) -> str:
         if not pd:
             a, c, i = data.get("adults", 1), data.get("children", 0), data.get("infants", 0)
             pd = f"{a} взр." + (f", {c} дет." if c else "") + (f", {i} мл." if i else "")
-        lines.append(f"{n}️⃣ <b>Пассажиры:</b> {pd}")
+        lines.append(f"{n}. Пассажиры: {pd}")
 
     return "\n".join(lines)
 
@@ -244,12 +244,9 @@ async def process_route(message: Message, state: FSMContext):
         origin_name=origin_name,
         dest_name=dest_name
     )
-    data = await state.get_data()
-    summary = build_choices_summary(data)
     await message.answer(
-        f"<b>Ваш выбор:</b>\n{summary}\n\n"
-        "📅 Введите дату вылета в формате <code>ДД.ММ</code>\n"
-        "📌 Пример: 10.03",
+        "Введите дату вылета в формате <code>ДД.ММ</code>\n"
+        "Пример: 10.03",
         parse_mode="HTML",
         reply_markup=CANCEL_KB
     )
@@ -276,36 +273,30 @@ async def process_depart_date(message: Message, state: FSMContext):
         await ask_flight_type(message, state)
         return
 
-    data = await state.get_data()
-    summary = build_choices_summary(data)
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="✅ Да, нужен"), KeyboardButton(text="❌ Нет, спасибо")],
-            [KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="Да, нужен"), KeyboardButton(text="Нет, спасибо")],
+            [KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
     await message.answer(
-        f"<b>Ваш выбор:</b>\n{summary}\n\n"
-        "🔄 Нужен ли обратный билет?",
+        "Нужен ли обратный билет?",
         parse_mode="HTML",
         reply_markup=kb
     )
     await state.set_state(FlightSearch.need_return)
 
 
-@router.message(FlightSearch.need_return, F.text.in_(["✅ Да, нужен", "❌ Нет, спасибо"]))
+@router.message(FlightSearch.need_return, F.text.in_(["Да, нужен", "Нет, спасибо"]))
 async def process_need_return(message: Message, state: FSMContext):
-    need_return = message.text == "✅ Да, нужен"
+    need_return = message.text == "Да, нужен"
     await state.update_data(need_return=need_return)
-    data = await state.get_data()
-    summary = build_choices_summary(data)
     if need_return:
         await message.answer(
-            f"<b>Ваш выбор:</b>\n{summary}\n\n"
-            "📅 Введите дату возврата в формате <code>ДД.ММ</code>\n"
-            "📌 Пример: 15.03",
+            "Введите дату возврата в формате <code>ДД.ММ</code>\n"
+            "Пример: 15.03",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
@@ -317,7 +308,7 @@ async def process_need_return(message: Message, state: FSMContext):
         await ask_flight_type(message, state)
 
 
-@router.message(FlightSearch.need_return, F.text == "↩️ В начало")
+@router.message(FlightSearch.need_return, F.text == "В начало")
 async def need_return_to_menu(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -360,40 +351,37 @@ async def process_return_date(message: Message, state: FSMContext):
     await ask_flight_type(message, state)
 
 def _flight_type_text_to_code(text: str) -> str:
-    if text == "✈️ Прямые":
+    if text == "Прямые":
         return "direct"
-    if text == "🔄 С пересадкой":
+    if text == "С пересадкой":
         return "transfer"
-    if text == "📊 Все варианты":
+    if text == "Все варианты":
         return "all"
     return "all"
 
 
 async def ask_flight_type(message: Message, state: FSMContext):
-    data = await state.get_data()
-    summary = build_choices_summary(data)
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="✈️ Прямые"), KeyboardButton(text="🔄 С пересадкой")],
-            [KeyboardButton(text="📊 Все варианты")],
-            [KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="Прямые"), KeyboardButton(text="С пересадкой")],
+            [KeyboardButton(text="Все варианты")],
+            [KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
-    text = f"<b>Ваш выбор:</b>\n{summary}\n\n✈️ Какие рейсы показывать?\n"
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await message.answer("Какие рейсы показывать?", parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.flight_type)
 
 
-@router.message(FlightSearch.flight_type, F.text.in_(["✈️ Прямые", "🔄 С пересадкой", "📊 Все варианты"]))
+@router.message(FlightSearch.flight_type, F.text.in_(["Прямые", "С пересадкой", "Все варианты"]))
 async def process_flight_type(message: Message, state: FSMContext):
     flight_type = _flight_type_text_to_code(message.text)
     await state.update_data(flight_type=flight_type)
     await ask_adults(message, state)
 
 
-@router.message(FlightSearch.flight_type, F.text == "↩️ В начало")
+@router.message(FlightSearch.flight_type, F.text == "В начало")
 async def flight_type_to_menu(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -404,8 +392,6 @@ async def flight_type_to_menu(message: Message, state: FSMContext):
     await message.answer("Выберите действие:", reply_markup=kb)
 
 async def ask_adults(message: Message, state: FSMContext):
-    data = await state.get_data()
-    summary = build_choices_summary(data)
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -420,13 +406,12 @@ async def ask_adults(message: Message, state: FSMContext):
                 KeyboardButton(text="7"),
                 KeyboardButton(text="8"),
             ],
-            [KeyboardButton(text="9"), KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="9"), KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
-    text = f"<b>Ваш выбор:</b>\n{summary}\n\n👥 Сколько взрослых пассажиров (от 12 лет)?\n"
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await message.answer("Сколько взрослых пассажиров (от 12 лет)?", parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.adults)
 
 
@@ -441,7 +426,7 @@ async def process_adults(message: Message, state: FSMContext):
         await ask_children(message, state)
 
 
-@router.message(FlightSearch.adults, F.text == "↩️ В начало")
+@router.message(FlightSearch.adults, F.text == "В начало")
 async def adults_to_menu(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -454,20 +439,17 @@ async def adults_to_menu(message: Message, state: FSMContext):
 
 async def ask_children(message: Message, state: FSMContext):
     data = await state.get_data()
-    summary = build_choices_summary(data)
     adults = data["adults"]
     max_children = 9 - adults
     row = [KeyboardButton(text=str(i)) for i in range(0, max_children + 1)]
     kb = ReplyKeyboardMarkup(
-        keyboard=[row, [KeyboardButton(text="↩️ В начало")]],
+        keyboard=[row, [KeyboardButton(text="В начало")]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
     await message.answer(
-        f"<b>Ваш выбор:</b>\n{summary}\n\n"
-        f"👥 Взрослых: {adults}\n\n"
-        f"👶 Сколько детей (от 2 до 11 лет)?\n"
-        f"<i>Если у вас младенцы, укажете дальше</i>",
+        "Сколько детей (от 2 до 11 лет)?\n"
+        "Если у вас младенцы, укажете дальше.",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -494,7 +476,7 @@ async def process_children(message: Message, state: FSMContext):
         await ask_infants(message, state)
 
 
-@router.message(FlightSearch.children, F.text == "↩️ В начало")
+@router.message(FlightSearch.children, F.text == "В начало")
 async def children_to_menu(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -507,21 +489,18 @@ async def children_to_menu(message: Message, state: FSMContext):
 
 async def ask_infants(message: Message, state: FSMContext):
     data = await state.get_data()
-    summary = build_choices_summary(data)
     adults = data["adults"]
     children = data.get("children", 0)
     remaining = 9 - adults - children
     max_infants = min(adults, remaining)
     row = [KeyboardButton(text=str(i)) for i in range(0, max_infants + 1)]
     kb = ReplyKeyboardMarkup(
-        keyboard=[row, [KeyboardButton(text="↩️ В начало")]],
+        keyboard=[row, [KeyboardButton(text="В начало")]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
     await message.answer(
-        f"<b>Ваш выбор:</b>\n{summary}\n\n"
-        f"👥 Взрослых: {adults}, детей: {children}\n\n"
-        f"🍼 Сколько младенцев? (младше 2 лет без места)",
+        "Сколько младенцев? (младше 2 лет без места)",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -542,7 +521,7 @@ async def process_infants(message: Message, state: FSMContext):
     await show_summary(message, state)
 
 
-@router.message(FlightSearch.infants, F.text == "↩️ В начало")
+@router.message(FlightSearch.infants, F.text == "В начало")
 async def infants_to_menu(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -578,7 +557,7 @@ async def show_summary(message, state: FSMContext):
 
     summary_steps = build_choices_summary(data)
     summary = (
-        "📋 <b>Проверьте даты и данные</b>\n\n"
+        "Проверьте даты и данные:\n\n"
         f"{summary_steps}"
     )
     
@@ -586,12 +565,12 @@ async def show_summary(message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
         [
-            InlineKeyboardButton(text="📍 Маршрут", callback_data="edit_route"),
-            InlineKeyboardButton(text="📅 Даты", callback_data="edit_dates")
+            InlineKeyboardButton(text="Маршрут", callback_data="edit_route"),
+            InlineKeyboardButton(text="Даты", callback_data="edit_dates")
         ],
         [
-            InlineKeyboardButton(text="✈️ Тип рейса", callback_data="edit_flight_type"),
-            InlineKeyboardButton(text="🧍 Пассажиры", callback_data="edit_passengers")
+            InlineKeyboardButton(text="Тип рейса", callback_data="edit_flight_type"),
+            InlineKeyboardButton(text="Пассажиры", callback_data="edit_passengers")
         ],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
@@ -605,14 +584,14 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
     step = callback.data.split("_")[1]
     if step == "route":
         await callback.message.edit_text(
-            "📍 Введите маршрут: `Город - Город`",
+            "Введите маршрут: Город - Город",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         await state.set_state(FlightSearch.route)
     elif step == "dates":
         await callback.message.edit_text(
-            "📅 Введите дату вылета: `ДД.ММ`",
+            "Введите дату вылета: ДД.ММ",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
