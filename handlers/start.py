@@ -1514,8 +1514,11 @@ async def handle_show_transfer(callback: CallbackQuery):
 async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
     
-    # Проверяем ТОЛЬКО состояния из FlightSearch
-    if current_state and current_state.startswith("FlightSearch"):
+    # ← ИГНОРИРУЕМ СОСТОЯНИЯ ИЗ FLYSTACK
+    if current_state and current_state.startswith("FlyStackTrack"):
+        return  # Пропускаем, пусть обрабатывает flystack_track.py
+    
+    if current_state:
         await message.answer(
             "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
             reply_markup=CANCEL_KB
