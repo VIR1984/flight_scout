@@ -610,14 +610,6 @@ async def show_summary(message, state: FSMContext):
     # Клавиатура подтверждения
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
-        [
-            InlineKeyboardButton(text="Маршрут", callback_data="edit_route"),
-            InlineKeyboardButton(text="Даты", callback_data="edit_dates")
-        ],
-        [
-            InlineKeyboardButton(text="Тип рейса", callback_data="edit_flight_type"),
-            InlineKeyboardButton(text="Пассажиры", callback_data="edit_passengers")
-        ],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
 

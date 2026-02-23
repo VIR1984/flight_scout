@@ -3,7 +3,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import datetime
+from datetime import datetime, date
 import re
 import os
 from services.flystack_client import flystack_client, format_flight_details
@@ -12,6 +12,21 @@ from utils.cities import IATA_TO_CITY
 from utils.logger import logger
 
 router = Router()
+
+def convert_date_to_api_format(date_str: str) -> str:
+    """Конвертирует дату из формата ДД.ММ в YYYY-MM-DD для FlyStack API.
+    Год подставляется текущий или следующий, если дата уже прошла.
+    """
+    try:
+        day, month = map(int, date_str.split("."))
+        today = date.today()
+        year = today.year
+        candidate = date(year, month, day)
+        if candidate < today:
+            year += 1
+        return date(year, month, day).strftime("%Y-%m-%d")
+    except Exception:
+        return date_str
 
 class FlyStackTrack(StatesGroup):
     flight_number = State()
@@ -117,7 +132,8 @@ async def process_flight_number(message: Message, state: FSMContext):
             break
 
     if not airline or not flight_num:
-        match = re.match(r'^([A-Z]{2})\s*(\d{1,4})$', text)
+        # Поддерживаем форматы: SU1136, SU 1136, SU-1136
+        match = re.match(r'^([A-Z]{2})\s*[-]?\s*(\d{1,4})$', text)
         if match:
             airline = match.group(1)
             flight_num = match.group(2)
@@ -224,11 +240,15 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("⏳ Загружаем информацию о рейсе...")
     logger.info(f"🔍 [FlyStack] Запрос к API: {data['airline']}{data['flight_number']} на {data['depart_date']}")
 
+    # Конвертируем дату ДД.ММ → YYYY-MM-DD для API
+    api_date = convert_date_to_api_format(data["depart_date"])
+    logger.info(f"📅 [FlyStack] Дата для API: {api_date}")
+
     # Запрашиваем детали у FlyStack
     details = await flystack_client.get_flight_details(
         airline=data["airline"],
         flight_number=data["flight_number"],
-        departure_date=data["depart_date"]
+        departure_date=api_date
     )
     
     logger.debug(f"📝 [FlyStack] Ответ от API: {details}")

@@ -47,11 +47,16 @@ class FlyStackClient:
         flight_number: str,
         departure_date: str
     ) -> Optional[Dict[str, Any]]:
-        """Получить детальную информацию о рейсе"""
+        """Получить детальную информацию о рейсе.
+        
+        FlyStack API принимает:
+          - flight_iata: IATA-код рейса, например "SU1136"
+          - date: дата в формате YYYY-MM-DD
+        """
+        flight_iata = f"{airline}{flight_number}"
         return await self._request("flight", {
-            "airline": airline,
-            "flight_number": flight_number,
-            "departure_date": departure_date
+            "flight_iata": flight_iata,
+            "date": departure_date  # должна быть в формате YYYY-MM-DD
         })
     
     async def search_flights(
