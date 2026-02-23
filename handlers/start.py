@@ -438,48 +438,61 @@ async def show_summary(message, state: FSMContext):
     print(f"[DEBUG process_infants] Текущее состояние после сохранения: {data}")
     adults = data["adults"]
     children = data.get("children", 0)
-    infants = data.get("infants", 0)
     
-     await state.set_state(FlightSearch.confirm)
+    # Логика формирования passenger_code
+    passenger_code = str(adults)
+    if children > 0:
+        passenger_code += str(children)
+    if data.get("infants", 0) > 0:
+        passenger_code += str(data["infants"])
     
-    print(f"[DEBUG] Перед вызовом build_passenger_code: adults={adults}, children={children}, infants={infants}")
-    passenger_code = build_passenger_code(adults, children, infants)
-    print(f"[DEBUG] Получен passenger_code: '{passenger_code}'")
+    # Описание пассажиров для отображения
+    passenger_desc = f"{adults} взр"
+    if children > 0:
+        passenger_desc += f", {children} дет"
+    if data.get("infants", 0) > 0:
+        passenger_desc += f", {data['infants']} мл"
     
-    passenger_desc = format_passenger_desc(passenger_code)
+    # Формируем текст подтверждения
     summary = (
-        "📋 Проверьте данные:\n"
-        f"📍 Маршрут: {data['origin_name']} → {data['dest_name']}\n"
-        f"📅 Вылет: {data['depart_date']}\n"
+        "📋 Проверьте данные: \n"
+        f"📍 Маршрут: {data['origin_name']} → {data['dest_name']} \n"
+        f"📅 Вылет: {data['depart_date']} \n"
     )
-    if data.get("need_return") and data.get("return_date"):
-        summary += f"📅 Возврат: {data['return_date']}\n"
     
-    flight_type = data.get("flight_type", "all")
-    if flight_type == "direct":
-        summary += "✈️ Тип рейса: <b>Прямые</b>\n"
-    elif flight_type == "transfer":
-        summary += "✈️ Тип рейса: <b>С пересадкой</b>\n"
-    else:
-        summary += "✈️ Тип рейса: <b>Все варианты</b>\n"
-
-    summary += f"👥 Пассажиры: <b>{passenger_desc}</b>\n"
-    summary += "🔍 Начать поиск?"
+    # Обратный рейс (если есть)
+    if data.get("need_return", False) and data.get("return_date"):
+        summary += f"↩️ <b>Обратно:</b> {data['return_date']} \n"
     
+    # Тип рейса
+    flight_type_text = {
+        "direct": "прямые рейсы",
+        "transfer": "рейсы с пересадками",
+        "all": "все рейсы"
+    }.get(data.get("flight_type", "all"), "все рейсы")
+    
+    summary += f"✈️ Тип рейса: {flight_type_text} \n"
+    summary += f"🧍 Пассажиры: {passenger_desc}"
+    
+    # Клавиатура подтверждения
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Начать поиск", callback_data="confirm_search")],
-        [InlineKeyboardButton(text="✏️ Изменить маршрут", callback_data="edit_route")],
-        [InlineKeyboardButton(text="✏️ Изменить даты", callback_data="edit_dates")],
-        [InlineKeyboardButton(text="✏️ Изменить тип рейса", callback_data="edit_flight_type")],
-        [InlineKeyboardButton(text="✏️ Изменить пассажиров", callback_data="edit_passengers")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="main_menu")]
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
+        [
+            InlineKeyboardButton(text="📍 Маршрут", callback_data="edit_route"),
+            InlineKeyboardButton(text="📅 Даты", callback_data="edit_dates")
+        ],
+        [
+            InlineKeyboardButton(text="✈️ Тип рейса", callback_data="edit_flight_type"),
+            InlineKeyboardButton(text="🧍 Пассажиры", callback_data="edit_passengers")
+        ],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
+    
     await state.update_data(
         passenger_code=passenger_code,
         passenger_desc=passenger_desc
     )
     print(f"[DEBUG show_summary] После сохранения: passenger_code='{passenger_code}'")
-
     await message.edit_text(summary, parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
 
