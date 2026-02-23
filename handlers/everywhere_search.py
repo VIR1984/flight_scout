@@ -1,11 +1,20 @@
 import logging
 from typing import List, Dict, Optional
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from services.flight_search import search_flights, validate_date, format_avia_link_date
+from services.flight_search import search_flights, format_avia_link_date
 from utils.cities import CITY_TO_IATA, IATA_TO_CITY, GLOBAL_HUBS
 from utils.logger import logger
 from utils.redis_client import redis_client
 from utils.link_converter import convert_to_partner_link
+
+
+def validate_date(date_text: str) -> bool:
+    """Проверяет, что дата в формате ДД.ММ"""
+    try:
+        day, month = map(int, date_text.split('.'))
+        return 1 <= day <= 31 and 1 <= month <= 12
+    except:
+        return False
 
 async def search_origin_everywhere(
     dest_iata: str,

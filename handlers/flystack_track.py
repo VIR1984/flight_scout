@@ -17,6 +17,43 @@ class FlyStackTrack(StatesGroup):
     flight_number = State()
     depart_date = State()
     confirm = State()
+    
+    
+def build_history(data: dict) -> str:
+    """Строит историю выборов в правильном порядке"""
+    history = ""
+    
+    # 1. Маршрут
+    if data.get("origin_name") and data.get("dest_name"):
+        history += f"📍 Маршрут: {data['origin_name']} → {data['dest_name']}\n"
+    
+    # 2. Дата вылета
+    if data.get("depart_date"):
+        history += f"📅 Вылет: {data['depart_date']}\n"
+    
+    # 3. Дата возврата (если есть)
+    if data.get("need_return", False) and data.get("return_date"):
+        history += f"↩️ Возврат: {data['return_date']}\n"
+    
+    # 4. Тип рейса
+    if data.get("flight_type"):
+        flight_type_text = {
+            "direct": "✈️ Прямые рейсы",
+            "transfer": "🔄 С пересадками",
+            "all": "ℹ️ Все рейсы"
+        }.get(data["flight_type"], "Неизвестный тип")
+        history += f"{flight_type_text}\n"
+    
+    # 5. Пассажиры
+    if data.get("adults", 0) > 0:
+        passenger_desc = f"👥 {data['adults']} взр"
+        if data.get("children", 0) > 0:
+            passenger_desc += f", {data['children']} дет"
+        if data.get("infants", 0) > 0:
+            passenger_desc += f", {data['infants']} мл"
+        history += f"{passenger_desc}\n"
+    
+    return history
 
 @router.callback_query(F.data == "track_flight")
 async def start_track_flight(callback: CallbackQuery, state: FSMContext):
