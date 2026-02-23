@@ -59,6 +59,8 @@ async def main():
     logger.info("🚀 Бот запущен!")
     logger.info(f"📋 Зарегистрированные роутеры: start_router, flystack_router")
     
+  
+    
     # ─── 7. Запуск polling ───
     try:
         await dp.start_polling(bot)
