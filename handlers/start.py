@@ -730,7 +730,8 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         origin_iata = origins[0]
         d1 = format_avia_link_date(data["depart_date"])
         d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
-        route = f"{origin_iata}{d1}{destinations[0]}{d2}1"
+        passengers_code = data.get("passenger_code", "1")
+        route = f"{origin_iata}{d1}{destinations[0]}{d2}{passengers_code}"
         clean_link = f"https://www.aviasales.ru/search/{route}"
         partner_link = await convert_to_partner_link(clean_link)
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1082,7 +1083,7 @@ async def handle_flight_request(message: Message):
         origin_iata = origins[0]
         d1 = format_avia_link_date(depart_date)
         d2 = format_avia_link_date(return_date) if return_date else ""
-        clean_link = f"https://www.aviasales.ru/search/{origin_iata}{d1}{dest_iata}{d2}1"
+        clean_link = f"https://www.aviasales.ru/search/{origin_iata}{d1}{dest_iata}{d2}{passengers_code}"
         partner_link = await convert_to_partner_link(clean_link)
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
