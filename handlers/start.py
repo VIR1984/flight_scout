@@ -240,6 +240,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         )
         return
     
+    await message.answer(f"✅ Дата вылета: {message.text}", parse_mode="HTML")
     await state.update_data(depart_date=message.text)
     data = await state.get_data()
     is_origin_everywhere = data["origin"] == "везде"
@@ -266,8 +267,13 @@ async def process_depart_date(message: Message, state: FSMContext):
 async def process_need_return(callback: CallbackQuery, state: FSMContext):
     need_return = callback.data == "need_return_yes"
     await state.update_data(need_return=need_return)
+    
+    # ДОБАВЛЕНО: Отображаем ответ пользователя в чате
+    response_text = "✅ Да, нужен" if need_return else "❌ Нет, спасибо"
+    await callback.message.answer(response_text, parse_mode="HTML")
+    
     if need_return:
-        await callback.message.edit_text(
+        await callback.message.answer(
             "📅 Введите дату возврата в формате `ДД.ММ`\n"
             "📌 Пример: 15.03",
             parse_mode="HTML",
@@ -334,6 +340,17 @@ async def ask_flight_type(message_or_callback, state: FSMContext):
 @router.callback_query(FlightSearch.flight_type, F.data.startswith("flight_type_"))
 async def process_flight_type(callback: CallbackQuery, state: FSMContext):
     flight_type = callback.data.split("_")[2]
+    
+    type_text = {
+        "direct": "✈️ Прямые рейсы",
+        "transfer": "🔄 С пересадками",
+        "all": "ℹ️ Все рейсы"
+    }.get(flight_type, "Неизвестный тип")
+    
+    await callback.message.answer(type_text, parse_mode="HTML")
+    
+    logger.debug(f"[process_flight_type] Выбран тип рейса: {flight_type}")
+    
     await state.update_data(flight_type=flight_type)
     await ask_adults(callback.message, state)
     await callback.answer()
@@ -399,6 +416,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
 async def process_children(callback: CallbackQuery, state: FSMContext):
     children = int(callback.data.split("_")[1])
     await state.update_data(children=children)
+    await callback.message.answer(f"👥 Детей: {children}", parse_mode="HTML")
     data = await state.get_data()
     adults = data["adults"]
     remaining = 9 - adults - children
@@ -430,6 +448,7 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
 async def process_infants(callback: CallbackQuery, state: FSMContext):
     infants = int(callback.data.split("_")[1])
     await state.update_data(infants=infants)
+    await callback.message.answer(f"🍼 Младенцев: {infants}", parse_mode="HTML")
     await show_summary(callback.message, state)
     await callback.answer()
 
