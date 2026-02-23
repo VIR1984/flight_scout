@@ -160,7 +160,9 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
 
 @router.message(FlightSearch.route)
 async def process_route(message: Message, state: FSMContext):
+    """Обработка ввода маршрута"""
     origin, dest = validate_route(message.text)
+    
     if not origin or not dest:
         await message.answer(
             "❌ Неверный формат маршрута.\n"
@@ -169,31 +171,19 @@ async def process_route(message: Message, state: FSMContext):
             reply_markup=CANCEL_KB
         )
         return
-
-    if origin != "везде":
-        # ← ИСПОЛЬЗУЕМ get_iata() + fallback на старый словарь
-        orig_iata = get_iata(origin) or CITY_TO_IATA.get(_normalize_name(origin))
-        if not orig_iata:
-            await message.answer(f"❌ Не знаю город отправления: {origin}\nПопробуйте ещё раз.", reply_markup=CANCEL_KB)
-            return
-        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
-        origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin.capitalize())
-    else:
-        orig_iata = None
-        origin_name = "Везде"
-
-    if dest != "везде":
-        # ← ИСПОЛЬЗУЕМ get_iata() + fallback на старый словарь
-        dest_iata = get_iata(dest) or CITY_TO_IATA.get(_normalize_name(dest))
-        if not dest_iata:
-            await message.answer(f"❌ Не знаю город прибытия: {dest}\nПопробуйте ещё раз.", reply_markup=CANCEL_KB)
-            return
-        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
-        dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest.capitalize())
-    else:
-        dest_iata = None
-        dest_name = "Везде"
-
+    
+    # Проверка на одинаковые города (кроме "везде")
+    if origin == dest and origin != "везде":
+        await message.answer(
+            "❌ Город отправления и прибытия не могут совпадать!\n"
+            f"Вы ввели: {origin} - {dest}\n"
+            "Пожалуйста, укажите разные города.",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
+    
+    # Проверка на "везде → везде"
     if origin == "везде" and dest == "везде":
         await message.answer(
             "❌ Нельзя искать «Везде → Везде».\n"
@@ -201,18 +191,29 @@ async def process_route(message: Message, state: FSMContext):
             reply_markup=CANCEL_KB
         )
         return
-
-    # ← ПРОВЕРКА: Одинаковые города
-    if orig_iata and dest_iata and orig_iata == dest_iata:
-        logger.info(f"[DEBUG VALIDATION] Ошибка: одинаковые города {orig_iata} == {dest_iata}")
-        print(f"[DEBUG VALIDATION] Ошибка: одинаковые города {orig_iata} == {dest_iata}")
-        await message.answer(
-            "❌ Город вылета и прибытия не могут совпадать.\n"
-            "Пожалуйста, выберите разные города.",
-            reply_markup=CANCEL_KB
-        )
-        return
-
+    
+    # Определение IATA кодов
+    if origin != "везде":
+        orig_iata = CITY_TO_IATA.get(origin)
+        if not orig_iata:
+            await message.answer(f"❌ Не знаю город отправления: {origin}\nПопробуйте ещё раз.", reply_markup=CANCEL_KB)
+            return
+        origin_name = IATA_TO_CITY.get(orig_iata, origin.capitalize())
+    else:
+        orig_iata = None
+        origin_name = "Везде"
+    
+    if dest != "везде":
+        dest_iata = CITY_TO_IATA.get(dest)
+        if not dest_iata:
+            await message.answer(f"❌ Не знаю город прибытия: {dest}\nПопробуйте ещё раз.", reply_markup=CANCEL_KB)
+            return
+        dest_name = IATA_TO_CITY.get(dest_iata, dest.capitalize())
+    else:
+        dest_iata = None
+        dest_name = "Везде"
+    
+    # Сохранение данных
     await state.update_data(
         origin=origin,
         origin_iata=orig_iata,
@@ -222,71 +223,20 @@ async def process_route(message: Message, state: FSMContext):
         dest_name=dest_name
     )
     
+    # Подтверждение выбора маршрута
+    await message.answer(f"📍 Маршрут: {origin_name} → {dest_name}", parse_mode="HTML")
+    
+    # Запрашиваем дату вылета
     await message.answer(
-        "📅 Введите дату вылета в формате `ДД.ММ`\n"
-        "📌 Пример: 10.03",
-        parse_mode="HTML"
+        "📅 Введите дату вылета в формате `ДД.ММ`",
+        parse_mode="HTML",
+        reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.depart_date)
 
 @router.message(FlightSearch.depart_date)
 async def process_depart_date(message: Message, state: FSMContext):
-    if not validate_date(message.text):
-        await message.answer(
-            "❌ Неверный формат даты.\n"
-            "Введите в формате `ДД.ММ` (например: 10.03)",
-            parse_mode="HTML",
-            reply_markup=CANCEL_KB
-        )
-        return
-    
-    # await message.answer(f"✅ Дата вылета: {message.text}", parse_mode="HTML")
-    await state.update_data(depart_date=message.text)
-    data = await state.get_data()
-    is_origin_everywhere = data["origin"] == "везде"
-    is_dest_everywhere = data["dest"] == "везде"
-    
-    if is_origin_everywhere or is_dest_everywhere:
-        await state.update_data(need_return=False, return_date=None)
-        await ask_flight_type(message, state)
-        return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, нужен", callback_data="need_return_yes")],
-        [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="need_return_no")],
-        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
-    ])
-    await message.answer(
-        "🔄 Нужен ли обратный билет?",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-    await state.set_state(FlightSearch.need_return)
-
-@router.callback_query(FlightSearch.need_return, F.data.startswith("need_return_"))
-async def process_need_return(callback: CallbackQuery, state: FSMContext):
-    need_return = callback.data == "need_return_yes"
-    await state.update_data(need_return=need_return)
-    
-    # ДОБАВЛЕНО: Отображаем ответ пользователя в чате
-    response_text = "✅ Да, нужен" if need_return else "❌ Нет, спасибо"
-    await callback.message.answer(response_text, parse_mode="HTML")
-    
-    if need_return:
-        await callback.message.answer(
-            "📅 Введите дату возврата в формате `ДД.ММ`\n"
-            "📌 Пример: 15.03",
-            parse_mode="HTML",
-            reply_markup=CANCEL_KB
-        )
-        await state.set_state(FlightSearch.return_date)
-    else:
-        await state.update_data(return_date=None)
-        await ask_flight_type(callback.message, state)
-    await callback.answer()
-
-@router.message(FlightSearch.return_date)
-async def process_return_date(message: Message, state: FSMContext):
+    """Обработка ввода даты вылета"""
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n"
@@ -295,26 +245,92 @@ async def process_return_date(message: Message, state: FSMContext):
             reply_markup=CANCEL_KB
         )
         return
-
-    # ← ПРОВЕРКА: Дата возврата не раньше вылета
-    data = await state.get_data()
-    depart_date = data.get('depart_date')
-    return_date = message.text
-    norm_depart = normalize_date(depart_date)
-    norm_return = normalize_date(return_date)
     
-    logger.info(f"[DEBUG VALIDATION] Сравнение дат: Вылет {norm_depart} vs Возврат {norm_return}")
-    print(f"[DEBUG VALIDATION] Сравнение дат: Вылет {norm_depart} vs Возврат {norm_return}")
+    # Сохранение данных
+    await state.update_data(depart_date=message.text)
+    
+    # Подтверждение выбора даты
+    await message.answer(f"📅 Вылет: {message.text}", parse_mode="HTML")
+    
+    # Спрашиваем дату возврата только если не "везде → город"
+    data = await state.get_data()
+    is_origin_everywhere = data["origin"] == "везде"
+    is_dest_everywhere = data["dest"] == "везде"
+    
+    if not is_origin_everywhere and not is_dest_everywhere:
+        # Запрашиваем необходимость обратного билета
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, нужен", callback_data="need_return_yes")],
+            [InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="need_return_no")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+        ])
+        await message.answer("🔄 Нужен ли обратный билет?", parse_mode="HTML", reply_markup=kb)
+        await state.set_state(FlightSearch.need_return)
+    else:
+        await ask_flight_type(message, state)
 
-    if norm_return <= norm_depart:
+@router.callback_query(FlightSearch.need_return, F.data.startswith("need_return_"))
+async def process_need_return(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора необходимости обратного билета"""
+    need_return = callback.data == "need_return_yes"
+    await state.update_data(need_return=need_return)
+    
+    # Удаление предыдущего сообщения с формой выбора
+    await callback.message.delete()
+    
+    # Подтверждение выбора
+    response_text = "✅ Да, нужен" if need_return else "❌ Нет, спасибо"
+    await callback.message.answer(response_text, parse_mode="HTML")
+    
+    if need_return:
+        # Запрашиваем дату возврата
+        await callback.message.answer(
+            "📅 Введите дату возврата в формате `ДД.ММ`\n"
+            "📌 Пример: 15.03",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        await state.set_state(FlightSearch.return_date)
+    else:
+        # Пропускаем этап даты возврата
+        await state.update_data(return_date=None)
+        await ask_flight_type(callback.message, state)
+    
+    await callback.answer()
+
+@router.message(FlightSearch.return_date)
+async def process_return_date(message: Message, state: FSMContext):
+    """Обработка ввода даты возврата"""
+    if not validate_date(message.text):
         await message.answer(
-            "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
-            "Укажите правильную дату возврата.",
+            "❌ Неверный формат даты.\n"
+            "Введите в формате `ДД.ММ` (например: 15.03)",
+            parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         return
-
+    
+    # Проверка порядка дат
+    data = await state.get_data()
+    depart_date = data.get("depart_date")
+    
+    if depart_date and not validate_dates_order(depart_date, message.text):
+        await message.answer(
+            "❌ Дата возврата не может быть раньше даты вылета!\n"
+            f"Вылет: {depart_date}, Возврат: {message.text}\n"
+            "Пожалуйста, введите корректную дату.",
+            parse_mode="HTML",
+            reply_markup=CANCEL_KB
+        )
+        return
+    
+    # Сохранение данных
     await state.update_data(return_date=message.text)
+    
+    # Подтверждение выбора даты возврата
+    await message.answer(f"↩️ Возврат: {message.text}", parse_mode="HTML")
+    
+    # Переходим к выбору типа рейса
     await ask_flight_type(message, state)
 
 async def ask_flight_type(message_or_callback, state: FSMContext):
@@ -339,20 +355,27 @@ async def ask_flight_type(message_or_callback, state: FSMContext):
 
 @router.callback_query(FlightSearch.flight_type, F.data.startswith("flight_type_"))
 async def process_flight_type(callback: CallbackQuery, state: FSMContext):
-    flight_type = callback.data.split("_")[2]
+    """Обработка выбора типа рейса"""
+    flight_type = callback.data.split("_")[2]  # direct, transfer, all
     
-    type_text = {
+    # Удаление предыдущего сообщения с формой выбора
+    await callback.message.delete()
+    
+    # Сохранение данных
+    await state.update_data(flight_type=flight_type)
+    
+    # Подтверждение выбора
+    flight_type_text = {
         "direct": "✈️ Прямые рейсы",
         "transfer": "🔄 С пересадками",
         "all": "ℹ️ Все рейсы"
     }.get(flight_type, "Неизвестный тип")
     
-    await callback.message.answer(type_text, parse_mode="HTML")
+    await callback.message.answer(flight_type_text, parse_mode="HTML")
     
-    logger.debug(f"[process_flight_type] Выбран тип рейса: {flight_type}")
+    # Переходим к выбору пассажиров
+    await ask_passengers(callback.message, state)
     
-    await state.update_data(flight_type=flight_type)
-    await ask_adults(callback.message, state)
     await callback.answer()
 
 async def ask_adults(message_or_callback, state: FSMContext):
@@ -385,50 +408,80 @@ async def ask_adults(message_or_callback, state: FSMContext):
 
 @router.callback_query(FlightSearch.adults, F.data.startswith("adults_"))
 async def process_adults(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора количества взрослых"""
     adults = int(callback.data.split("_")[1])
     await state.update_data(adults=adults)
     
-    await callback.message.answer(f"👥 Выбрано взрослых пассажиров: {adults}", parse_mode="HTML")
+    # Удаление предыдущего сообщения с формой выбора
+    await callback.message.delete()
     
-    if adults == 9:
-        await state.update_data(children=0, infants=0)
-        await show_summary(callback.message, state)
-    else:
-        max_children = 9 - adults
-        kb_buttons = []
-        row = []
-        for i in range(0, max_children + 1):
-            row.append(InlineKeyboardButton(text=str(i), callback_data=f"children_{i}"))
-            if len(row) == 4:
-                kb_buttons.append(row)
-                row = []
-        if row:
+    # Подтверждение выбора
+    await callback.message.answer(f"👥 Взрослых: {adults}", parse_mode="HTML")
+    
+    # Переходим к выбору детей
+    data = await state.get_data()
+    max_children = 9 - adults
+    
+    # Формируем историю выборов
+    history = build_history(data)
+    
+    # Формируем текст запроса
+    text = f"🧒 Сколько детей (от 2 до 12 лет)?\n\n"
+    if history:
+        text += f"{history}\n\n"
+    
+    text += "Выберите количество детей:"
+    
+    kb_buttons = []
+    row = []
+    for i in range(0, max_children + 1):
+        row.append(InlineKeyboardButton(text=str(i), callback_data=f"children_{i}"))
+        if len(row) == 4:
             kb_buttons.append(row)
-        kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
-        kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-        await callback.message.edit_text(
-            f"👶 Сколько детей (от 2 до 11 лет)?\n"
-            f"Если у вас младенцы, укажете дальше",
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-        await state.set_state(FlightSearch.children)
+            row = []
+    if row:
+        kb_buttons.append(row)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+    
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await state.set_state(FlightSearch.children)
+    
     await callback.answer()
 
 @router.callback_query(FlightSearch.children, F.data.startswith("children_"))
 async def process_children(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора количества детей"""
     children = int(callback.data.split("_")[1])
     await state.update_data(children=children)
-    await callback.message.answer(f"👥 Детей: {children}", parse_mode="HTML")
+    
+    # Удаление предыдущего сообщения с формой выбора
+    await callback.message.delete()
+    
+    # Подтверждение выбора
+    await callback.message.answer(f"🧒 Детей: {children}", parse_mode="HTML")
     
     data = await state.get_data()
     adults = data["adults"]
     remaining = 9 - adults - children
+    
+    # Переходим к выбору младенцев
     if remaining == 0:
         await state.update_data(infants=0)
         await show_summary(callback.message, state)
     else:
         max_infants = min(adults, remaining)
+        
+        # Формируем историю выборов
+        history = build_history(data)
+        
+        # Формируем текст запроса
+        text = f"🍼 Сколько младенцев? (младше 2 лет без места)\n\n"
+        if history:
+            text += f"{history}\n\n"
+        
+        text += "Выберите количество младенцев:"
+        
         kb_buttons = []
         row = []
         for i in range(0, max_infants + 1):
@@ -438,66 +491,45 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
                 row = []
         if row:
             kb_buttons.append(row)
+        
         kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
         
-        # ИСПРАВЛЕНО: Используем answer() вместо edit_text()
-        await callback.message.answer(
-            f"🍼 Сколько младенцев? (младше 2 лет без места)",
-            parse_mode="HTML",
-            reply_markup=kb
-        )
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
         await state.set_state(FlightSearch.infants)
+    
     await callback.answer()
 
 @router.callback_query(FlightSearch.infants, F.data.startswith("infants_"))
 async def process_infants(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора количества младенцев"""
     infants = int(callback.data.split("_")[1])
     await state.update_data(infants=infants)
+    
+    # Удаление предыдущего сообщения с формой выбора
+    await callback.message.delete()
+    
+    # Подтверждение выбора
     await callback.message.answer(f"🍼 Младенцев: {infants}", parse_mode="HTML")
+    
+    # Переходим к подтверждению
     await show_summary(callback.message, state)
+    
     await callback.answer()
 
-async def show_summary(message, state: FSMContext):
+async def show_summary(message: Message, state: FSMContext):
+    """Показывает сводку данных перед поиском"""
     data = await state.get_data()
-    print(f"[DEBUG process_infants] Текущее состояние после сохранения: {data}")
-    adults = data["adults"]
-    children = data.get("children", 0)
     
-    # Логика формирования passenger_code
-    passenger_code = str(adults)
-    if children > 0:
-        passenger_code += str(children)
-    if data.get("infants", 0) > 0:
-        passenger_code += str(data["infants"])
-    
-    # Описание пассажиров для отображения
-    passenger_desc = f"{adults} взр"
-    if children > 0:
-        passenger_desc += f", {children} дет"
-    if data.get("infants", 0) > 0:
-        passenger_desc += f", {data['infants']} мл"
+    # Формируем историю выборов
+    history = build_history(data)
     
     # Формируем текст подтверждения
     summary = (
-        "📋 Проверьте данные: \n"
-        f"📍 Маршрут: {data['origin_name']} → {data['dest_name']} \n"
-        f"📅 Вылет: {data['depart_date']} \n"
+        f"{history}\n"
+        "✅ Проверьте данные перед поиском:\n\n"
+        "🔍 Нажмите «Подтвердить» для поиска рейсов"
     )
-    
-    # Обратный рейс (если есть)
-    if data.get("need_return", False) and data.get("return_date"):
-        summary += f"↩️ <b>Обратно:</b> {data['return_date']} \n"
-    
-    # Тип рейса
-    flight_type_text = {
-        "direct": "прямые рейсы",
-        "transfer": "рейсы с пересадками",
-        "all": "все рейсы"
-    }.get(data.get("flight_type", "all"), "все рейсы")
-    
-    summary += f"✈️ Тип рейса: {flight_type_text} \n"
-    summary += f"🧍 Пассажиры: {passenger_desc}"
     
     # Клавиатура подтверждения
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -513,11 +545,7 @@ async def show_summary(message, state: FSMContext):
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
     
-    await state.update_data(
-        passenger_code=passenger_code,
-        passenger_desc=passenger_desc
-    )
-    print(f"[DEBUG show_summary] После сохранения: passenger_code='{passenger_code}'")
+    # Отправляем сообщение с историей выборов
     await message.answer(summary, parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
 

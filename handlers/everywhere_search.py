@@ -1,569 +1,257 @@
-# handlers/everywhere_search.py
-import json
-import asyncio
-import os
-import re
-from typing import Dict, Any, List, Tuple
-from uuid import uuid4
-from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.fsm.context import FSMContext
-from services.flight_search import (
-    search_flights,
-    generate_booking_link,
-    normalize_date,
-    format_avia_link_date,
-    update_passengers_in_link,
-    format_duration as format_duration_helper
-)
-from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
-from utils.cities import GLOBAL_HUBS
-from utils.redis_client import redis_client
+import logging
+from typing import List, Dict, Optional
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from services.flight_search import search_flights, validate_date, format_avia_link_date
+from utils.cities import CITY_TO_IATA, IATA_TO_CITY, GLOBAL_HUBS
 from utils.logger import logger
+from utils.redis_client import redis_client
 from utils.link_converter import convert_to_partner_link
-
-# ← ДОБАВЛЕНО: CANCEL_KB для кнопок отмены
-CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
-])
-
-# ← ДОБАВЛЕНО: Router для этого модуля
-router = Router()
-
-def format_user_date(date_str: str) -> str:
-    """Форматирует дату ДД.ММ в ДД.ММ.ГГГГ"""
-    try:
-        d, m = map(int, date_str.split('.'))
-        year = 2026
-        if m < 2 or (m == 2 and d < 8):
-            year = 2027
-        return f"{d:02d}.{m:02d}.{year}"
-    except:
-        return date_str
-
-def build_passenger_desc(code: str) -> str:
-    """Форматирует код пассажиров в читаемое описание"""
-    try:
-        adults = int(code[0])
-        children = int(code[1]) if len(code) > 1 else 0
-        infants = int(code[2]) if len(code) > 2 else 0
-        parts = []
-        if adults:
-            parts.append(f"{adults} взр.")
-        if children:
-            parts.append(f"{children} реб.")
-        if infants:
-            parts.append(f"{infants} мл.")
-        return ", ".join(parts) if parts else "1 взр."
-    except:
-        return "1 взр."
 
 async def search_origin_everywhere(
     dest_iata: str,
     depart_date: str,
-    flight_type: str = "all"
+    return_date: Optional[str] = None,
+    passengers_code: str = "1"
 ) -> List[Dict]:
-    """Поиск рейсов из всех городов в указанный"""
-    origins = GLOBAL_HUBS[:5]
+    """Ищет рейсы из всех городов России в указанный город"""
+    logger.info(f"[search_origin_everywhere] Поиск из всех городов в {dest_iata} на даты {depart_date}/{return_date}")
+    
     all_flights = []
     
-    for orig in origins:
-        if orig == dest_iata:
-            continue
-        
-        flights = await search_flights(
-            orig,
-            dest_iata,
-            normalize_date(depart_date),
-            None
-        )
-        
-        # Фильтрация по типу рейса
-        if flight_type == "direct":
-            flights = [f for f in flights if f.get("transfers", 999) == 0]
-        elif flight_type == "transfer":
-            flights = [f for f in flights if f.get("transfers", 0) > 0]
-        
-        flights = [f for f in flights if f.get("destination") == dest_iata]
-        
-        for f in flights:
-            f["origin"] = orig
-        
-        all_flights.extend(flights)
-        await asyncio.sleep(0.5)
+    # Используем только российские города из нашего справочника
+    russian_cities = [iata for iata, city in IATA_TO_CITY.items() if "россия" in city.lower()]
     
-    return all_flights
+    # Добавляем популярные города из GLOBAL_HUBS, если они есть в справочнике
+    for city in GLOBAL_HUBS:
+        iata = CITY_TO_IATA.get(city.lower())
+        if iata and iata not in russian_cities:
+            russian_cities.append(iata)
+    
+    # Убираем целевой город из списка отправления
+    if dest_iata in russian_cities:
+        russian_cities.remove(dest_iata)
+    
+    logger.debug(f"[search_origin_everywhere] Будем искать из {len(russian_cities)} городов")
+    
+    # Ищем рейсы из каждого города
+    for i, origin_iata in enumerate(russian_cities):
+        if i % 5 == 0:  # Чтобы не спамить логами
+            logger.debug(f"[search_origin_everywhere] Проверяем город {i+1}/{len(russian_cities)}: {origin_iata}")
+        
+        try:
+            flights = await search_flights(
+                origins=[origin_iata],
+                destinations=[dest_iata],
+                depart_date=depart_date,
+                return_date=return_date,
+                passengers_code=passengers_code
+            )
+            
+            for flight in flights:
+                # Добавляем информацию об отправлении для идентификации
+                flight["origin"] = origin_iata
+                flight["destination"] = dest_iata
+                all_flights.append(flight)
+                
+            if len(all_flights) >= 15:  # Ограничиваем количество результатов
+                break
+                
+        except Exception as e:
+            logger.error(f"[search_origin_everywhere] Ошибка поиска из {origin_iata}: {e}")
+            continue
+    
+    # Сортируем по цене
+    all_flights.sort(key=lambda x: x.get('price', float('inf')))
+    
+    logger.info(f"[search_origin_everywhere] Найдено {len(all_flights)} рейсов из всех городов")
+    return all_flights[:10]  # Возвращаем топ-10 самых дешевых
 
-async def search_destination_everywhere(
+async def search_dest_everywhere(
     origin_iata: str,
     depart_date: str,
-    flight_type: str = "all"
+    return_date: Optional[str] = None,
+    passengers_code: str = "1"
 ) -> List[Dict]:
-    """Поиск рейсов из указанного города во все направления"""
-    destinations = GLOBAL_HUBS[:5]
+    """Ищет рейсы из указанного города во все популярные города мира"""
+    logger.info(f"[search_dest_everywhere] Поиск из {origin_iata} во все популярные города на даты {depart_date}/{return_date}")
+    
     all_flights = []
     
-    for dest in destinations:
-        if dest == origin_iata:
+    # Используем популярные города из GLOBAL_HUBS и IATA_TO_CITY
+    destinations = list(GLOBAL_HUBS) + list(IATA_TO_CITY.keys())
+    destination_iatas = []
+    
+    for city in destinations:
+        if isinstance(city, str) and len(city) == 3:  # Это уже IATA код
+            iata = city
+        else:
+            iata = CITY_TO_IATA.get(city.lower())
+        
+        if iata and iata != origin_iata and iata not in destination_iatas:
+            destination_iatas.append(iata)
+    
+    logger.debug(f"[search_dest_everywhere] Будем искать в {len(destination_iatas)} направлениях")
+    
+    # Ищем рейсы в каждый город
+    for i, dest_iata in enumerate(destination_iatas):
+        if i % 5 == 0:  # Чтобы не спамить логами
+            logger.debug(f"[search_dest_everywhere] Проверяем направление {i+1}/{len(destination_iatas)}: {dest_iata}")
+        
+        try:
+            flights = await search_flights(
+                origins=[origin_iata],
+                destinations=[dest_iata],
+                depart_date=depart_date,
+                return_date=return_date,
+                passengers_code=passengers_code
+            )
+            
+            for flight in flights:
+                # Добавляем информацию о прибытии для идентификации
+                flight["origin"] = origin_iata
+                flight["destination"] = dest_iata
+                all_flights.append(flight)
+                
+            if len(all_flights) >= 15:  # Ограничиваем количество результатов
+                break
+                
+        except Exception as e:
+            logger.error(f"[search_dest_everywhere] Ошибка поиска в {dest_iata}: {e}")
             continue
-        
-        flights = await search_flights(
-            origin_iata,
-            dest,
-            normalize_date(depart_date),
-            None
-        )
-        
-        # Фильтрация по типу рейса
-        if flight_type == "direct":
-            flights = [f for f in flights if f.get("transfers", 999) == 0]
-        elif flight_type == "transfer":
-            flights = [f for f in flights if f.get("transfers", 0) > 0]
-        
-        for f in flights:
-            f["destination"] = dest
-        
-        all_flights.extend(flights)
-        await asyncio.sleep(0.5)
     
-    return all_flights
+    # Сортируем по цене
+    all_flights.sort(key=lambda x: x.get('price', float('inf')))
+    
+    logger.info(f"[search_dest_everywhere] Найдено {len(all_flights)} рейсов во все направления")
+    return all_flights[:10]  # Возвращаем топ-10 самых дешевых
 
-async def process_everywhere_search(
-    callback: CallbackQuery,
-    data: Dict[str, Any],
-    all_flights: List[Dict],
-    search_type: str
-) -> bool:
-    """Обработка результатов поиска 'Везде'"""
-    if not all_flights:
-        return False
+async def handle_everywhere_search(
+    message: Message,
+    state: FSMContext,
+    is_origin_everywhere: bool = False,
+    is_dest_everywhere: bool = False
+):
+    """Обработка поиска с 'везде' через FSM"""
+    if is_origin_everywhere and is_dest_everywhere:
+        await message.answer(
+            "❌ Нельзя искать «Везде → Везде».\n"
+            "Укажите хотя бы один конкретный город.",
+            reply_markup=CANCEL_KB
+        )
+        return
     
-    cache_id = str(uuid4())
-    display_depart = format_user_date(data["depart_date"])
-    is_origin_everywhere = (search_type == "origin_everywhere")
-    is_dest_everywhere = (search_type == "destination_everywhere")
-    
-    await redis_client.set_search_cache(cache_id, {
-        "flights": all_flights,
-        "dest_iata": data.get("dest_iata"),
-        "is_roundtrip": False,
-        "display_depart": display_depart,
-        "display_return": None,
-        "original_depart": data["depart_date"],
-        "original_return": None,
-        "passenger_desc": data["passenger_desc"],
-        "passengers_code": data["passenger_code"],
-        "origin_everywhere": is_origin_everywhere,
-        "dest_everywhere": is_dest_everywhere,
-        "flight_type": data.get("flight_type", "all")
-    })
-    
-    cheapest_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-    price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
-    origin_iata = cheapest_flight["origin"]
-    dest_iata = cheapest_flight.get("destination")
-    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
-    
-    # Форматирование продолжительности полета
-    duration_minutes = cheapest_flight.get("duration", 0)
-    duration = format_duration_helper(duration_minutes)
-    
-    # Определение количества пересадок
-    transfers = cheapest_flight.get("transfers", 0)
-    if transfers == 0:
-        transfer_text = "✈️ Прямой рейс"
-    elif transfers == 1:
-        transfer_text = "✈️ 1 пересадка"
+    # ДОБАВЛЕНО: Отображаем выбор пользователя
+    if is_origin_everywhere:
+        await message.answer("📍 Выбрано: Все города России → Конкретный город", parse_mode="HTML")
     else:
-        transfer_text = f"✈️ {transfers} пересадки"
+        await message.answer("📍 Выбрано: Конкретный город → Все популярные города", parse_mode="HTML")
     
-    # Названия аэропортов
-    AIRPORT_NAMES = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
-    dest_airport = AIRPORT_NAMES.get(dest_iata, dest_iata)
+    await message.answer(
+        "✈️ Теперь укажите дату вылета в формате `ДД.ММ`",
+        parse_mode="HTML",
+        reply_markup=CANCEL_KB
+    )
+    await state.set_state(FlightSearch.depart_date)
     
-    # Авиакомпания
-    airline = cheapest_flight.get("airline", "")
-    flight_number = cheapest_flight.get("flight_number", "")
-    airline_display = ""
-    if airline or flight_number:
-        airline_name_map = {
-            "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
-            "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
-        }
-        airline_display = airline_name_map.get(airline, airline)
-        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
-    
-    # Расчет цены
-    passengers_code = data.get("passenger_code", "1")
-    try:
-        num_adults = int(passengers_code[0]) if passengers_code and passengers_code[0].isdigit() else 1
-    except (IndexError, ValueError):
-        num_adults = 1
-    
-    price_per_passenger = int(float(price)) if price != "?" else 0
-    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
-    
-    # Формирование текста в зависимости от типа поиска
-    if is_dest_everywhere:
-        # Поиск из конкретного города во все направления
-        header = f"✅ <b>Самый дешёвый вариант из {data['origin_name']}</b>"
-        route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
-        text = (
-            f"{header}\n"
-            f"{route_line}\n"
-            f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-            f"📅 Дата вылета: {display_depart}\n"
-            f"⏱️ Продолжительность полета: {duration}\n"
-            f"{transfer_text}\n"
-        )
-        if airline_display:
-            text += f"✈️ {flight_display}\n"
-        
-        # Цена
-        if price != "?":
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        else:
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        
-        text += f"\n👥 <b>Пассажиры:</b> {data['passenger_desc']}"
-    else:
-        # Поиск из всех городов в конкретное направление
-        header = f"✅ <b>Самый дешёвый вариант в {data['dest_name']}</b>"
-        route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
-        text = (
-            f"{header}\n"
-            f"{route_line}\n"
-            f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-            f"📅 Дата вылета: {display_depart}\n"
-            f"⏱️ Продолжительность полета: {duration}\n"
-            f"{transfer_text}\n"
-        )
-        if airline_display:
-            text += f"✈️ {flight_display}\n"
-        
-        # Цена
-        if price != "?":
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        else:
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        
-        text += f"\n👥 <b>Пассажиры:</b> {data['passenger_desc']}"
-    
-    text += f"\n\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
-    
-    # === ФОРМИРОВАНИЕ ССЫЛОК ===
-    booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
-    passengers_code = data.get("passenger_code", "1")
-    
-    if booking_link:
-        booking_link = update_passengers_in_link(booking_link, passengers_code)
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
-    else:
-        booking_link = generate_booking_link(
-            flight=cheapest_flight,
-            origin=origin_iata,
-            dest=dest_iata,
-            depart_date=data["depart_date"],
-            passengers_code=passengers_code,
-            return_date=None
-        )
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
-    
-    booking_link = await convert_to_partner_link(booking_link)
-    
-    # === КНОПКИ ===
-    kb_buttons = []
-    kb_buttons.append([
-        InlineKeyboardButton(
-            text=f"✈️ Забронировать {price} ₽",
-            url=booking_link
-        )
-    ])
-    
-    # Кнопка "Все направления" только для "Город → Везде"
-    if is_dest_everywhere:
-        d1 = format_avia_link_date(data["depart_date"])
-        map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}{d1}{passengers_code}"
-        map_link = await convert_to_partner_link(map_link)
-        kb_buttons.append([
-            InlineKeyboardButton(text="🌍 Все направления", url=map_link)
-        ])
-    
-    kb_buttons.append([
-        InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
-    ])
-    kb_buttons.append([
-        InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")
-    ])
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
-    return True
+    # Сохраняем тип поиска
+    await state.update_data(
+        is_origin_everywhere=is_origin_everywhere,
+        is_dest_everywhere=is_dest_everywhere
+    )
 
 async def handle_everywhere_search_manual(
     message: Message,
     origin_city: str,
     dest_city: str,
     depart_date: str,
-    return_date: str,
+    return_date: Optional[str],
     passengers_code: str,
     is_origin_everywhere: bool,
     is_dest_everywhere: bool
 ) -> bool:
-    """Обработка ручного ввода с 'Везде'"""
-    orig_iata = None
-    dest_iata = None
-    
-    if is_origin_everywhere:
-        origins = GLOBAL_HUBS[:5]
-        origin_name = "Везде"
-    else:
-        # ← ИСПОЛЬЗУЕМ get_iata() + fallback
-        orig_iata = get_iata(origin_city.strip()) or CITY_TO_IATA.get(_normalize_name(origin_city.strip()))
-        if not orig_iata:
-            await message.answer(f"Не знаю город вылета: {origin_city.strip()}", reply_markup=CANCEL_KB)
-            return False
-        origins = [orig_iata]
-        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
-        origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin_city.strip().capitalize())
-    
-    if is_dest_everywhere:
-        destinations = GLOBAL_HUBS[:5]
-        dest_name = "Везде"
-    else:
-        # ← ИСПОЛЬЗУЕМ get_iata() + fallback
-        dest_iata = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
-        if not dest_iata:
-            await message.answer(f"Не знаю город прилёта: {dest_city.strip()}", reply_markup=CANCEL_KB)
-            return False
-        destinations = [dest_iata]
-        # ← ИСПОЛЬЗУЕМ get_city_name() + fallback
-        dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
-    
-    passenger_desc = build_passenger_desc(passengers_code)
-    display_depart = format_user_date(depart_date)
-    
-    await message.answer("Ищу билеты (включая с пересадками)...")
-    all_flights = []
-    
-    for orig in origins:
-        for dest in destinations:
-            if orig == dest:
-                continue
-            
-            flights = await search_flights(
-                orig,
-                dest,
-                normalize_date(depart_date),
-                None
-            )
-            
-            if not is_dest_everywhere and dest == dest_iata:
-                flights = [f for f in flights if f.get("destination") == dest]
-            
-            for f in flights:
-                f["origin"] = orig
-                f["destination"] = dest
-            
-            all_flights.extend(flights)
-            await asyncio.sleep(0.5)
-    
-    if not all_flights:
+    """Обработка поиска с 'везде' в ручном режиме"""
+    if is_origin_everywhere and is_dest_everywhere:
+        await message.answer(
+            "❌ Нельзя искать «Везде → Везде».\n"
+            "Укажите хотя бы один конкретный город.",
+            reply_markup=CANCEL_KB
+        )
         return False
     
-    cache_id = str(uuid4())
-    await redis_client.set_search_cache(cache_id, {
-        "flights": all_flights,
-        "dest_iata": dest_iata,
-        "is_roundtrip": False,
-        "display_depart": display_depart,
-        "display_return": None,
-        "original_depart": depart_date,
-        "original_return": None,
-        "passenger_desc": passenger_desc,
-        "passengers_code": passengers_code,
-        "origin_everywhere": is_origin_everywhere,
-        "dest_everywhere": is_dest_everywhere,
-        "flight_type": "all"
-    })
-    
-    cheapest_flight = min(all_flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-    price = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
-    origin_iata = cheapest_flight["origin"]
-    dest_iata = cheapest_flight.get("destination")
-    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
-    
-    # Форматирование продолжительности полета
-    duration_minutes = cheapest_flight.get("duration", 0)
-    duration = format_duration_helper(duration_minutes)
-    
-    # Определение количества пересадок
-    transfers = cheapest_flight.get("transfers", 0)
-    if transfers == 0:
-        transfer_text = "✈️ Прямой рейс"
-    elif transfers == 1:
-        transfer_text = "✈️ 1 пересадка"
+    # ДОБАВЛЕНО: Отображаем выбор пользователя
+    if is_origin_everywhere:
+        await message.answer(f"📍 Выбрано: Все города России → {dest_city.strip().capitalize()}", parse_mode="HTML")
     else:
-        transfer_text = f"✈️ {transfers} пересадки"
+        await message.answer(f"📍 Выбрано: {origin_city.strip().capitalize()} → Все популярные города", parse_mode="HTML")
     
-    # Названия аэропортов
-    AIRPORT_NAMES = {
-        "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково", "ZIA": "Жуковский",
-        "LED": "Пулково", "AER": "Адлер", "KZN": "Казань", "OVB": "Новосибирск",
-        "ROV": "Ростов", "KUF": "Курумоч", "UFA": "Уфа", "CEK": "Челябинск",
-        "TJM": "Тюмень", "KJA": "Красноярск", "OMS": "Омск", "BAX": "Барнаул",
-        "KRR": "Краснодар", "GRV": "Грозный", "MCX": "Махачкала", "VOG": "Волгоград"
-    }
-    origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
-    dest_airport = AIRPORT_NAMES.get(dest_iata, dest_iata)
-    
-    # Авиакомпания
-    airline = cheapest_flight.get("airline", "")
-    flight_number = cheapest_flight.get("flight_number", "")
-    airline_display = ""
-    if airline or flight_number:
-        airline_name_map = {
-            "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
-            "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
-        }
-        airline_display = airline_name_map.get(airline, airline)
-        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
-    
-    # Расчет цены
-    try:
-        num_adults = int(passengers_code[0]) if passengers_code and passengers_code[0].isdigit() else 1
-    except (IndexError, ValueError):
-        num_adults = 1
-    
-    price_per_passenger = int(float(price)) if price != "?" else 0
-    estimated_total_price = price_per_passenger * num_adults if price != "?" else "?"
-    
-    # Формирование текста в зависимости от типа поиска
-    if is_dest_everywhere:
-        header = f"✅ <b>Самый дешёвый вариант из {origin_name}</b>"
-        route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
-        text = (
-            f"{header}\n"
-            f"{route_line}\n"
-            f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-            f"📅 Дата вылета: {display_depart}\n"
-            f"⏱️ Продолжительность полета: {duration}\n"
-            f"{transfer_text}\n"
-        )
-        if airline_display:
-            text += f"✈️ {flight_display}\n"
+    if is_origin_everywhere:
+        dest_iata = CITY_TO_IATA.get(dest_city.strip())
+        if not dest_iata:
+            await message.answer(f"❌ Не знаю город прилёта: {dest_city.strip()}", reply_markup=CANCEL_KB)
+            return False
         
-        if price != "?":
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        else:
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        
-        text += f"\n👥 <b>Пассажиры:</b> {passenger_desc}"
-    else:
-        header = f"✅ <b>Самый дешёвый вариант в {dest_name}</b>"
-        route_line = f"🛫 <b>{origin_name}</b> → <b>{dest_name}</b>"
-        text = (
-            f"{header}\n"
-            f"{route_line}\n"
-            f"📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})\n"
-            f"📅 Дата вылета: {display_depart}\n"
-            f"⏱️ Продолжительность полета: {duration}\n"
-            f"{transfer_text}\n"
-        )
-        if airline_display:
-            text += f"✈️ {flight_display}\n"
-        
-        if price != "?":
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        else:
-            text += f"\n💰 <b>Цена за 1 пассажира:</b> {price} ₽"
-            if num_adults > 1:
-                text += f"\n🧮 <b>Примерная стоимость для {num_adults} взрослых:</b> ~{estimated_total_price} ₽ (если доступно)"
-            text += f"\n<i>(стоимость для детей и младенцев может рассчитываться по-другому)</i>"
-        
-        text += f"\n👥 <b>Пассажиры:</b> {passenger_desc}"
-    
-    text += f"\n\n⚠️ <i>Цена актуальна на момент поиска. Точная стоимость при бронировании может отличаться.</i>"
-    
-    # === ОБНОВЛЕНИЕ ПАССАЖИРОВ В ССЫЛКЕ ===
-    booking_link = cheapest_flight.get("link") or cheapest_flight.get("deep_link")
-    
-    if booking_link:
-        booking_link = update_passengers_in_link(booking_link, passengers_code)
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
-    else:
-        booking_link = generate_booking_link(
-            flight=cheapest_flight,
-            origin=origin_iata,
-            dest=dest_iata,
+        all_flights = await search_origin_everywhere(
+            dest_iata=dest_iata,
             depart_date=depart_date,
-            passengers_code=passengers_code,
-            return_date=None
+            return_date=return_date,
+            passengers_code=passengers_code
         )
-        if not booking_link.startswith(('http://', 'https://')):
-            booking_link = f"https://www.aviasales.ru{booking_link}"
-    
-    booking_link = await convert_to_partner_link(booking_link)
-    
-    # === КНОПКИ ===
-    kb_buttons = []
-    kb_buttons.append([
-        InlineKeyboardButton(
-            text=f"✈️ Забронировать {price} ₽",
-            url=booking_link
+        search_type = "origin_everywhere"
+    else:  # is_dest_everywhere
+        origin_iata = CITY_TO_IATA.get(origin_city.strip())
+        if not origin_iata:
+            await message.answer(f"❌ Не знаю город отправления: {origin_city.strip()}", reply_markup=CANCEL_KB)
+            return False
+        
+        all_flights = await search_dest_everywhere(
+            origin_iata=origin_iata,
+            depart_date=depart_date,
+            return_date=return_date,
+            passengers_code=passengers_code
         )
+        search_type = "dest_everywhere"
+    
+    if not all_flights:
+        await message.answer(
+            "😔 К сожалению, рейсов не найдено. Попробуйте изменить даты.",
+            reply_markup=CANCEL_KB
+        )
+        return False
+    
+    # Формирование и отправка результатов
+    response = []
+    for i, flight in enumerate(all_flights[:3], 1):
+        price = flight['price']
+        origin = flight['origin']
+        dest = flight['destination']
+        origin_name = IATA_TO_CITY.get(origin, origin)
+        dest_name = IATA_TO_CITY.get(dest, dest)
+        response.append(
+            f"{i}. {price} ₽ • {origin_name} → {dest_name}\n"
+            f"   {flight['airline']} • {flight['departure']} → {flight['arrival']}"
+        )
+    
+    if return_date:
+        dates_text = f"{depart_date} → {return_date}"
+    else:
+        dates_text = depart_date
+    
+    if is_origin_everywhere:
+        header = f"✈️ Из всех городов → {dest_city.strip().capitalize()} | {dates_text}"
+    else:
+        header = f"✈️ {origin_city.strip().capitalize()} → Все популярные города | {dates_text}"
+    
+    response_text = (
+        f"{header}\n\n" +
+        "\n".join(response) +
+        "\n\n🔔 Установите уведомление о снижении цены!"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔔 Уведомить о снижении цены", callback_data="watch_price")],
+        [InlineKeyboardButton(text="🔄 Изменить поиск", callback_data="edit_search")]
     ])
     
-    # Кнопка "Все направления" только для "Город → Везде"
-    if is_dest_everywhere:
-        d1 = format_avia_link_date(depart_date)
-        map_link = f"https://www.aviasales.ru/map?params={origins[0]}{d1}{passengers_code}"
-        map_link = await convert_to_partner_link(map_link)
-        kb_buttons.append([
-            InlineKeyboardButton(text="🌍 Все направления", url=map_link)
-        ])
-    
-    kb_buttons.append([
-        InlineKeyboardButton(text="📉 Следить за ценами", callback_data=f"watch_all_{cache_id}")
-    ])
-    kb_buttons.append([
-        InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")
-    ])
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    # ИСПРАВЛЕНО: используем answer() вместо edit_text()
+    await message.answer(response_text, parse_mode="Markdown", reply_markup=kb)
     return True
