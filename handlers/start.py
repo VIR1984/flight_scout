@@ -1513,19 +1513,18 @@ async def handle_show_transfer(callback: CallbackQuery):
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
-    logger.info(f"🔍 [Start] Получено сообщение от {message.from_user.id}: '{message.text}'")
-    logger.debug(f"📝 [Start] Текущее состояние FSM: {current_state}")
-    if current_state:
-        logger.warning(f"⚠️ [Start] Пользователь в состоянии {current_state}, отправляем предупреждение")
+    
+    # Проверяем ТОЛЬКО состояния из FlightSearch
+    if current_state and current_state.startswith("FlightSearch"):
         await message.answer(
             "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
             reply_markup=CANCEL_KB
         )
         return
+    
     if message.text.startswith("/"):
-        logger.debug(f"📝 [Start] Команда, пропускаем")
         return
-    logger.info(f"✅ [Start] Передаём в handle_flight_request")
+    
     await handle_flight_request(message)
 
 @router.callback_query(F.data.startswith("unwatch_"))
