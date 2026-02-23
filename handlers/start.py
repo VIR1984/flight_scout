@@ -81,13 +81,17 @@ def build_choices_summary(data: dict) -> str:
     n = 1
     lines.append(f"{n}. Маршрут: {data.get('origin_name', '')} → {data.get('dest_name', '')}")
     n += 1
-    lines.append(f"{n}. Дата вылета: {data.get('depart_date', '')}")
+    depart_date = data.get('depart_date', '')
+    depart_display = format_user_date(depart_date) if depart_date else ''
+    lines.append(f"{n}. Дата вылета: {depart_display}")
     n += 1
 
     need_return = data.get("need_return")
     if need_return is not None:
         if need_return and data.get("return_date"):
-            lines.append(f"{n}. Обратный билет: да, {data['return_date']}")
+            return_date = data["return_date"]
+            return_display = format_user_date(return_date) if return_date else return_date
+            lines.append(f"{n}. Обратный билет: {return_display}")
         elif need_return:
             lines.append(f"{n}. Обратный билет: да")
         else:
@@ -104,6 +108,10 @@ def build_choices_summary(data: dict) -> str:
         if not pd:
             a, c, i = data.get("adults", 1), data.get("children", 0), data.get("infants", 0)
             pd = f"{a} взр." + (f", {c} дет." if c else "") + (f", {i} мл." if i else "")
+        else:
+            for abbr, repl in [(" взр", " взр."), (" дет", " дет."), (" мл", " мл.")]:
+                if abbr in pd and f"{abbr}." not in pd:
+                    pd = pd.replace(abbr, repl)
         lines.append(f"{n}. Пассажиры: {pd}")
 
     return "\n".join(lines)
@@ -581,11 +589,11 @@ async def show_summary(message, state: FSMContext):
     if infants > 0:
         passenger_code += str(infants)
 
-    passenger_desc = f"{adults} взр"
+    passenger_desc = f"{adults} взр."
     if children > 0:
-        passenger_desc += f", {children} дет"
+        passenger_desc += f", {children} дет."
     if infants > 0:
-        passenger_desc += f", {infants} мл"
+        passenger_desc += f", {infants} мл."
 
     await state.update_data(
         passenger_code=passenger_code,
