@@ -36,5 +36,11 @@ error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
 logger.addHandler(error_handler)
 
+# ─── Файловый хендлер (только FlyStack) ───
+flystack_handler = logging.FileHandler(LOG_DIR / "flystack.log", encoding="utf-8")
+flystack_handler.setLevel(logging.DEBUG)
+flystack_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+logger.addHandler(flystack_handler)
+
 # Запрещаем propagate
 logger.propagate = False
