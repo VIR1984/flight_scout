@@ -240,7 +240,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         )
         return
     
-    await message.answer(f"✅ Дата вылета: {message.text}", parse_mode="HTML")
+    # await message.answer(f"✅ Дата вылета: {message.text}", parse_mode="HTML")
     await state.update_data(depart_date=message.text)
     data = await state.get_data()
     is_origin_everywhere = data["origin"] == "везде"
@@ -387,6 +387,9 @@ async def ask_adults(message_or_callback, state: FSMContext):
 async def process_adults(callback: CallbackQuery, state: FSMContext):
     adults = int(callback.data.split("_")[1])
     await state.update_data(adults=adults)
+    
+    await callback.message.answer(f"👥 Выбрано взрослых пассажиров: {adults}", parse_mode="HTML")
+    
     if adults == 9:
         await state.update_data(children=0, infants=0)
         await show_summary(callback.message, state)
@@ -417,6 +420,7 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
     children = int(callback.data.split("_")[1])
     await state.update_data(children=children)
     await callback.message.answer(f"👥 Детей: {children}", parse_mode="HTML")
+    
     data = await state.get_data()
     adults = data["adults"]
     remaining = 9 - adults - children
@@ -436,7 +440,9 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
             kb_buttons.append(row)
         kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-        await callback.message.edit_text(
+        
+        # ИСПРАВЛЕНО: Используем answer() вместо edit_text()
+        await callback.message.answer(
             f"🍼 Сколько младенцев? (младше 2 лет без места)",
             parse_mode="HTML",
             reply_markup=kb
@@ -512,7 +518,7 @@ async def show_summary(message, state: FSMContext):
         passenger_desc=passenger_desc
     )
     print(f"[DEBUG show_summary] После сохранения: passenger_code='{passenger_code}'")
-    await message.edit_text(summary, parse_mode="HTML", reply_markup=kb)
+    await message.answer(summary, parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
 
 @router.callback_query(FlightSearch.confirm, F.data.startswith("edit_"))
