@@ -162,7 +162,8 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
         await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
-        [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],
+        # [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
     ])
     try:
         await callback.message.edit_text(
