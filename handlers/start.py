@@ -182,12 +182,10 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
 @router.callback_query(F.data == "start_search")
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
-        "✈️ Начнём поиск билетов!\n"
-        "📍 Напишите маршрут в формате:\n"
-        "`Город отправления - Город прибытия`\n\n"
-        "📌 Пример:\n"
-        "• Москва - Сочи\n"
-        "💡 Если еще не решили, откуда или куда полетите, напишите Везде",
+        "Начнём поиск билетов 👌\n\n"
+        "<b>Напишите маршрут в формате: Город отправления - Город прибытия</b>\n\n"
+        "<i>Пример: Москва - Сочи</i>\n\n"
+        "Если ещё не решили, откуда или куда полетите, напишите слово «Везде».",
         parse_mode="HTML",
         reply_markup=CANCEL_KB
     )
@@ -200,7 +198,7 @@ async def process_route(message: Message, state: FSMContext):
     if not origin or not dest:
         await message.answer(
             "❌ Неверный формат маршрута.\n"
-            "Попробуйте ещё раз: `Москва - Сочи`",
+            "<i>Пример: Москва - Сочи</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
@@ -257,9 +255,17 @@ async def process_route(message: Message, state: FSMContext):
         origin_name=origin_name,
         dest_name=dest_name
     )
+
+    data = await state.get_data()
+    if data.get("_edit_mode"):
+        # Точечное редактирование — возвращаем к summary без перехода по датам
+        await state.update_data(_edit_mode=False)
+        await show_summary(message, state)
+        return
+
     await message.answer(
         "Введите дату вылета в формате <code>ДД.ММ</code>\n"
-        "Пример: 10.03",
+        "<i>Пример: 10.03</i>",
         parse_mode="HTML",
         reply_markup=CANCEL_KB
     )
@@ -270,7 +276,7 @@ async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n"
-            "Введите в формате `ДД.ММ` (например: 10.03)",
+            "<i>Пример: 10.03</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
@@ -280,7 +286,26 @@ async def process_depart_date(message: Message, state: FSMContext):
     data = await state.get_data()
     is_origin_everywhere = data["origin"] == "везде"
     is_dest_everywhere = data["dest"] == "везде"
-    
+
+    if data.get("_edit_mode"):
+        # В режиме редактирования: если есть обратный рейс — обновляем только дату вылета,
+        # потом спрашиваем новую дату обратного (если нужно), иначе → summary
+        if is_origin_everywhere or is_dest_everywhere:
+            await state.update_data(_edit_mode=False)
+            await show_summary(message, state)
+            return
+        if data.get("need_return"):
+            await message.answer(
+                "✏️ Введите новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
+                parse_mode="HTML",
+                reply_markup=CANCEL_KB
+            )
+            await state.set_state(FlightSearch.return_date)
+        else:
+            await state.update_data(_edit_mode=False)
+            await show_summary(message, state)
+        return
+
     if is_origin_everywhere or is_dest_everywhere:
         await state.update_data(need_return=False, return_date=None)
         await ask_flight_type(message, state)
@@ -309,7 +334,7 @@ async def process_need_return(message: Message, state: FSMContext):
     if need_return:
         await message.answer(
             "Введите дату возврата в формате <code>ДД.ММ</code>\n"
-            "Пример: 15.03",
+            "<i>Пример: 15.03</i>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
@@ -336,7 +361,7 @@ async def process_return_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n"
-            "Введите в формате `ДД.ММ` (например: 15.03)",
+            "<i>Пример: 15.03</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
@@ -361,6 +386,13 @@ async def process_return_date(message: Message, state: FSMContext):
         return
 
     await state.update_data(return_date=message.text)
+
+    data = await state.get_data()
+    if data.get("_edit_mode"):
+        await state.update_data(_edit_mode=False)
+        await show_summary(message, state)
+        return
+
     await ask_flight_type(message, state)
 
 def _flight_type_text_to_code(text: str) -> str:
@@ -391,6 +423,13 @@ async def ask_flight_type(message: Message, state: FSMContext):
 async def process_flight_type(message: Message, state: FSMContext):
     flight_type = _flight_type_text_to_code(message.text)
     await state.update_data(flight_type=flight_type)
+
+    data = await state.get_data()
+    if data.get("_edit_mode"):
+        await state.update_data(_edit_mode=False)
+        await show_summary(message, state)
+        return
+
     await ask_adults(message, state)
 
 
@@ -474,6 +513,7 @@ async def process_has_children(message: Message, state: FSMContext):
         await state.update_data(children=0, infants=0)
         pd = f"{adults} взр."
         await state.update_data(passenger_desc=pd, passenger_code=str(adults))
+        # _edit_mode сбросится внутри show_summary
         await show_summary(message, state)
 
 
@@ -582,6 +622,8 @@ async def infants_to_menu(message: Message, state: FSMContext):
     await message.answer("Выберите действие:", reply_markup=kb)
 
 async def show_summary(message, state: FSMContext):
+    # Сбрасываем флаг точечного редактирования
+    await state.update_data(_edit_mode=False)
     data = await state.get_data()
     adults = data["adults"]
     children = data.get("children", 0)
@@ -631,30 +673,61 @@ async def show_summary(message, state: FSMContext):
     await message.answer("Подтвердите или измените параметры:", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
 
-@router.callback_query(FlightSearch.confirm, F.data.startswith("edit_"))
-async def edit_step(callback: CallbackQuery, state: FSMContext):
-    # Разбиваем по первому _ после "edit" чтобы корректно обработать "flight_type"
-    action = callback.data[len("edit_"):]  # "route", "dates", "flight_type", "passengers"
+async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: str):
+    """
+    Точечное изменение одного параметра.
+    После изменения show_summary вернёт пользователя к экрану подтверждения,
+    без прохождения всей цепочки заново.
+    """
     if action == "route":
+        # Маршрут — вводится текстом, переходим в FlightSearch.route
+        # Но помечаем флаг, чтобы после ввода вернуться к summary, а не идти к датам
+        await state.update_data(_edit_mode=True)
         await callback.message.edit_text(
-            "✏️ Введите новый маршрут:\n<code>Город вылета - Город прибытия</code>\n\nПример: Москва - Сочи",
+            "✏️ Введите новый маршрут:\n<b>Город вылета - Город прибытия</b>\n\n<i>Пример: Москва - Сочи</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         await state.set_state(FlightSearch.route)
+
     elif action == "dates":
+        # Только дата вылета — после ввода сразу к summary (через флаг _edit_mode)
+        await state.update_data(_edit_mode=True)
+        data = await state.get_data()
+        is_roundtrip = data.get("need_return", False)
+        hint = ""
+        if is_roundtrip:
+            hint = "\n(затем введёте дату обратного рейса)"
         await callback.message.edit_text(
-            "✏️ Введите дату вылета в формате <code>ДД.ММ</code>\nПример: 15.03",
+            f"✏️ Введите новую дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 15.03</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         await state.set_state(FlightSearch.depart_date)
+
     elif action == "flight_type":
-        await callback.message.delete()
+        # Тип рейса — кнопки, после выбора сразу к summary
+        await state.update_data(_edit_mode=True)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await ask_flight_type(callback.message, state)
+
     elif action == "passengers":
-        await callback.message.delete()
+        # Пассажиры — кнопки, после выбора сразу к summary
+        await state.update_data(_edit_mode=True)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await ask_adults(callback.message, state)
+
+
+@router.callback_query(FlightSearch.confirm, F.data.startswith("edit_"))
+async def edit_step(callback: CallbackQuery, state: FSMContext):
+    action = callback.data[len("edit_"):]
+    await _do_edit_action(callback, state, action)
     await callback.answer()
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
@@ -1005,6 +1078,9 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
         InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")
     ])
     kb_buttons.append([
+        InlineKeyboardButton(text="✏️ Изменить данные", callback_data=f"edit_from_results_{cache_id}")
+    ])
+    kb_buttons.append([
         InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
     ])
 
@@ -1026,6 +1102,40 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await state.clear()
     await callback.answer()
+
+    # ── Правка 1: напоминание о «Горячих предложениях» через 5 минут ──
+    asyncio.create_task(
+        _remind_hot_deals(callback.message.chat.id, callback.from_user.id)
+    )
+
+
+async def _remind_hot_deals(chat_id: int, user_id: int):
+    """Через 5 минут после завершения поиска предлагаем подписку на горячие."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(5 * 60)  # 5 минут
+    try:
+        from aiogram import Bot
+        # Получаем бот через глобальный контекст aiogram
+        from aiogram.fsm.storage.base import StorageKey
+        # Импортируем бот из main через глобальную переменную
+        from utils.bot_instance import bot as _bot
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔥 Подписаться на вау-цены",
+                callback_data="hot_deals_menu"
+            )],
+            [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")],
+        ])
+        await _bot.send_message(
+            chat_id,
+            "✈️ Кстати, укажи интересные тебе направления — "
+            "и я сообщу о вау-ценах туда, как только они появятся!",
+            reply_markup=kb
+        )
+        logger.info(f"[Reminder] Отправлено напоминание о горячих предложениях user_id={user_id}")
+    except Exception as e:
+        logger.debug(f"[Reminder] Не удалось отправить напоминание: {e}")
+
 
 def parse_passengers(s: str) -> str:
     if not s: return "1"
@@ -1356,6 +1466,9 @@ async def handle_flight_request(message: Message):
     ])
     kb_buttons.append([
         InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")
+    ])
+    kb_buttons.append([
+        InlineKeyboardButton(text="✏️ Изменить данные", callback_data=f"edit_from_results_{cache_id}")
     ])
     kb_buttons.append([
         InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
@@ -1708,6 +1821,64 @@ async def back_to_summary(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(summary, parse_mode="HTML")
     await callback.message.answer("Подтвердите или измените параметры:", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_from_results_"))
+async def edit_from_results(callback: CallbackQuery, state: FSMContext):
+    """Кнопка 'Изменить данные' со страницы результатов.
+    Показывает меню выбора что именно изменить, без сброса всего FSM."""
+    cache_id = callback.data.replace("edit_from_results_", "")
+    cached = await redis_client.get_search_cache(cache_id)
+    if not cached:
+        await callback.answer("Данные устарели, начните новый поиск", show_alert=True)
+        return
+
+    # Восстанавливаем данные поиска в FSM
+    flights = cached.pop("flights", [])  # не храним в FSM
+    await state.update_data(**cached)
+
+    # Строим краткую сводку из кэша
+    origin_iata = flights[0].get("origin", "") if flights else cached.get("dest_iata", "")
+    dest_iata = cached.get("dest_iata", "")
+    from utils.cities_loader import get_city_name, IATA_TO_CITY
+    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
+    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
+
+    edit_buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Маршрут",   callback_data="result_edit_route"),
+         InlineKeyboardButton(text="✏️ Даты",       callback_data="result_edit_dates")],
+        [InlineKeyboardButton(text="✏️ Тип рейса",  callback_data="result_edit_flight_type"),
+         InlineKeyboardButton(text="✏️ Пассажиры",  callback_data="result_edit_passengers")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    ])
+    depart_display = cached.get("display_depart", "")
+    return_display = cached.get("display_return", "")
+    pax = cached.get("passenger_desc", "1 взр.")
+    ft_map = {"direct": "прямые", "transfer": "с пересадками", "all": "все"}
+    ft = ft_map.get(cached.get("flight_type", "all"), "все")
+
+    text = (
+        f"✏️ <b>Изменить параметры поиска</b>\n\n"
+        f"Маршрут: {origin_name} → {dest_name}\n"
+        f"Туда: {depart_display}"
+        + (f" | Обратно: {return_display}" if return_display else "") +
+        f"\nРейсы: {ft} | Пассажиры: {pax}\n\n"
+        f"Что изменить?"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=edit_buttons)
+    await state.set_state(FlightSearch.confirm)
+    await callback.answer()
+
+
+# ── Обработчики редактирования со страницы результатов ──────────
+# Аналогичны edit_step, но вызываются без состояния FlightSearch.confirm
+
+@router.callback_query(F.data.startswith("result_edit_"))
+async def result_edit_step(callback: CallbackQuery, state: FSMContext):
+    """Точечное редактирование одного параметра со страницы результатов."""
+    action = callback.data.replace("result_edit_", "")
+    await _do_edit_action(callback, state, action)
     await callback.answer()
 
 

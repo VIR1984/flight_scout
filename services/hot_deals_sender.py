@@ -120,9 +120,25 @@ class HotDealsSender:
 
         _, destinations = CATEGORIES.get(category, ("", []))
 
-        # Формируем дату поиска
-        if travel_month:
-            # 1-е число нужного месяца
+        # Формируем дату поиска — учитываем несколько месяцев
+        travel_months_list = sub.get("travel_months", [])
+        search_date = None
+
+        if travel_months_list:
+            # Берём ближайший будущий из выбранных месяцев
+            today = date.today()
+            for mk in travel_months_list:
+                try:
+                    m, y = map(int, mk.split("_"))
+                    candidate = date(y, m, 1)
+                    if candidate >= today:
+                        if search_date is None or candidate < search_date:
+                            search_date = candidate
+                except Exception:
+                    pass
+            if search_date is None:
+                search_date = today + timedelta(days=30)
+        elif travel_month:
             try:
                 search_date = date(travel_year, travel_month, 1)
                 if search_date < date.today():

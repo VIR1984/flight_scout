@@ -48,6 +48,9 @@ async def main():
         token=os.getenv("BOT_TOKEN"),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+    # Регистрируем синглтон для использования в фоновых задачах
+    import utils.bot_instance as _bot_instance
+    _bot_instance.bot = bot
 
     # ─── 4. Диспетчер ───
     storage = MemoryStorage()
