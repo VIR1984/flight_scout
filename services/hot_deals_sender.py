@@ -52,12 +52,20 @@ class HotDealsSender:
     async def start(self):
         self.running = True
         logger.info("🔥 HotDealsSender запущен")
+        try:
+            await asyncio.gather(
+                self._hot_deals_loop(),
+                self._digest_loop(),
+            )
+        except asyncio.CancelledError:
+            logger.info("🛑 HotDealsSender остановлен")
+        finally:
+            self.running = False
 
-        # Запускаем два цикла параллельно
-        await asyncio.gather(
-            self._hot_deals_loop(),
-            self._digest_loop(),
-        )
+    def stop(self):
+        """Плавная остановка — вызвать перед отменой задачи"""
+        self.running = False
+        logger.info("🛑 HotDealsSender: получен сигнал остановки")
 
     # ══════════════════════════════════════════════
     # Горячие предложения — каждые 3 часа
@@ -75,19 +83,27 @@ class HotDealsSender:
 
     async def _process_hot_subs(self):
         all_subs = await redis_client.get_all_hot_subs()
+        logger.info(f"🔍 [HotDeals] Всего подписок в Redis: {len(all_subs)}")
         hot_subs = [(uid, sid, s) for uid, sid, s in all_subs if s.get("sub_type") == "hot"]
         if not hot_subs:
+            logger.info("[HotDeals] Горячих подписок нет — пропускаем")
             return
         logger.info(f"🔍 [HotDeals] Проверяем {len(hot_subs)} горячих подписок...")
 
         for user_id, sub_id, sub in hot_subs:
             if not self.running:
                 break
+            last = sub.get("last_notified", 0)
+            since_last = time.time() - last
+            logger.debug(f"[HotDeals] sub_id={sub_id} user={user_id} "
+                        f"origin={sub.get('origin_iata')} cat={sub.get('category')} "
+                        f"max_price={sub.get('max_price')} "
+                        f"last_notified={since_last/3600:.1f}ч назад")
             try:
                 await self._check_hot_sub(user_id, sub_id, sub)
                 await asyncio.sleep(1)
             except Exception as e:
-                logger.error(f"❌ [HotDeals] Ошибка sub {sub_id}: {e}")
+                logger.error(f"❌ [HotDeals] Ошибка sub {sub_id}: {e}", exc_info=True)
 
     async def _check_hot_sub(self, user_id: int, sub_id: str, sub: dict):
         # Не чаще 12 часов на одну подписку
@@ -125,16 +141,18 @@ class HotDealsSender:
 
         sample_dests = random.sample(destinations, min(6, len(destinations)))
 
+        logger.info(f"[HotDeals] Ищем рейсы из {origin}, направлений: {sample_dests}")
         for dest in sample_dests:
             if dest == origin:
                 continue
             try:
                 flights = await search_flights(origin, dest, depart_str, None)
                 if not flights:
+                    logger.debug(f"[HotDeals] {origin}→{dest}: рейсов не найдено")
                     continue
                 cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
                 price_per_pax = cheapest.get("value") or cheapest.get("price") or 0
-                total = price_per_pax * passengers
+                logger.debug(f"[HotDeals] {origin}→{dest}: {price_per_pax}₽ ({len(flights)} вариантов)")
 
                 if best_price is None or price_per_pax < best_price:
                     best_price = price_per_pax
@@ -143,13 +161,15 @@ class HotDealsSender:
 
                 await asyncio.sleep(0.5)
             except Exception as e:
-                logger.debug(f"[HotDeals] {origin}→{dest}: {e}")
+                logger.warning(f"[HotDeals] {origin}→{dest}: ошибка {e}")
 
         if not best_flight or not best_price:
+            logger.info(f"[HotDeals] sub_id не дал результатов: origin={origin}")
             return
 
         # Проверяем бюджет
         if max_price and best_price > max_price:
+            logger.info(f"[HotDeals] Цена {best_price}₽ > бюджет {max_price}₽ — пропускаем")
             return
 
         # Отправляем уведомление
@@ -215,16 +235,19 @@ class HotDealsSender:
 
     async def _digest_loop(self):
         await asyncio.sleep(120)  # старт через 2 минуты
+        logger.info("[Digest] Цикл дайджестов запущен")
         while self.running:
             try:
                 now = datetime.now(MSK)
+                logger.debug(f"[Digest] Проверка таймера: {now.strftime('%H:%M')} МСК")
                 # Отправляем дайджест в 09:00 МСК
                 if now.hour == 9 and now.minute < 10:
                     is_monday = (now.weekday() == 0)
+                    logger.info(f"[Digest] Запуск отправки (понедельник={is_monday})")
                     await self._process_digest_subs(is_monday_run=is_monday)
                     await asyncio.sleep(600)  # подождать 10 мин, не слать повторно
             except Exception as e:
-                logger.error(f"❌ [Digest] Ошибка в цикле: {e}")
+                logger.error(f"❌ [Digest] Ошибка в цикле: {e}", exc_info=True)
             await asyncio.sleep(self.digest_check_interval)
 
     async def _process_digest_subs(self, is_monday_run: bool):

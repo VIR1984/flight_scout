@@ -74,11 +74,23 @@ MONTHS_LABELS = {
 
 @router.callback_query(F.data == "hot_deals_menu")
 async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+    logger.debug(f"[HotDeals] hot_deals_menu вызван, текущий FSM-стейт: {current_state}")
+
+    # Если пользователь в середине поиска билетов — не сбрасываем его прогресс
+    if current_state and not current_state.startswith("HotDealsSub"):
+        await callback.answer(
+            "⚠️ Сначала завершите или отмените текущий поиск билетов",
+            show_alert=True
+        )
+        return
+
     await state.clear()
     user_id = callback.from_user.id
+    logger.info(f"[HotDeals] Открыто меню горячих предложений user_id={user_id}")
 
-    # Список активных подписок для этого пользователя
     subs = await redis_client.get_hot_subs(user_id)
+    logger.debug(f"[HotDeals] Найдено подписок для {user_id}: {len(subs) if subs else 0}")
 
     text = "🔥 <b>Горячие предложения</b>\n\nВыберите действие:"
     buttons = [
@@ -99,6 +111,7 @@ async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "hd_new_sub")
 async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
+    logger.info(f"[HotDeals] Шаг 1 — выбор типа подписки user_id={callback.from_user.id}")
     await state.set_state(HotDealsSub.choose_sub_type)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔥 Горячие предложения",
@@ -125,6 +138,7 @@ async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.in_({"hd_type_hot", "hd_type_digest"}))
 async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
     sub_type = "hot" if callback.data == "hd_type_hot" else "digest"
+    logger.info(f"[HotDeals] Шаг 2 — тип={sub_type} user_id={callback.from_user.id}")
     await state.update_data(sub_type=sub_type)
     await state.set_state(HotDealsSub.choose_category)
 
@@ -150,6 +164,7 @@ async def hd_step3_origin(callback: CallbackQuery, state: FSMContext):
     if cat not in CATEGORIES:
         await callback.answer("Неверная категория", show_alert=True)
         return
+    logger.info(f"[HotDeals] Шаг 3 — категория={cat} user_id={callback.from_user.id}")
     await state.update_data(category=cat)
     await state.set_state(HotDealsSub.choose_origin)
 
@@ -166,14 +181,17 @@ async def hd_step3_origin(callback: CallbackQuery, state: FSMContext):
 @router.message(HotDealsSub.choose_origin)
 async def hd_step3_origin_text(message: Message, state: FSMContext):
     city = message.text.strip()
+    logger.info(f"[HotDeals] Шаг 3 — ввод города='{city}' user_id={message.from_user.id}")
     iata = get_iata(city)
     if not iata:
+        logger.warning(f"[HotDeals] Город не найден: '{city}'")
         await message.answer(
             f"❌ Город «{city}» не найден. Попробуйте ещё раз "
             f"(например: <b>Москва</b>, <b>Новосибирск</b>).",
             parse_mode="HTML"
         )
         return
+    logger.info(f"[HotDeals] Город '{city}' → IATA={iata}")
     await state.update_data(origin_iata=iata, origin_name=get_city_name(iata) or city)
     await state.set_state(HotDealsSub.choose_months)
     await _ask_months(message)
@@ -364,6 +382,7 @@ async def _show_confirm(target, data: dict):
 async def hd_save(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     user_id = callback.from_user.id
+    logger.info(f"[HotDeals] Сохранение подписки user_id={user_id}, данные={data}")
 
     sub = {
         "user_id": user_id,

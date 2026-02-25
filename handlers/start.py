@@ -177,31 +177,7 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
         )
     await callback.answer()
     
-@router.callback_query(F.data == "hot_deals_menu")
-async def hot_deals_menu(callback: CallbackQuery):
-    """Временная заглушка для горячих предложений (легко удаляемая)"""
-    # === ЗАГЛУШКА НАЧАЛО ===
-    await _show_hot_deals_placeholder(callback)
-    # === ЗАГЛУШКА КОНЕЦ ===
-
-async def _show_hot_deals_placeholder(callback: CallbackQuery):
-    """Показывает сообщение о том, что функционал в разработке"""
-    message_text = (
-        "🛠️ <b>Горячие предложения</b>\n\n"
-        "Этот функционал находится в активной разработке.\n\n"
-        "Скоро вы сможете:\n"
-        "• Получать уведомления о самых дешёвых рейсах\n"
-        "• Подписываться на интересующие направления\n"
-        "• Получать персонализированные предложения\n\n"
-        "Оставайтесь с нами — мы скоро запустим эту функцию!"
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ В главное меню", callback_data="main_menu")]
-    ])
-    
-    await callback.message.edit_text(message_text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+# hot_deals_menu обрабатывается в handlers/hot_deals.py
 
 @router.callback_query(F.data == "start_search")
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
