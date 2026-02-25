@@ -22,7 +22,6 @@ class RedisClient:
             logger.warning("REDIS_URL не задан — Redis отключён")
             return
         try:
-            # ⚡ Для rediss:// SSL включается автоматически
             self.client = redis.from_url(
                 redis_url,
                 decode_responses=True,
@@ -81,7 +80,7 @@ class RedisClient:
         return_date: Optional[str],
         current_price: int,
         passengers: str = "1",
-        threshold: int = 0  # ← НОВЫЙ ПАРАМЕТР (0 = любое, 100 = сотни, 1000 = тысячи)
+        threshold: int = 0
     ) -> str:
         """Сохранить отслеживание цены. Возвращает ключ"""
         key = f"{self.prefix}watch:{user_id}:{origin}:{dest}:{depart_date}"
@@ -95,10 +94,10 @@ class RedisClient:
             "current_price": current_price,
             "passengers": passengers,
             "user_id": user_id,
-            "threshold": threshold,  # ← СОХРАНЯЕМ ПОРОГ
+            "threshold": threshold,
             "created_at": int(time.time())
         }
-        await self.client.setex(key, 86400 * 30, json.dumps(data, ensure_ascii=False))  # 30 дней
+        await self.client.setex(key, 86400 * 30, json.dumps(data, ensure_ascii=False))
         await self.client.sadd(f"{self.prefix}user:watches:{user_id}", key)
         return key
 
@@ -132,7 +131,7 @@ class RedisClient:
             cursor, batch = await self.client.scan(cursor=cursor, match=pattern, count=100)
             keys.extend(batch)
         return keys
-        
+
     # ===== FlyStack usage tracking =====
     async def get_flystack_usage(self, user_id: int, month: str) -> int:
         """Получить количество использованных запросов FlyStack за месяц"""
@@ -154,22 +153,21 @@ class RedisClient:
         await self.client.incr(key)
         await self.client.expire(key, 86400 * 35)
         return True
-            
+
+    # ===== Горячие предложения / Дайджест =====
+
     async def save_hot_sub(self, user_id: int, sub: dict) -> str:
-    """Сохранить горячую/дайджест-подписку. Возвращает sub_id."""
-    if not self.client:
-        return ""
-    sub_id = str(uuid.uuid4())[:8]
-    key = f"{self.prefix}hotsub:{user_id}:{sub_id}"
-    ttl = 86400 * 180  # 180 дней
-
-    await self.client.setex(key, ttl, __import__("json").dumps(sub, ensure_ascii=False))
-    # Индексы
-    await self.client.sadd(f"{self.prefix}hotsubs:{user_id}", sub_id)
-    await self.client.sadd(f"{self.prefix}hotsubs_all", key)
-    logger.info(f"✅ [HotSub] Сохранена подписка {sub_id} для {user_id}")
-    return sub_id
-
+        """Сохранить горячую/дайджест-подписку. Возвращает sub_id."""
+        if not self.client:
+            return ""
+        sub_id = str(uuid.uuid4())[:8]
+        key = f"{self.prefix}hotsub:{user_id}:{sub_id}"
+        ttl = 86400 * 180  # 180 дней
+        await self.client.setex(key, ttl, json.dumps(sub, ensure_ascii=False))
+        await self.client.sadd(f"{self.prefix}hotsubs:{user_id}", sub_id)
+        await self.client.sadd(f"{self.prefix}hotsubs_all", key)
+        logger.info(f"✅ [HotSub] Сохранена подписка {sub_id} для {user_id}")
+        return sub_id
 
     async def get_hot_subs(self, user_id: int) -> dict:
         """Вернуть все подписки пользователя: {sub_id: sub_data}."""
@@ -181,12 +179,10 @@ class RedisClient:
             key = f"{self.prefix}hotsub:{user_id}:{sid}"
             raw = await self.client.get(key)
             if raw:
-                result[sid] = __import__("json").loads(raw)
+                result[sid] = json.loads(raw)
             else:
-                # Устаревший индекс — чистим
                 await self.client.srem(f"{self.prefix}hotsubs:{user_id}", sid)
         return result
-
 
     async def get_all_hot_subs(self) -> list:
         """Вернуть все подписки всех пользователей: [(user_id, sub_id, sub_data), ...]."""
@@ -201,7 +197,7 @@ class RedisClient:
                 dead_keys.append(key)
                 continue
             try:
-                sub = __import__("json").loads(raw)
+                sub = json.loads(raw)
                 # key = flight_bot:hotsub:{user_id}:{sub_id}
                 parts = key.split(":")
                 user_id = int(parts[-2])
@@ -213,15 +209,13 @@ class RedisClient:
             await self.client.srem(f"{self.prefix}hotsubs_all", *dead_keys)
         return result
 
-
     async def update_hot_sub(self, user_id: int, sub_id: str, sub: dict):
         """Обновить данные подписки (например, last_notified)."""
         if not self.client:
             return
         key = f"{self.prefix}hotsub:{user_id}:{sub_id}"
         ttl = 86400 * 180
-        await self.client.setex(key, ttl, __import__("json").dumps(sub, ensure_ascii=False))
-
+        await self.client.setex(key, ttl, json.dumps(sub, ensure_ascii=False))
 
     async def delete_hot_sub(self, user_id: int, sub_id: str):
         """Удалить подписку."""
@@ -232,6 +226,7 @@ class RedisClient:
         await self.client.srem(f"{self.prefix}hotsubs:{user_id}", sub_id)
         await self.client.srem(f"{self.prefix}hotsubs_all", key)
         logger.info(f"🗑️ [HotSub] Удалена подписка {sub_id} пользователя {user_id}")
+
 
 # Singleton
 redis_client = RedisClient()
