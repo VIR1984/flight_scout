@@ -635,9 +635,19 @@ async def show_summary(message, state: FSMContext):
         f"{summary_steps}"
     )
     
-    # Клавиатура подтверждения
+    # Клавиатура подтверждения с кнопками редактирования
+    data = await state.get_data()
+    is_everywhere = data.get("origin") == "везде" or data.get("dest") == "везде"
+
+    edit_buttons = [
+        [InlineKeyboardButton(text="✏️ Маршрут", callback_data="edit_route"),
+         InlineKeyboardButton(text="✏️ Даты", callback_data="edit_dates")],
+        [InlineKeyboardButton(text="✏️ Тип рейса", callback_data="edit_flight_type"),
+         InlineKeyboardButton(text="✏️ Пассажиры", callback_data="edit_passengers")],
+    ]
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
+        *edit_buttons,
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
     ])
 
@@ -647,24 +657,27 @@ async def show_summary(message, state: FSMContext):
 
 @router.callback_query(FlightSearch.confirm, F.data.startswith("edit_"))
 async def edit_step(callback: CallbackQuery, state: FSMContext):
-    step = callback.data.split("_")[1]
-    if step == "route":
+    # Разбиваем по первому _ после "edit" чтобы корректно обработать "flight_type"
+    action = callback.data[len("edit_"):]  # "route", "dates", "flight_type", "passengers"
+    if action == "route":
         await callback.message.edit_text(
-            "Введите маршрут: Город - Город",
+            "✏️ Введите новый маршрут:\n<code>Город вылета - Город прибытия</code>\n\nПример: Москва - Сочи",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         await state.set_state(FlightSearch.route)
-    elif step == "dates":
+    elif action == "dates":
         await callback.message.edit_text(
-            "Введите дату вылета: ДД.ММ",
+            "✏️ Введите дату вылета в формате <code>ДД.ММ</code>\nПример: 15.03",
             parse_mode="HTML",
             reply_markup=CANCEL_KB
         )
         await state.set_state(FlightSearch.depart_date)
-    elif step == "flight_type":
+    elif action == "flight_type":
+        await callback.message.delete()
         await ask_flight_type(callback.message, state)
-    elif step == "passengers":
+    elif action == "passengers":
+        await callback.message.delete()
         await ask_adults(callback.message, state)
     await callback.answer()
 
@@ -787,38 +800,74 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     sources = set(f.get("_source", "unknown") for f in all_flights)
     logger.info(f"🔍 [Search] {len(all_flights)} рейсов, источник: {sources}")
 
+    # ── Нет прямых → предлагаем с пересадками ──────────────────
     if direct_only and not all_flights:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 Показать рейсы с пересадками",
-                    callback_data=f"retry_with_transfers_{callback.message.message_id}"
+        # Делаем второй запрос — все рейсы (чтобы убедиться что маршрут вообще есть)
+        all_flights_any = []
+        for orig in origins:
+            for dest in destinations:
+                if orig == dest:
+                    continue
+                f2 = await search_flights_realtime(
+                    origin=orig, destination=dest,
+                    depart_date=normalize_date(data["depart_date"]),
+                    return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
+                    adults=rt_adults, children=rt_children, infants=rt_infants,
                 )
-            ],
-            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
-        ])
-        await callback.message.edit_text(
-            "😔 Прямых рейсов на эти даты не найдено.\n"
-            "Хотите посмотреть варианты с пересадками? Они часто дешевле!",
-            reply_markup=kb
-        )
+                all_flights_any.extend(f2)
+
+        if all_flights_any:
+            # Есть рейсы с пересадками — предлагаем переключиться
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Показать рейсы с пересадками",
+                    callback_data="retry_with_transfers"
+                )],
+                [InlineKeyboardButton(text="✏️ Изменить параметры", callback_data="back_to_summary")],
+                [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+            ])
+            await callback.message.edit_text(
+                "😔 <b>Прямых рейсов на эти даты не найдено.</b>\n\nЕсть варианты с пересадками — они часто дешевле!",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+        else:
+            # Вообще нет рейсов на маршруте
+            passengers_code = data.get("passenger_code", "1")
+            origin_iata = origins[0]
+            d1 = format_avia_link_date(data["depart_date"])
+            d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
+            route = f"{origin_iata}{d1}{destinations[0]}{d2}{passengers_code}"
+            partner_link = await convert_to_partner_link(f"https://www.aviasales.ru/search/{route}")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔍 Поискать на Aviasales", url=partner_link)],
+                [InlineKeyboardButton(text="✏️ Изменить маршрут", callback_data="back_to_summary")],
+                [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+            ])
+            await callback.message.edit_text(
+                "😔 <b>Рейсов по этому маршруту не найдено.</b>\n\n"
+                "Попробуйте изменить даты или маршрут.",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
         return
 
+    # ── Вообще нет рейсов ───────────────────────────────────────
     if not all_flights:
+        passengers_code = data.get("passenger_code", "1")
         origin_iata = origins[0]
         d1 = format_avia_link_date(data["depart_date"])
         d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
-        passengers_code = data.get("passenger_code", "1")
         route = f"{origin_iata}{d1}{destinations[0]}{d2}{passengers_code}"
-        clean_link = f"https://www.aviasales.ru/search/{route}"
-        partner_link = await convert_to_partner_link(clean_link)
+        partner_link = await convert_to_partner_link(f"https://www.aviasales.ru/search/{route}")
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Посмотреть на Aviasales", url=partner_link)],
+            [InlineKeyboardButton(text="🔍 Поискать на Aviasales", url=partner_link)],
+            [InlineKeyboardButton(text="✏️ Изменить маршрут", callback_data="back_to_summary")],
             [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
         ])
         await callback.message.edit_text(
-            "😔 Билеты не найдены.\n"
-            "На Aviasales могут быть рейсы с пересадками — попробуйте:",
+            "😔 <b>Билеты не найдены.</b>\n\nПопробуйте изменить даты или маршрут.",
+            parse_mode="HTML",
             reply_markup=kb
         )
         await state.clear()
@@ -1634,20 +1683,71 @@ async def handle_unwatch(callback: CallbackQuery):
     )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("retry_with_transfers_"))
+@router.callback_query(F.data == "retry_with_transfers")
 async def retry_with_transfers(callback: CallbackQuery, state: FSMContext):
+    """Повторный поиск со всеми типами рейсов (убираем фильтр 'direct')"""
     data = await state.get_data()
     if not data:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")]
         ])
         await callback.message.edit_text(
-            "😔 Данные поиска устарели. Пожалуйста, выполните новый поиск.",
+            "😔 Данные поиска устарели. Выполните новый поиск.",
             reply_markup=kb
         )
         await callback.answer()
         return
+    await state.update_data(flight_type="all")
+    await confirm_search(callback, state)
+    await callback.answer()
 
+
+@router.callback_query(F.data == "back_to_summary")
+async def back_to_summary(callback: CallbackQuery, state: FSMContext):
+    """Возврат к экрану подтверждения для изменения параметров"""
+    data = await state.get_data()
+    if not data or "depart_date" not in data:
+        await callback.message.edit_text(
+            "😔 Данные поиска устарели.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")]
+            ])
+        )
+        await callback.answer()
+        return
+    # Восстанавливаем экран summary
+    summary_steps = build_choices_summary(data)
+    summary = "Проверьте даты и данные:\n\n" + summary_steps
+    edit_buttons = [
+        [InlineKeyboardButton(text="✏️ Маршрут", callback_data="edit_route"),
+         InlineKeyboardButton(text="✏️ Даты", callback_data="edit_dates")],
+        [InlineKeyboardButton(text="✏️ Тип рейса", callback_data="edit_flight_type"),
+         InlineKeyboardButton(text="✏️ Пассажиры", callback_data="edit_passengers")],
+    ]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
+        *edit_buttons,
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+    ])
+    await callback.message.edit_text(summary, parse_mode="HTML")
+    await callback.message.answer("Подтвердите или измените параметры:", reply_markup=kb)
+    await state.set_state(FlightSearch.confirm)
+    await callback.answer()
+
+
+# Обратная совместимость со старым форматом callback_data
+@router.callback_query(F.data.startswith("retry_with_transfers_"))
+async def retry_with_transfers_legacy(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data:
+        await callback.message.edit_text(
+            "😔 Данные поиска устарели.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")]
+            ])
+        )
+        await callback.answer()
+        return
     await state.update_data(flight_type="all")
     await confirm_search(callback, state)
     await callback.answer()

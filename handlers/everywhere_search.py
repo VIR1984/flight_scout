@@ -31,12 +31,18 @@ CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
 router = Router()
 
 def format_user_date(date_str: str) -> str:
-    """Форматирует дату ДД.ММ в ДД.ММ.ГГГГ"""
+    """Форматирует дату ДД.ММ в ДД.ММ.ГГГГ (год — ближайший будущий)"""
+    from datetime import date as _date
     try:
         d, m = map(int, date_str.split('.'))
-        year = 2026
-        if m < 2 or (m == 2 and d < 8):
-            year = 2027
+        today = _date.today()
+        year = today.year
+        try:
+            target = _date(year, m, d)
+        except ValueError:
+            return date_str
+        if target < today:
+            year += 1
         return f"{d:02d}.{m:02d}.{year}"
     except:
         return date_str
@@ -58,40 +64,58 @@ def build_passenger_desc(code: str) -> str:
     except:
         return "1 взр."
 
+# Расширенный список хабов для поиска "Везде → Город" и "Город → Везде"
+# Разбит по регионам для лучшего покрытия
+SEARCH_HUBS_RUSSIA = [
+    "MOW", "LED", "AER", "KZN", "OVB", "SVX", "UFA", "ROV",
+    "KRR", "IKT", "VVO", "CEK", "KUF", "GOJ", "PEE"
+]
+SEARCH_HUBS_INTERNATIONAL = [
+    "IST", "DXB", "BKK", "BCN", "AMS", "CDG", "FCO", "BER",
+    "PRG", "BUD", "ATH", "WAW", "VIE", "TLV", "HEL"
+]
+# Полный список: сначала российские хабы, потом международные
+ALL_SEARCH_HUBS = SEARCH_HUBS_RUSSIA + SEARCH_HUBS_INTERNATIONAL
+
+
 async def search_origin_everywhere(
     dest_iata: str,
     depart_date: str,
     flight_type: str = "all"
 ) -> List[Dict]:
-    """Поиск рейсов из всех городов в указанный"""
-    origins = GLOBAL_HUBS[:5]
+    """Поиск рейсов из всех городов в указанный (до 15 хабов параллельно)"""
+    # Используем расширенный список, исключаем сам пункт назначения
+    origins = [o for o in ALL_SEARCH_HUBS if o != dest_iata]
     all_flights = []
-    
-    for orig in origins:
-        if orig == dest_iata:
-            continue
-        
-        flights = await search_flights(
-            orig,
-            dest_iata,
-            normalize_date(depart_date),
-            None
-        )
-        
-        # Фильтрация по типу рейса
-        if flight_type == "direct":
-            flights = [f for f in flights if f.get("transfers", 999) == 0]
-        elif flight_type == "transfer":
-            flights = [f for f in flights if f.get("transfers", 0) > 0]
-        
-        flights = [f for f in flights if f.get("destination") == dest_iata]
-        
-        for f in flights:
-            f["origin"] = orig
-        
-        all_flights.extend(flights)
-        await asyncio.sleep(0.5)
-    
+
+    # Параллельные запросы по 5 хабов за раз
+    for i in range(0, len(origins), 5):
+        chunk = origins[i:i+5]
+        tasks = [
+            search_flights(orig, dest_iata, normalize_date(depart_date), None)
+            for orig in chunk
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for orig, result in zip(chunk, results):
+            if isinstance(result, Exception):
+                logger.warning(f"[everywhere] Ошибка для {orig}→{dest_iata}: {result}")
+                continue
+            flights = result
+            if flight_type == "direct":
+                flights = [f for f in flights if f.get("transfers", 999) == 0]
+            elif flight_type == "transfer":
+                flights = [f for f in flights if f.get("transfers", 0) > 0]
+            # Гарантируем корректный destination
+            flights = [f for f in flights if f.get("destination", dest_iata) == dest_iata]
+            for f in flights:
+                f["origin"] = orig
+                f["destination"] = dest_iata
+            all_flights.extend(flights)
+
+        if i + 5 < len(origins):
+            await asyncio.sleep(0.3)
+
     return all_flights
 
 async def search_destination_everywhere(
@@ -99,33 +123,35 @@ async def search_destination_everywhere(
     depart_date: str,
     flight_type: str = "all"
 ) -> List[Dict]:
-    """Поиск рейсов из указанного города во все направления"""
-    destinations = GLOBAL_HUBS[:5]
+    """Поиск рейсов из указанного города во все направления (до 15 хабов параллельно)"""
+    destinations = [d for d in ALL_SEARCH_HUBS if d != origin_iata]
     all_flights = []
-    
-    for dest in destinations:
-        if dest == origin_iata:
-            continue
-        
-        flights = await search_flights(
-            origin_iata,
-            dest,
-            normalize_date(depart_date),
-            None
-        )
-        
-        # Фильтрация по типу рейса
-        if flight_type == "direct":
-            flights = [f for f in flights if f.get("transfers", 999) == 0]
-        elif flight_type == "transfer":
-            flights = [f for f in flights if f.get("transfers", 0) > 0]
-        
-        for f in flights:
-            f["destination"] = dest
-        
-        all_flights.extend(flights)
-        await asyncio.sleep(0.5)
-    
+
+    for i in range(0, len(destinations), 5):
+        chunk = destinations[i:i+5]
+        tasks = [
+            search_flights(origin_iata, dest, normalize_date(depart_date), None)
+            for dest in chunk
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for dest, result in zip(chunk, results):
+            if isinstance(result, Exception):
+                logger.warning(f"[everywhere] Ошибка для {origin_iata}→{dest}: {result}")
+                continue
+            flights = result
+            if flight_type == "direct":
+                flights = [f for f in flights if f.get("transfers", 999) == 0]
+            elif flight_type == "transfer":
+                flights = [f for f in flights if f.get("transfers", 0) > 0]
+            for f in flights:
+                f["origin"] = origin_iata
+                f["destination"] = dest
+            all_flights.extend(flights)
+
+        if i + 5 < len(destinations):
+            await asyncio.sleep(0.3)
+
     return all_flights
 
 async def process_everywhere_search(
