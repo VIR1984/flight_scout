@@ -17,7 +17,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from services.flight_search import search_flights, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, update_passengers_in_link, format_passenger_desc
+from services.flight_search import search_flights, search_flights_realtime, generate_booking_link, normalize_date, format_avia_link_date, find_cheapest_flight_on_exact_date, update_passengers_in_link, format_passenger_desc
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
 from utils.cities import GLOBAL_HUBS 
@@ -689,27 +689,69 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     destinations = [data["dest_iata"]]
     all_flights = []
 
+    # Парсим пассажиров из кода (например "211" → adults=2, children=1, infants=1)
+    pax_code = data.get("passenger_code", "1")
+    try:
+        rt_adults   = int(pax_code[0]) if pax_code else 1
+        rt_children = int(pax_code[1]) if len(pax_code) > 1 else 0
+        rt_infants  = int(pax_code[2]) if len(pax_code) > 2 else 0
+    except (ValueError, IndexError):
+        rt_adults, rt_children, rt_infants = 1, 0, 0
+
+    # Показываем прогресс — real-time поиск занимает 30-45 секунд
+    progress_msg = await callback.message.edit_text(
+        "⏳ <b>Запрашиваю актуальные цены...</b>\n"
+        "<i>Получаю данные от авиакомпаний — обычно 30–45 сек</i>",
+        parse_mode="HTML"
+    )
+
+    # Задача обновления прогресса каждые 15 сек
+    async def update_progress():
+        await asyncio.sleep(15)
+        try:
+            await progress_msg.edit_text(
+                "⏳ <b>Собираю предложения...</b>\n"
+                "<i>Ещё немного — сравниваю цены у разных авиакомпаний</i>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(15)
+        try:
+            await progress_msg.edit_text(
+                "⏳ <b>Почти готово...</b>\n"
+                "<i>Выбираю лучший вариант для вас</i>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    progress_task = asyncio.create_task(update_progress())
+
     for orig in origins:
         for dest in destinations:
             if orig == dest:
                 continue
-            flights = await search_flights(
-                orig,
-                dest,
-                normalize_date(data["depart_date"]),
-                normalize_date(data["return_date"]) if data.get("return_date") else None,
-                direct=direct_only
+            flights = await search_flights_realtime(
+                origin=orig,
+                destination=dest,
+                depart_date=normalize_date(data["depart_date"]),
+                return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
+                adults=rt_adults,
+                children=rt_children,
+                infants=rt_infants,
             )
             if direct_only:
                 flights = [f for f in flights if f.get("transfers", 999) == 0]
             elif transfers_only:
                 flights = [f for f in flights if f.get("transfers", 0) > 0]
-            
+
             for f in flights:
                 f["origin"] = orig
                 f["destination"] = dest
             all_flights.extend(flights)
-            await asyncio.sleep(0.5)
+
+    progress_task.cancel()
 
     if direct_only and not all_flights:
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1521,6 +1563,10 @@ async def handle_any_message(message: Message, state: FSMContext):
     if current_state and current_state.startswith("FlyStackTrack"):
         logger.info(f"📝 [Start] Пропускаем сообщение в состоянии FlyStackTrack: {message.text}")
         return  # Пропускаем, пусть обрабатывает flystack_track.py
+
+    # ИГНОРИРУЕМ СОСТОЯНИЯ ИЗ HOT DEALS
+    if current_state and current_state.startswith("HotDealsSub"):
+        return  # Пропускаем, пусть обрабатывает hot_deals.py
     
     # Проверяем ТОЛЬКО состояния из FlightSearch
     if current_state:

@@ -1,36 +1,463 @@
 import os
 import asyncio
 import aiohttp
+import hashlib
 import re
 from typing import List, Dict, Optional
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from datetime import datetime
+from urllib.parse import urlparse, urlunparse
+from datetime import datetime, date
 from utils.logger import logger
 
 
-# Конфигурация API
+# ══════════════════════════════════════════════════════════════════
+# Конфигурация
+# ══════════════════════════════════════════════════════════════════
+
+# Data API (grouped_prices, кеш ~48ч) — фоновые задачи, горячие предложения
 AVIASALES_GROUPED_URL = "https://api.travelpayouts.com/aviasales/v3/grouped_prices"
-AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN", "").strip()
+
+# Real-time Search API — поиск по запросу пользователя
+AVIASALES_SEARCH_URL         = "https://api.travelpayouts.com/v1/flight_search"
+AVIASALES_SEARCH_RESULTS_URL = "https://api.travelpayouts.com/v1/flight_search_results"
+
+AVIASALES_TOKEN  = os.getenv("AVIASALES_TOKEN", "").strip()
+AVIASALES_MARKER = os.getenv("AVIASALES_MARKER", "").strip()
+AVIASALES_HOST   = os.getenv("AVIASALES_HOST", "beta.aviasales.ru").strip()
+
+
+# ══════════════════════════════════════════════════════════════════
+# Утилиты: даты
+# ══════════════════════════════════════════════════════════════════
 
 def normalize_date(date_str: str) -> str:
-    """Преобразует дату ДД.ММ в формат ГГГГ-ММ-ДД для 2026 года (или 2027 для январь/февраль)"""
+    """
+    Преобразует дату любого формата в ГГГГ-ММ-ДД.
+    Поддерживает: 'ДД.ММ', 'ГГГГ-ММ-ДД' (возвращает как есть).
+    Год определяется динамически — ближайший будущий.
+    """
+    if not date_str:
+        return date_str
+    if len(date_str) == 10 and date_str[4] == '-':
+        return date_str
     try:
         day, month = map(int, date_str.split('.'))
-        year = 2026
-        if month < 2 or (month == 2 and day < 8):
-            year = 2027
+        today = date.today()
+        year  = today.year
+        try:
+            target = date(year, month, day)
+        except ValueError:
+            return date_str
+        if target < today:
+            year += 1
         return f"{year}-{month:02d}-{day:02d}"
     except Exception:
         return date_str
 
+
 def format_avia_link_date(date_str: str) -> str:
-    """Форматирует дату ДД.ММ → ДДММ для ссылки Aviasales"""
+    """
+    Форматирует дату → ДДММ для ссылки Aviasales.
+    Принимает 'ДД.ММ' или 'ГГГГ-ММ-ДД'.
+    """
     try:
+        if len(date_str) == 10 and date_str[4] == '-':
+            _, month, day = date_str.split('-')
+            return f"{day}{month}"
         day, month = date_str.split('.')
         return f"{day}{month}"
     except Exception:
-        return date_str.replace('.', '')
+        return date_str.replace('.', '').replace('-', '')
 
+
+# ══════════════════════════════════════════════════════════════════
+# Утилиты: ссылки
+# ══════════════════════════════════════════════════════════════════
+
+def generate_booking_link(
+    flight: Dict,
+    origin: str,
+    dest: str,
+    depart_date: str,
+    passengers_code: str = "1",
+    return_date: Optional[str] = None,
+) -> str:
+    """
+    Генерирует ссылку на Aviasales.
+    В одну сторону: ORIGДДММDESTПАСС     → MOW1003AER1
+    Туда-обратно:   ORIGДДММDESTДДММПАСС → MOW1003AER1503211
+    """
+    if not passengers_code or not isinstance(passengers_code, str):
+        passengers_code = "1"
+    passengers_code = re.sub(r'\D', '', passengers_code)[:3]
+    if not passengers_code or passengers_code[0] == '0':
+        passengers_code = "1"
+
+    d1 = format_avia_link_date(depart_date)
+    d2 = format_avia_link_date(return_date) if return_date else ""
+    route = f"{origin}{d1}{dest}{d2}{passengers_code}"
+    return f"https://www.aviasales.ru/search/{route}"
+
+
+def update_passengers_in_link(link: str, passengers_code: str) -> str:
+    """Заменяет код пассажиров в существующей ссылке Aviasales."""
+    if not link or not passengers_code or not passengers_code.isdigit():
+        return link
+    if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
+        return link
+
+    is_relative = link.startswith('/')
+    parsed = None if is_relative else urlparse(link)
+    path   = link if is_relative else parsed.path
+
+    if '/search/' not in path:
+        return link
+
+    _, search_part = path.split('/search/', 1)
+
+    if '?' in search_part:
+        route, query = search_part.split('?', 1)
+        has_query = True
+    else:
+        route, query = search_part, ""
+        has_query = False
+
+    new_route = (route[:-1] + passengers_code) if (route and route[-1].isdigit()) else (route + passengers_code)
+    new_path  = f"/search/{new_route}" + (f"?{query}" if has_query else "")
+    return new_path if is_relative else urlunparse(parsed._replace(path=new_path))
+
+
+# ══════════════════════════════════════════════════════════════════
+# Утилиты: пассажиры и форматирование
+# ══════════════════════════════════════════════════════════════════
+
+def parse_passengers(s: str) -> str:
+    """'2 взр, 1 реб' → '21'"""
+    if not s:
+        return "1"
+    if s.isdigit():
+        return s
+    adults = children = infants = 0
+    for part in s.split(","):
+        part = part.strip().lower()
+        n = int(re.search(r"\d+", part).group()) if re.search(r"\d+", part) else 1
+        if "взр" in part or "взросл" in part:
+            adults = n
+        elif "реб" in part or "дет" in part:
+            children = n
+        elif "мл" in part or "млад" in part:
+            infants = n
+    code = str(max(adults, 1))
+    if children > 0: code += str(children)
+    if infants  > 0: code += str(infants)
+    return code
+
+
+def format_passenger_desc(code: str) -> str:
+    """'211' → '2 взр., 1 реб., 1 мл.'"""
+    try:
+        adults   = int(code[0])
+        children = int(code[1]) if len(code) > 1 else 0
+        infants  = int(code[2]) if len(code) > 2 else 0
+        parts = []
+        if adults:   parts.append(f"{adults} взр.")
+        if children: parts.append(f"{children} реб.")
+        if infants:  parts.append(f"{infants} мл.")
+        return ", ".join(parts) if parts else "1 взр."
+    except Exception:
+        return "1 взр."
+
+
+def format_duration(minutes: int) -> str:
+    """125 → '2ч 5м'"""
+    if not minutes:
+        return "—"
+    parts = []
+    if minutes // 60: parts.append(f"{minutes // 60}ч")
+    if minutes % 60:  parts.append(f"{minutes % 60}м")
+    return " ".join(parts) if parts else "—"
+
+
+def find_cheapest_flight_on_exact_date(
+    flights: List[Dict],
+    requested_depart_date: str,
+    requested_return_date: Optional[str] = None,
+) -> Optional[Dict]:
+    """Самый дешёвый рейс на точную дату; если не найден — глобальный минимум."""
+    if not flights:
+        return None
+    req_dep = normalize_date(requested_depart_date)
+    req_ret = normalize_date(requested_return_date) if requested_return_date else None
+
+    exact = [
+        f for f in flights
+        if f.get("departure_at", "")[:10] == req_dep
+        and (not req_ret or f.get("return_at", "")[:10] == req_ret)
+    ]
+    pool = exact if exact else flights
+    return min(pool, key=lambda f: f.get("value") or f.get("price") or 999_999_999)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Real-time Search API
+# Только по запросу пользователя (кнопка «Найти билеты»)
+# ══════════════════════════════════════════════════════════════════
+
+def _build_rt_signature(
+    token: str, marker: str, host: str, locale: str,
+    passengers: Dict, segments: List[Dict], trip_class: str = "Y",
+) -> str:
+    """
+    MD5-подпись по правилам Travelpayouts.
+    token:host:locale:marker:adults:children:infants:
+    date1:origin1:dest1[:...]:trip_class:user_ip
+    """
+    parts = [
+        token, host, locale, marker,
+        str(passengers.get("adults",   1)),
+        str(passengers.get("children", 0)),
+        str(passengers.get("infants",  0)),
+    ]
+    for seg in segments:
+        parts += [seg["date"], seg["origin"], seg["destination"]]
+    parts += [trip_class, "127.0.0.1"]
+    return hashlib.md5(":".join(parts).encode()).hexdigest()
+
+
+def _normalize_rt_proposals(
+    proposals: List[Dict],
+    origin: str,
+    destination: str,
+    depart_date: str,
+    return_date: Optional[str],
+    passengers_code: str,
+    rub_rate: float,
+) -> List[Dict]:
+    """
+    Конвертирует proposals real-time API → стандартный формат бота.
+    Поля: value, price, departure_at, return_at, arrival_at,
+          origin, destination, transfers, duration,
+          airline, flight_number, link, deep_link, _source
+    """
+    result: List[Dict] = []
+    seen_prices: set   = set()
+
+    for p in proposals:
+        try:
+            # ── Цена в рублях ─────────────────────────────────────
+            raw = p.get("min_price") or p.get("price", 0)
+            price_rub = int(
+                (list(raw.values())[0] * rub_rate) if isinstance(raw, dict)
+                else (float(raw) * rub_rate)
+            )
+            if price_rub <= 0 or price_rub in seen_prices:
+                continue
+            seen_prices.add(price_rub)
+
+            # ── Сегменты ──────────────────────────────────────────
+            segments = p.get("segment", [])
+            if not segments:
+                continue
+
+            flights_out = segments[0].get("flight", [])
+            if not flights_out:
+                continue
+
+            departure_at  = flights_out[0].get("departure", f"{depart_date}T00:00:00")
+            arrival_at    = flights_out[-1].get("arrival", "")
+            transfers_out = len(flights_out) - 1
+
+            return_at      = ""
+            transfers_back = 0
+            if len(segments) > 1:
+                flights_back   = segments[1].get("flight", [])
+                transfers_back = len(flights_back) - 1
+                if flights_back:
+                    return_at = flights_back[0].get("departure", "")
+
+            # ── Длительность, авиакомпания ─────────────────────────
+            duration_min  = (segments[0].get("duration", 0) // 60) or 0
+            airline       = flights_out[0].get("marketing_carrier") or flights_out[0].get("operating_carrier", "")
+            flight_number = flights_out[0].get("number", "")
+
+            # ── Ссылка ─────────────────────────────────────────────
+            booking_link = p.get("url") or p.get("link") or generate_booking_link(
+                flight={},
+                origin=origin,
+                dest=destination,
+                depart_date=depart_date,
+                passengers_code=passengers_code,
+                return_date=return_date,
+            )
+
+            result.append({
+                "value":         price_rub,
+                "price":         price_rub,
+                "departure_at":  departure_at,
+                "return_at":     return_at,
+                "arrival_at":    arrival_at,
+                "origin":        origin,
+                "destination":   destination,
+                "transfers":     max(transfers_out, transfers_back),
+                "duration":      duration_min,
+                "airline":       airline,
+                "flight_number": flight_number,
+                "link":          booking_link,
+                "deep_link":     booking_link,
+                "_source":       "realtime",
+            })
+
+        except Exception as e:
+            logger.debug(f"[RT] Ошибка нормализации: {e}")
+            continue
+
+    result.sort(key=lambda f: f["value"])
+    return result
+
+
+async def search_flights_realtime(
+    origin: str,
+    destination: str,
+    depart_date: str,
+    return_date: Optional[str] = None,
+    adults: int = 1,
+    children: int = 0,
+    infants: int = 0,
+    trip_class: str = "Y",
+    locale: str = "ru",
+    poll_timeout: int = 45,
+    poll_interval: float = 3.0,
+) -> List[Dict]:
+    """
+    Real-time поиск через Travelpayouts v1/flight_search.
+
+    Шаги:
+      1. POST /v1/flight_search          → search_id
+      2. Поллинг GET /v1/flight_search_results?uuid=...
+         до финального {search_id: ...} или таймаута poll_timeout сек
+      3. Нормализация → стандартный формат бота
+
+    При любой ошибке — автофолбэк на cached API (search_flights).
+    """
+    if not AVIASALES_TOKEN or not AVIASALES_MARKER:
+        logger.warning("⚠️ [RT] Не заданы TOKEN или MARKER — фолбэк на cached")
+        return await search_flights(origin, destination, depart_date, return_date)
+
+    pax_code   = str(adults) + (str(children) if children else "") + (str(infants) if infants else "")
+    passengers = {"adults": adults, "children": children, "infants": infants}
+    segments   = [{"origin": origin, "destination": destination, "date": depart_date}]
+    if return_date:
+        segments.append({"origin": destination, "destination": origin, "date": return_date})
+
+    signature = _build_rt_signature(
+        token=AVIASALES_TOKEN, marker=AVIASALES_MARKER,
+        host=AVIASALES_HOST,   locale=locale,
+        passengers=passengers, segments=segments,
+    )
+    payload = {
+        "signature":  signature,
+        "marker":     AVIASALES_MARKER,
+        "host":       AVIASALES_HOST,
+        "user_ip":    "127.0.0.1",
+        "locale":     locale,
+        "trip_class": trip_class,
+        "passengers": passengers,
+        "segments":   segments,
+    }
+
+    async with aiohttp.ClientSession() as session:
+
+        # ── 1. Запуск поиска ────────────────────────────────────
+        try:
+            async with session.post(
+                AVIASALES_SEARCH_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    logger.error(f"❌ [RT] POST {resp.status}: {(await resp.text())[:300]}")
+                    return await search_flights(origin, destination, depart_date, return_date)
+
+                init = await resp.json()
+                search_id = init.get("search_id") or init.get("meta", {}).get("uuid")
+                if not search_id:
+                    logger.error(f"❌ [RT] Нет search_id: {str(init)[:200]}")
+                    return await search_flights(origin, destination, depart_date, return_date)
+
+                logger.info(f"✅ [RT] search_id={search_id}")
+
+        except asyncio.TimeoutError:
+            logger.error("❌ [RT] Таймаут при запуске")
+            return await search_flights(origin, destination, depart_date, return_date)
+        except Exception as e:
+            logger.error(f"❌ [RT] Ошибка запуска: {e}")
+            return await search_flights(origin, destination, depart_date, return_date)
+
+        # ── 2. Поллинг результатов ──────────────────────────────
+        all_proposals: List[Dict] = []
+        currency_rates: Dict      = {}
+        deadline = asyncio.get_event_loop().time() + poll_timeout
+
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                async with session.get(
+                    AVIASALES_SEARCH_RESULTS_URL,
+                    params={"uuid": search_id},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status != 200:
+                        logger.warning(f"⚠️ [RT] GET {r.status}")
+                        continue
+
+                    chunk = await r.json(content_type=None)
+
+                    if isinstance(chunk, dict):
+                        if "currency_rates" in chunk:
+                            currency_rates = chunk["currency_rates"]
+                        # Финальный ответ содержит только ключ search_id
+                        if list(chunk.keys()) == ["search_id"]:
+                            logger.info(f"✅ [RT] Завершён, proposals={len(all_proposals)}")
+                            break
+                        proposals = chunk.get("proposals", [])
+                    elif isinstance(chunk, list):
+                        proposals = chunk
+                    else:
+                        proposals = []
+
+                    if proposals:
+                        all_proposals.extend(proposals)
+                        logger.debug(f"[RT] +{len(proposals)} (итого {len(all_proposals)})")
+
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error(f"❌ [RT] Поллинг: {e}")
+                continue
+
+    if not all_proposals:
+        logger.warning("⚠️ [RT] Нет предложений — фолбэк на cached")
+        return await search_flights(origin, destination, depart_date, return_date)
+
+    # ── 3. Нормализация ─────────────────────────────────────────
+    rub_rate = float(currency_rates.get("rub", 1.0) or 1.0)
+    flights  = _normalize_rt_proposals(
+        proposals=all_proposals,
+        origin=origin,
+        destination=destination,
+        depart_date=depart_date,
+        return_date=return_date,
+        passengers_code=pax_code,
+        rub_rate=rub_rate,
+    )
+    logger.info(f"✅ [RT] Нормализовано {len(flights)} рейсов")
+    return flights
+
+
+# ══════════════════════════════════════════════════════════════════
+# Cached / Data API
+# Для: PriceWatcher, HotDealsSender, поиска «Везде»
+# ══════════════════════════════════════════════════════════════════
 
 async def search_flights(
     origin: str,
@@ -38,313 +465,72 @@ async def search_flights(
     depart_date: str,
     return_date: Optional[str] = None,
     currency: str = "rub",
-    direct: bool = False
+    direct: bool = False,
 ) -> List[Dict]:
     """
-    Ищет авиабилеты через Travelpayouts API (grouped_prices).
-    Возвращает список рейсов, совместимый с остальным кодом.
+    Поиск через Data API (grouped_prices, кеш ~48ч).
+    Не требует MARKER — только TOKEN.
+    Используется для фоновых задач: мониторинг цен, горячие предложения.
     """
     if not AVIASALES_TOKEN:
-        logger.warning("⚠️ AVIASALES_TOKEN не установлен — поиск авиабилетов недоступен")
+        logger.warning("⚠️ [Cache] AVIASALES_TOKEN не задан")
         return []
 
-    params = {
-        "origin": origin,
-        "destination": destination,
+    params: Dict = {
+        "origin":       origin,
+        "destination":  destination,
         "departure_at": depart_date,
-        "currency": currency,
-        "token": AVIASALES_TOKEN,
-        "group_by": "departure_at",
-        "direct": "true" if direct else "false"
+        "currency":     currency,
+        "token":        AVIASALES_TOKEN,
+        "group_by":     "departure_at",
+        "direct":       "true" if direct else "false",
     }
-
     if return_date:
         params["return_at"] = return_date
-        # Опционально: задать длительность поездки (в днях)===
         try:
-            d1 = datetime.fromisoformat(depart_date)
-            d2 = datetime.fromisoformat(return_date)
-            trip_days = (d2 - d1).days
-            if trip_days > 0:
-                params["min_trip_duration"] = trip_days
-                params["max_trip_duration"] = trip_days
+            d1   = datetime.fromisoformat(depart_date)
+            d2   = datetime.fromisoformat(return_date)
+            days = (d2 - d1).days
+            if days > 0:
+                params["min_trip_duration"] = days
+                params["max_trip_duration"] = days
         except Exception:
-            pass  # игнорируем ошибки парсинга
+            pass
 
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(AVIASALES_GROUPED_URL, params=params, timeout=10) as response:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                AVIASALES_GROUPED_URL,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
                 if response.status == 429:
-                    logger.warning("⚠️ Достигнут лимит API Aviasales (429). Ждём 60 секунд...")
+                    logger.warning("⚠️ [Cache] Rate limit 429, ждём 60с...")
                     await asyncio.sleep(60)
                     return []
                 if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"❌ Ошибка API Aviasales: {response.status} - {error_text}")
+                    logger.error(f"❌ [Cache] {response.status}: {(await response.text())[:200]}")
                     return []
-                
+
                 data = await response.json()
                 if not data.get("success"):
-                    logger.error(f"❌ API вернул ошибку: {data.get('error')}")
+                    logger.error(f"❌ [Cache] error: {data.get('error')}")
                     return []
-                
-                grouped_flights = data.get("data", {})
+
                 flights = []
-                for date_key, flight in grouped_flights.items():
-                    # Приводим к формату, совместимому с остальным кодом
-                    flight["value"] = flight.get("price")
+                for date_key, flight in data.get("data", {}).items():
+                    flight["value"]        = flight.get("price")
                     flight["departure_at"] = flight.get("departure_at", f"{date_key}T00:00:00+03:00")
-                    flight["return_at"] = flight.get("return_at", "")
-                    flight["origin"] = flight.get("origin", origin)
-                    flight["destination"] = flight.get("destination", destination)
+                    flight["return_at"]    = flight.get("return_at", "")
+                    flight["origin"]       = flight.get("origin", origin)
+                    flight["destination"]  = flight.get("destination", destination)
+                    flight["_source"]      = "cached"
                     flights.append(flight)
-
-                
-
                 return flights
 
-        except asyncio.TimeoutError:
-            logger.error("❌ Таймаут при запросе к Aviasales API")
-            return []
-        except Exception as e:
-            logger.error(f"❌ Ошибка при запросе к Aviasales API: {e}")
-            return []
-
-
-def generate_booking_link(
-        flight: Dict,
-        origin: str,
-        dest: str,
-        depart_date: str,
-        passengers_code: str = "1",
-        return_date: Optional[str] = None
-) -> str:
-    """
-    Генерирует ссылку для бронирования на Aviasales с ПОЛНЫМ кодом пассажиров.
-
-    Формат маршрута:
-      • Туда-обратно: ORIGDDMMDESTDDMM[PASS]  (например, MOW1003AER1503211)
-      • В одну сторону: ORIGDDMMDEST[PASS]     (например, AER1003MOW211)
-
-    Где [PASS] — полный код пассажиров (1-3 цифры):
-      • "1"   → 1 взрослый
-      • "2"   → 2 взрослых
-      • "21"  → 2 взр. + 1 реб.
-      • "211" → 2 взр. + 1 реб. + 1 мл.
-    
-     """
-    print(f"[DEBUG generate_booking_link] Вход: origin='{origin}', dest='{dest}', depart_date='{depart_date}', return_date='{return_date}', passengers_code='{passengers_code}'") # <-- ДОБАВИТЬ
-
-    # Валидация и нормализация кода пассажиров
-    if not passengers_code or not isinstance(passengers_code, str):
-        passengers_code = "1"
-
-    # Убираем всё кроме цифр и оставляем максимум 3 цифры
-    passengers_code = re.sub(r'\D', '', passengers_code)[:3]
-
-    # Если после очистки пусто или начинается с 0 — используем "1"
-    if not passengers_code or passengers_code[0] == '0':
-        passengers_code = "1"
-
-    # Форматируем даты для ссылки (ДДММ)
-    d1 = format_avia_link_date(depart_date)
-    d2 = format_avia_link_date(return_date) if return_date else ""
-    
-    print(f"[DEBUG generate_booking_link] Отформатированные даты: d1='{d1}', d2='{d2}'") # <-- ДОБАВИТЬ
-
-
-    # Формируем маршрут с ПОЛНЫМ кодом пассажиров
-    if return_date:
-        # Туда-обратно: MOW1003AER1503211
-        route = f"{origin}{d1}{dest}{d2}{passengers_code}"
-    else:
-        # В одну сторону: AER1003MOW211
-        route = f"{origin}{d1}{dest}{passengers_code}"
-        
-    print(f"[DEBUG generate_booking_link] Сформированный маршрут: '{route}'") # <-- ДОБАВИТЬ
-
-
-    base_url = f"https://www.aviasales.ru/search/{route}"
-
-    
-
-    return base_url
-
-def find_cheapest_flight_on_exact_date(
-    flights: List[Dict],
-    requested_depart_date: str,
-    requested_return_date: Optional[str] = None
-) -> Optional[Dict]:
-    """
-    Находит самый дешёвый рейс, соответствующий *точно* запрошенным датам.
-    """
-    exact_flights = []
-    req_depart = normalize_date(requested_depart_date)
-    req_return = normalize_date(requested_return_date) if requested_return_date else None
-
-    for flight in flights:
-        flight_depart = flight.get("departure_at", "")[:10]
-        flight_return = flight.get("return_at", "")[:10] if flight.get("return_at") else None
-
-        if flight_depart == req_depart:
-            if req_return:
-                if flight_return and flight_return == req_return:
-                    exact_flights.append(flight)
-            else:
-                exact_flights.append(flight)
-
-    if not exact_flights:
-        return min(flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
-    return min(exact_flights, key=lambda f: f.get("value") or f.get("price") or 999999999)
-
-
-    
-    
-    # Добавлено тестирование
-def update_passengers_in_link(link: str, passengers_code: str) -> str:
-    
-    print(f"[DEBUG update_passengers_in_link] Вход: link='{link}', passengers_code='{passengers_code}'")
-    
-    import re
-    from urllib.parse import urlparse, urlunparse
-
-    if not link or not passengers_code or not passengers_code.isdigit():
-        print(f"[DEBUG update_passengers_in_link] Возврат: нет ссылки или кода пассажиров (link='{link}', passengers_code='{passengers_code}')")
-        return link
-
-    if not re.match(r'^[1-9]\d{0,2}$', passengers_code):
-        print(f"[DEBUG update_passengers_in_link] Возврат: невалидный код пассажиров '{passengers_code}'")
-        return link
-
-    is_relative = link.startswith('/')
-    parsed = None if is_relative else urlparse(link)
-    path = link if is_relative else parsed.path
-
-    print(f"[DEBUG update_passengers_in_link] Извлеченный путь: '{path}'")
-    print(f"[DEBUG update_passengers_in_link] Тип ссылки: {'относительная' if is_relative else 'абсолютная'}")
-
-    if '/search/' not in path:
-        print(f"[DEBUG update_passengers_in_link] Возврат: путь не содержит '/search/'. Исходная ссылка: '{link}'")
-        return link
-
-    path_parts = path.split('/search/', 1)
-    if len(path_parts) < 2:
-        print(f"[DEBUG update_passengers_in_link] Возврат: не удалось разделить путь по '/search/'. Исходная ссылка: '{link}'")
-        return link
-
-    prefix, search_part = path_parts
-    print(f"[DEBUG update_passengers_in_link] Префикс пути: '{prefix}'")
-    print(f"[DEBUG update_passengers_in_link] Часть после /search/: '{search_part}'")
-
-    if '?' in search_part:
-        route, query = search_part.split('?', 1)
-        has_query = True
-        print(f"[DEBUG update_passengers_in_link] Найдена строка запроса. Маршрут: '{route}', параметры: '{query}'")
-    else:
-        route, query = search_part, ""
-        has_query = False
-        print(f"[DEBUG update_passengers_in_link] Нет строки запроса. Маршрут: '{route}'")
-
-    # === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ===
-    # Удаляем последнюю цифру (старое количество пассажиров) и добавляем новый код
-    if route and route[-1].isdigit():
-        new_route = route[:-1] + passengers_code
-        print(f"[DEBUG update_passengers_in_link] Заменяем последнюю цифру. Было: '{route}', стало: '{new_route}'")
-    else:
-        # Если нет цифры в конце (маловероятно для ссылок от API), добавляем в конец
-        new_route = route + passengers_code
-        print(f"[DEBUG update_passengers_in_link] Нет цифры в конце маршрута, добавляем код в конец. Было: '{route}', стало: '{new_route}'")
-
-    # Собираем путь обратно
-    new_path = f"/search/{new_route}"
-    if has_query:
-        new_path += f"?{query}"
-        print(f"[DEBUG update_passengers_in_link] Добавлена строка запроса: '{new_path}'")
-
-    # Возвращаем в исходном формате (сохраняем относительность/абсолютность)
-    result = new_path if is_relative else urlunparse(parsed._replace(path=new_path))
-    print(f"[DEBUG update_passengers_in_link] Выход: '{result}'")
-    return result
-
-
-    
-def parse_passengers(s: str) -> str:
-    """
-    Парсит строку с пассажирами и возвращает код пассажиров.
-    Примеры:
-    - "2 взр" → "2"
-    - "2 взр, 1 реб" → "21"
-    - "2 взр, 1 мл" → "201"
-    """
-    if not s:
-        return "1"
-    
-    if s.isdigit():
-        return s
-    
-    adults = children = infants = 0
-    
-    for part in s.split(","):
-        part = part.strip().lower()
-        n = int(re.search(r"\d+", part).group()) if re.search(r"\d+", part) else 1
-        
-        if "взр" in part or "взросл" in part:
-            adults = n
-        elif "реб" in part or "дет" in part:
-            children = n
-        elif "мл" in part or "млад" in part:
-            infants = n
-    
-    # Формируем код пассажиров
-    code = str(adults)
-    if children > 0:
-        code += str(children)
-    if infants > 0:
-        code += str(infants)
-    
-    return code
-
-def format_passenger_desc(code: str) -> str:
-    """
-    Форматирует код пассажиров в читаемое описание.
-    Примеры:
-    - "1" → "1 взр."
-    - "21" → "2 взр., 1 реб."
-    - "211" → "2 взр., 1 реб., 1 мл."
-    """
-    try:
-        adults = int(code[0])
-        children = int(code[1]) if len(code) > 1 else 0
-        infants = int(code[2]) if len(code) > 2 else 0
-        
-        parts = []
-        if adults:
-            parts.append(f"{adults} взр.")
-        if children:
-            parts.append(f"{children} реб.")
-        if infants:
-            parts.append(f"{infants} мл.")
-        
-        return ", ".join(parts) if parts else "1 взр."
-    except:
-        return "1 взр."
-        
-def format_duration(minutes: int) -> str:
-    """
-    Форматирует длительность полёта из минут в читаемый вид.
-    Примеры:
-    - 125 → "2ч 5м"
-    - 60 → "1ч"
-    - 30 → "30м"
-    - 0 → "—"
-    """
-    if not minutes:
-        return "—"
-    hours = minutes // 60
-    mins = minutes % 60
-    parts = []
-    if hours:
-        parts.append(f"{hours}ч")
-    if mins:
-        parts.append(f"{mins}м")
-    return " ".join(parts) if parts else "—"
+    except asyncio.TimeoutError:
+        logger.error("❌ [Cache] Таймаут")
+        return []
+    except Exception as e:
+        logger.error(f"❌ [Cache] Ошибка: {e}")
+        return []
