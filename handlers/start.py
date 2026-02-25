@@ -148,7 +148,8 @@ def build_passenger_code(adults: int, children: int = 0, infants: int = 0) -> st
 async def cmd_start(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
-        [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],  # ← НОВАЯ
+        # [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],  # ← НОВАЯ
+        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
     ])
     await message.answer(
         "👋 Привет! Я найду вам дешёвые авиабилеты.\n",

@@ -1,5 +1,6 @@
 # utils/redis_client.py
 import os
+import uuid
 import json
 import time
 import logging
@@ -152,7 +153,85 @@ class RedisClient:
             return False
         await self.client.incr(key)
         await self.client.expire(key, 86400 * 35)
-        return True  
+        return True
+            
+    async def save_hot_sub(self, user_id: int, sub: dict) -> str:
+    """Сохранить горячую/дайджест-подписку. Возвращает sub_id."""
+    if not self.client:
+        return ""
+    sub_id = str(uuid.uuid4())[:8]
+    key = f"{self.prefix}hotsub:{user_id}:{sub_id}"
+    ttl = 86400 * 180  # 180 дней
+
+    await self.client.setex(key, ttl, __import__("json").dumps(sub, ensure_ascii=False))
+    # Индексы
+    await self.client.sadd(f"{self.prefix}hotsubs:{user_id}", sub_id)
+    await self.client.sadd(f"{self.prefix}hotsubs_all", key)
+    logger.info(f"✅ [HotSub] Сохранена подписка {sub_id} для {user_id}")
+    return sub_id
+
+
+    async def get_hot_subs(self, user_id: int) -> dict:
+        """Вернуть все подписки пользователя: {sub_id: sub_data}."""
+        if not self.client:
+            return {}
+        sub_ids = await self.client.smembers(f"{self.prefix}hotsubs:{user_id}")
+        result = {}
+        for sid in sub_ids:
+            key = f"{self.prefix}hotsub:{user_id}:{sid}"
+            raw = await self.client.get(key)
+            if raw:
+                result[sid] = __import__("json").loads(raw)
+            else:
+                # Устаревший индекс — чистим
+                await self.client.srem(f"{self.prefix}hotsubs:{user_id}", sid)
+        return result
+
+
+    async def get_all_hot_subs(self) -> list:
+        """Вернуть все подписки всех пользователей: [(user_id, sub_id, sub_data), ...]."""
+        if not self.client:
+            return []
+        all_keys = await self.client.smembers(f"{self.prefix}hotsubs_all")
+        result = []
+        dead_keys = []
+        for key in all_keys:
+            raw = await self.client.get(key)
+            if not raw:
+                dead_keys.append(key)
+                continue
+            try:
+                sub = __import__("json").loads(raw)
+                # key = flight_bot:hotsub:{user_id}:{sub_id}
+                parts = key.split(":")
+                user_id = int(parts[-2])
+                sub_id = parts[-1]
+                result.append((user_id, sub_id, sub))
+            except Exception:
+                dead_keys.append(key)
+        if dead_keys:
+            await self.client.srem(f"{self.prefix}hotsubs_all", *dead_keys)
+        return result
+
+
+    async def update_hot_sub(self, user_id: int, sub_id: str, sub: dict):
+        """Обновить данные подписки (например, last_notified)."""
+        if not self.client:
+            return
+        key = f"{self.prefix}hotsub:{user_id}:{sub_id}"
+        ttl = 86400 * 180
+        await self.client.setex(key, ttl, __import__("json").dumps(sub, ensure_ascii=False))
+
+
+    async def delete_hot_sub(self, user_id: int, sub_id: str):
+        """Удалить подписку."""
+        if not self.client:
+            return
+        key = f"{self.prefix}hotsub:{user_id}:{sub_id}"
+        await self.client.delete(key)
+        await self.client.srem(f"{self.prefix}hotsubs:{user_id}", sub_id)
+        await self.client.srem(f"{self.prefix}hotsubs_all", key)
+        logger.info(f"🗑️ [HotSub] Удалена подписка {sub_id} пользователя {user_id}")
 
 # Singleton
 redis_client = RedisClient()

@@ -18,6 +18,8 @@ from utils.redis_client import redis_client
 from utils.cities_loader import load_cities_from_api
 from services.price_watcher import PriceWatcher
 from utils.link_converter import convert_to_partner_link
+from handlers.hot_deals import router as hot_deals_router
+from services.hot_deals_sender import HotDealsSender
 
 # Настройка базового логирования
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +53,9 @@ async def main():
     dp.include_router(flystack_router)       
     logger.info("✅ Зарегистрирован роутер: flystack_router")
     dp.include_router(everywhere_router)     # Поиск "Везде"
+    dp.include_router(hot_deals_router)
+    hot_deals_sender = HotDealsSender(bot)
+    hot_deals_task = asyncio.create_task(hot_deals_sender.start())
     
     # ─── 6. Запуск фоновых задач ───
     price_watcher = PriceWatcher(bot)
