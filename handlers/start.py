@@ -698,29 +698,28 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         rt_adults, rt_children, rt_infants = 1, 0, 0
 
-    # Показываем прогресс — real-time поиск занимает 30-45 секунд
+    # Прогресс-сообщение — обновляется только если поиск идёт долго
+    # cached API ~2-5 сек, real-time ~30-45 сек
     progress_msg = await callback.message.edit_text(
-        "⏳ <b>Запрашиваю актуальные цены...</b>\n"
-        "<i>Получаю данные от авиакомпаний — обычно 30–45 сек</i>",
+        "⏳ <b>Ищу билеты...</b>",
         parse_mode="HTML"
     )
 
-    # Задача обновления прогресса каждые 15 сек
     async def update_progress():
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
         try:
             await progress_msg.edit_text(
-                "⏳ <b>Собираю предложения...</b>\n"
-                "<i>Ещё немного — сравниваю цены у разных авиакомпаний</i>",
+                "⏳ <b>Запрашиваю актуальные цены...</b>\n"
+                "<i>Получаю данные от авиакомпаний</i>",
                 parse_mode="HTML"
             )
         except Exception:
             pass
-        await asyncio.sleep(15)
+        await asyncio.sleep(20)
         try:
             await progress_msg.edit_text(
                 "⏳ <b>Почти готово...</b>\n"
-                "<i>Выбираю лучший вариант для вас</i>",
+                "<i>Сравниваю предложения</i>",
                 parse_mode="HTML"
             )
         except Exception:
@@ -728,30 +727,39 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
 
     progress_task = asyncio.create_task(update_progress())
 
-    for orig in origins:
-        for dest in destinations:
-            if orig == dest:
-                continue
-            flights = await search_flights_realtime(
-                origin=orig,
-                destination=dest,
-                depart_date=normalize_date(data["depart_date"]),
-                return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
-                adults=rt_adults,
-                children=rt_children,
-                infants=rt_infants,
-            )
-            if direct_only:
-                flights = [f for f in flights if f.get("transfers", 999) == 0]
-            elif transfers_only:
-                flights = [f for f in flights if f.get("transfers", 0) > 0]
+    try:
+        for orig in origins:
+            for dest in destinations:
+                if orig == dest:
+                    continue
+                flights = await search_flights_realtime(
+                    origin=orig,
+                    destination=dest,
+                    depart_date=normalize_date(data["depart_date"]),
+                    return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
+                    adults=rt_adults,
+                    children=rt_children,
+                    infants=rt_infants,
+                )
+                if direct_only:
+                    flights = [f for f in flights if f.get("transfers", 999) == 0]
+                elif transfers_only:
+                    flights = [f for f in flights if f.get("transfers", 0) > 0]
 
-            for f in flights:
-                f["origin"] = orig
-                f["destination"] = dest
-            all_flights.extend(flights)
+                for f in flights:
+                    f["origin"] = orig
+                    f["destination"] = dest
+                all_flights.extend(flights)
+    finally:
+        progress_task.cancel()
+        try:
+            await progress_task
+        except asyncio.CancelledError:
+            pass
 
-    progress_task.cancel()
+    # Логируем источник для отладки
+    sources = set(f.get("_source", "unknown") for f in all_flights)
+    logger.info(f"🔍 [Search] {len(all_flights)} рейсов, источник: {sources}")
 
     if direct_only and not all_flights:
         kb = InlineKeyboardMarkup(inline_keyboard=[
