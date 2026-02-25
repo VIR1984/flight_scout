@@ -149,7 +149,7 @@ async def cmd_start(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
         # [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],  # ← НОВАЯ
-        [InlineKeyboardButton(text="🔥 Горячие предложения\n(функционал в разработке)", callback_data="hot_deals_disabled")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
     ])
     await message.answer(
         "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
@@ -163,7 +163,7 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext = None):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
         # [InlineKeyboardButton(text="📊 Информация о рейсе", callback_data="track_flight")],
-        [InlineKeyboardButton(text="🔥 Горячие предложения\n(функционал в разработке)", callback_data="hot_deals_disabled")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
     ])
     try:
         await callback.message.edit_text(
