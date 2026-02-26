@@ -63,13 +63,6 @@ router = Router()
 # Семафор: не более 10 параллельных поисков (защита от перегрузки API)
 _SEARCH_SEMAPHORE = asyncio.Semaphore(10)
 
-# ReplyKeyboard-кнопка отмены для шагов где пользователь вводит текст
-FSM_CANCEL_KB = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="↩️ В начало")]],
-    resize_keyboard=True,
-    one_time_keyboard=False,
-)
-
 # Контекст трансферов: user_id → dict
 transfer_context: dict[int, dict] = {}
 
@@ -407,14 +400,15 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
                 "Начнём поиск 👌\n\n"
                 "<b>Напишите маршрут:</b> Город отправления - Город прибытия\n"
                 "<i>Пример: Москва - Сочи</i>",
-                parse_mode="HTML",
+                parse_mode="HTML", reply_markup=CANCEL_KB,
             )
         except Exception:
-            pass
-        await callback.message.answer(
-            "✏️ Введите маршрут:",
-            reply_markup=FSM_CANCEL_KB,
-        )
+            await callback.message.answer(
+                "Начнём поиск 👌\n\n"
+                "<b>Напишите маршрут:</b> Город отправления - Город прибытия\n"
+                "<i>Пример: Москва - Сочи</i>",
+                parse_mode="HTML", reply_markup=CANCEL_KB,
+            )
         await state.set_state(FlightSearch.route)
         schedule_inactivity(callback.message.chat.id, callback.from_user.id)
         await callback.answer()
@@ -428,7 +422,7 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
         hint = f"\n<i>Последний ввод: {origin}</i>" if origin else ""
         await callback.message.answer(
             f"<b>Маршрут:</b> Город отправления - Город прибытия{hint}\n<i>Пример: Москва - Сочи</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
 
     elif current == FlightSearch.choose_airport.state:
@@ -450,13 +444,13 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
         hint = f"\n<i>Последний ввод: {existing}</i>" if existing else ""
         await callback.message.answer(
             f"Введите дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 10.03</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
 
     elif current == FlightSearch.need_return.state:
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="Да, нужен"), KeyboardButton(text="Нет, спасибо")],
-                      [KeyboardButton(text="↩️ В начало")]],
+                      [KeyboardButton(text="В начало")]],
             resize_keyboard=True, one_time_keyboard=True,
         )
         await callback.message.answer("Нужен ли обратный билет?", reply_markup=kb)
@@ -464,7 +458,7 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
     elif current == FlightSearch.return_date.state:
         await callback.message.answer(
             "Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
 
     elif current == FlightSearch.flight_type.state:
@@ -487,20 +481,13 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "start_search")
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
-    try:
-        await callback.message.edit_text(
-            "Начнём поиск билетов 👌\n\n"
-            "<b>Напишите маршрут в формате: Город отправления - Город прибытия</b>\n\n"
-            "<i>Пример: Москва - Сочи</i>\n\n"
-            "Если ещё не решили, откуда или куда полетите, напишите слово «Везде».",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
-        )
-    except Exception:
-        pass
-    await callback.message.answer(
-        "✏️ Введите маршрут:",
-        reply_markup=FSM_CANCEL_KB,
+    await callback.message.edit_text(
+        "Начнём поиск билетов 👌\n\n"
+        "<b>Напишите маршрут в формате: Город отправления - Город прибытия</b>\n\n"
+        "<i>Пример: Москва - Сочи</i>\n\n"
+        "Если ещё не решили, откуда или куда полетите, напишите слово «Везде».",
+        parse_mode="HTML",
+        reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.route)
     schedule_inactivity(callback.message.chat.id, callback.from_user.id)
@@ -511,22 +498,13 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
 # FSM: маршрут
 # ════════════════════════════════════════════════════════════════
 
-@router.message(FlightSearch.route, F.text == "↩️ В начало")
-async def route_to_menu(message: Message, state: FSMContext):
-    cancel_inactivity(message.chat.id)
-    mark_fsm_inactive(message.chat.id)
-    await state.clear()
-    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
-    await message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
-
-
 @router.message(FlightSearch.route)
 async def process_route(message: Message, state: FSMContext):
     origin, dest = validate_route(message.text)
     if not origin or not dest:
         await message.answer(
             "❌ Неверный формат маршрута.\n<i>Пример: Москва - Сочи</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return
 
@@ -535,7 +513,7 @@ async def process_route(message: Message, state: FSMContext):
         if not orig_iata:
             await message.answer(
                 f"❌ Не знаю город отправления: {origin}\nПопробуйте ещё раз.",
-                reply_markup=FSM_CANCEL_KB,
+                reply_markup=CANCEL_KB,
             )
             return
         origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin.capitalize())
@@ -547,7 +525,7 @@ async def process_route(message: Message, state: FSMContext):
         if not dest_iata:
             await message.answer(
                 f"❌ Не знаю город прибытия: {dest}\nПопробуйте ещё раз.",
-                reply_markup=FSM_CANCEL_KB,
+                reply_markup=CANCEL_KB,
             )
             return
         dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest.capitalize())
@@ -557,14 +535,14 @@ async def process_route(message: Message, state: FSMContext):
     if origin == "везде" and dest == "везде":
         await message.answer(
             "❌ Нельзя искать «Везде → Везде».\nУкажите хотя бы один конкретный город.",
-            reply_markup=FSM_CANCEL_KB,
+            reply_markup=CANCEL_KB,
         )
         return
 
     if orig_iata and dest_iata and orig_iata == dest_iata:
         await message.answer(
             "❌ Город вылета и прибытия не могут совпадать.\nПожалуйста, выберите разные города.",
-            reply_markup=FSM_CANCEL_KB,
+            reply_markup=CANCEL_KB,
         )
         return
 
@@ -612,7 +590,7 @@ async def process_route(message: Message, state: FSMContext):
 
     await message.answer(
         "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
-        parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+        parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.depart_date)
     schedule_inactivity(message.chat.id, message.from_user.id)
@@ -658,7 +636,7 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
         return
     await callback.message.edit_text(
         "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
-        parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+        parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.depart_date)
     schedule_inactivity(callback.message.chat.id, callback.from_user.id)
@@ -668,21 +646,12 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
 # FSM: дата вылета
 # ════════════════════════════════════════════════════════════════
 
-@router.message(FlightSearch.depart_date, F.text == "↩️ В начало")
-async def depart_date_to_menu(message: Message, state: FSMContext):
-    cancel_inactivity(message.chat.id)
-    mark_fsm_inactive(message.chat.id)
-    await state.clear()
-    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
-    await message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
-
-
 @router.message(FlightSearch.depart_date)
 async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n<i>Пример: 10.03</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return
 
@@ -699,7 +668,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         if data.get("need_return"):
             await message.answer(
                 "✏️ Введите новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
-                parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+                parse_mode="HTML", reply_markup=CANCEL_KB,
             )
             await state.set_state(FlightSearch.return_date)
         else:
@@ -715,7 +684,7 @@ async def process_depart_date(message: Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Да, нужен"), KeyboardButton(text="Нет, спасибо")],
-            [KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True, one_time_keyboard=True,
     )
@@ -746,34 +715,25 @@ async def process_need_return(message: Message, state: FSMContext):
         await ask_flight_type(message, state)
 
 
-@router.message(FlightSearch.need_return, F.text == "↩️ В начало")
+@router.message(FlightSearch.need_return, F.text == "В начало")
 async def need_return_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
-    await message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
+    await message.answer("👋 Привет! Я найду вам дешёвые авиабилеты.\n", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
 
 
 # ════════════════════════════════════════════════════════════════
 # FSM: дата возврата
 # ════════════════════════════════════════════════════════════════
 
-@router.message(FlightSearch.return_date, F.text == "↩️ В начало")
-async def return_date_to_menu(message: Message, state: FSMContext):
-    cancel_inactivity(message.chat.id)
-    mark_fsm_inactive(message.chat.id)
-    await state.clear()
-    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
-    await message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
-
-
 @router.message(FlightSearch.return_date)
 async def process_return_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
             "❌ Неверный формат даты.\n<i>Пример: 15.03</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return
 
@@ -784,7 +744,7 @@ async def process_return_date(message: Message, state: FSMContext):
         await message.answer(
             "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
             "Укажите правильную дату возврата.",
-            reply_markup=FSM_CANCEL_KB,
+            reply_markup=CANCEL_KB,
         )
         return
 
@@ -808,7 +768,7 @@ async def ask_flight_type(message: Message, state: FSMContext):
         keyboard=[
             [KeyboardButton(text="Прямые"), KeyboardButton(text="С пересадкой")],
             [KeyboardButton(text="Все варианты")],
-            [KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True, one_time_keyboard=True,
     )
@@ -828,7 +788,7 @@ async def process_flight_type(message: Message, state: FSMContext):
     await ask_adults(message, state)
 
 
-@router.message(FlightSearch.flight_type, F.text == "↩️ В начало")
+@router.message(FlightSearch.flight_type, F.text == "В начало")
 async def flight_type_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
@@ -846,7 +806,7 @@ async def ask_adults(message: Message, state: FSMContext):
         keyboard=[
             [KeyboardButton(text=str(i)) for i in range(1, 5)],
             [KeyboardButton(text=str(i)) for i in range(5, 9)],
-            [KeyboardButton(text="9"), KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="9"), KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True, one_time_keyboard=True,
     )
@@ -866,7 +826,7 @@ async def process_adults(message: Message, state: FSMContext):
         await ask_has_children(message, state)
 
 
-@router.message(FlightSearch.adults, F.text == "↩️ В начало")
+@router.message(FlightSearch.adults, F.text == "В начало")
 async def adults_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
@@ -879,7 +839,7 @@ async def ask_has_children(message: Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Да"), KeyboardButton(text="Нет")],
-            [KeyboardButton(text="↩️ В начало")],
+            [KeyboardButton(text="В начало")],
         ],
         resize_keyboard=True, one_time_keyboard=True,
     )
@@ -900,7 +860,7 @@ async def process_has_children(message: Message, state: FSMContext):
         await show_summary(message, state)
 
 
-@router.message(FlightSearch.has_children, F.text == "↩️ В начало")
+@router.message(FlightSearch.has_children, F.text == "В начало")
 async def has_children_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
@@ -915,7 +875,7 @@ async def ask_children(message: Message, state: FSMContext):
     max_ch = 9 - adults
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=str(i)) for i in range(0, max_ch + 1)],
-                  [KeyboardButton(text="↩️ В начало")]],
+                  [KeyboardButton(text="В начало")]],
         resize_keyboard=True, one_time_keyboard=True,
     )
     await message.answer(
@@ -943,7 +903,7 @@ async def process_children(message: Message, state: FSMContext):
         await ask_infants(message, state)
 
 
-@router.message(FlightSearch.children, F.text == "↩️ В начало")
+@router.message(FlightSearch.children, F.text == "В начало")
 async def children_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
@@ -959,7 +919,7 @@ async def ask_infants(message: Message, state: FSMContext):
     max_inf  = min(adults, 9 - adults - children)
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=str(i)) for i in range(0, max_inf + 1)],
-                  [KeyboardButton(text="↩️ В начало")]],
+                  [KeyboardButton(text="В начало")]],
         resize_keyboard=True, one_time_keyboard=True,
     )
     await message.answer("Сколько младенцев? (младше 2 лет без места)", reply_markup=kb)
@@ -979,7 +939,7 @@ async def process_infants(message: Message, state: FSMContext):
     await show_summary(message, state)
 
 
-@router.message(FlightSearch.infants, F.text == "↩️ В начало")
+@router.message(FlightSearch.infants, F.text == "В начало")
 async def infants_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
@@ -1032,13 +992,9 @@ async def show_summary(message, state: FSMContext):
 async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: str):
     if action == "route":
         await state.update_data(_edit_mode=True, origin_airports=None, origin_airport_label=None)
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(
+        await callback.message.edit_text(
             "✏️ Введите новый маршрут:\n<b>Город вылета - Город прибытия</b>\n\n<i>Пример: Москва - Сочи</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         await state.set_state(FlightSearch.route)
 
@@ -1046,13 +1002,9 @@ async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: st
         await state.update_data(_edit_mode=True)
         data = await state.get_data()
         hint = "\n(затем введёте дату обратного рейса)" if data.get("need_return") else ""
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(
+        await callback.message.edit_text(
             f"✏️ Введите новую дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 15.03</i>",
-            parse_mode="HTML", reply_markup=FSM_CANCEL_KB,
+            parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         await state.set_state(FlightSearch.depart_date)
 
@@ -1717,7 +1669,7 @@ async def handle_any_message(message: Message, state: FSMContext):
         logger.warning(f"⚠️ [Start] Состояние {current_state}: '{text[:30]}'")
         await message.answer(
             "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
-            reply_markup=FSM_CANCEL_KB,
+            reply_markup=CANCEL_KB,
         )
         return
 

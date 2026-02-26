@@ -260,8 +260,8 @@ class PriceWatcher:
             # ✅ ИСПРАВЛЕНО: Удалено дублирование строки и закрыта скобка
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=f"✈️ Забронировать за {new_price} ₽", url=partner_booking_link)],
-                [InlineKeyboardButton(text="❌ Больше не следить", callback_data=f"unwatch_{key}")],
-                [InlineKeyboardButton(text="✈️ Новый поиск билетов", callback_data="start_search")],
+                [InlineKeyboardButton(text="❌ Больше не следить", callback_data=f"unwatch_{key}")]
+                [InlineKeyboardButton(text="Продолжить поиск билетов", callback_data="main_menu")]
             ])
 
             
