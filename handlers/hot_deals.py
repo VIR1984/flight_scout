@@ -21,6 +21,7 @@ from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -115,15 +116,18 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
     if origins:
         names = ", ".join(o["name"] for o in origins)
         text = (
-            f"Добавьте <b>города вылета</b>. Можно добавить несколько.\n\n"
-            f"<i>Добавлено: {names}</i>\n\n"
-            f"Напишите ещё один город или нажмите «Готово»."
+            f"<b>Города вылета</b>\n\n"
+            f"Добавлены: <i>{names}</i>\n\n"
+            f"Напишите ещё город или несколько через запятую, либо нажмите «Готово»."
         )
     else:
         text = (
-            "Введите <b>город вылета</b>.\n"
-            "Можно добавить несколько городов — бот будет следить за ценами из каждого.\n\n"
-            "<i>Пример: Москва</i>"
+            "<b>Из какого города вылетаете?</b>\n\n"
+            "Можно указать один или сразу несколько городов через запятую — "
+            "бот будет следить за ценами из каждого.\n\n"
+            "<i>Примеры:\n"
+            "• Москва\n"
+            "• Москва, Казань, Екатеринбург</i>"
         )
 
     buttons = []
@@ -167,7 +171,7 @@ async def _ask_months(target, selected: list):
     if row:
         buttons.append(row)
 
-    buttons.append([InlineKeyboardButton(text="🗓️ Любой месяц", callback_data="hd_month_any_any")])
+    buttons.append([InlineKeyboardButton(text="Любой месяц", callback_data="hd_month_any_any")])
     if selected:
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
@@ -182,44 +186,52 @@ async def _ask_months(target, selected: list):
 
 
 async def _ask_budget(target):
-    """Ввод бюджета: текстом + быстрые кнопки."""
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="5 000 ₽",          callback_data="hd_budget_5000"),
-         InlineKeyboardButton(text="10 000 ₽",         callback_data="hd_budget_10000")],
-        [InlineKeyboardButton(text="15 000 ₽",         callback_data="hd_budget_15000"),
-         InlineKeyboardButton(text="20 000 ₽",         callback_data="hd_budget_20000")],
-        [InlineKeyboardButton(text="30 000 ₽",         callback_data="hd_budget_30000"),
-         InlineKeyboardButton(text="Без ограничений",  callback_data="hd_budget_0")],
-        [InlineKeyboardButton(text="↩️ В начало",      callback_data="main_menu")],
-    ])
+    """Ввод бюджета: быстрые кнопки через ReplyKeyboard."""
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="5 000 ₽"),  KeyboardButton(text="10 000 ₽")],
+            [KeyboardButton(text="15 000 ₽"), KeyboardButton(text="20 000 ₽")],
+            [KeyboardButton(text="30 000 ₽"), KeyboardButton(text="Без ограничений")],
+            [KeyboardButton(text="↩️ В начало")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
     text = (
         "Укажите <b>максимальную цену на человека</b> (в рублях).\n\n"
         "Напишите сумму числом в ответном сообщении или выберите вариант ниже.\n"
         "<i>Пример: 12000</i>"
     )
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    send = target.answer if isinstance(target, Message) else target.message.answer
     await send(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def _ask_passengers(target):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1", callback_data="hd_pax_1"),
-         InlineKeyboardButton(text="2", callback_data="hd_pax_2"),
-         InlineKeyboardButton(text="3", callback_data="hd_pax_3"),
-         InlineKeyboardButton(text="4", callback_data="hd_pax_4")],
-        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
-    ])
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="1"), KeyboardButton(text="2"),
+             KeyboardButton(text="3"), KeyboardButton(text="4")],
+            [KeyboardButton(text="5"), KeyboardButton(text="6"),
+             KeyboardButton(text="7"), KeyboardButton(text="8")],
+            [KeyboardButton(text="↩️ В начало")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    send = target.answer if isinstance(target, Message) else target.message.answer
     await send("Сколько <b>пассажиров</b>?", parse_mode="HTML", reply_markup=kb)
 
 
 async def _ask_frequency(target):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📅 Раз в день",   callback_data="hd_freq_daily")],
-        [InlineKeyboardButton(text="📆 Раз в неделю", callback_data="hd_freq_weekly")],
-        [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
-    ])
-    send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Раз в день"), KeyboardButton(text="Раз в неделю")],
+            [KeyboardButton(text="↩️ В начало")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    send = target.message.answer if isinstance(target, CallbackQuery) else target.answer
     await send("Как часто присылать <b>дайджест</b>?", parse_mode="HTML", reply_markup=kb)
 
 
@@ -259,7 +271,7 @@ async def _show_confirm(target, data: dict):
         freq_map = {"daily": "раз в день", "weekly": "раз в неделю"}
         type_str = f"📰 Дайджест ({freq_map.get(data.get('frequency', 'daily'), 'раз в день')})"
     else:
-        type_str = "🔥 Горячие предложения"
+        type_str = "Горячие предложения"
 
     text = (
         f"✅ <b>Проверьте настройки подписки:</b>\n\n"
@@ -323,8 +335,8 @@ async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
 async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(HotDealsSub.choose_sub_type)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 Горячие предложения",           callback_data="hd_type_hot")],
-        [InlineKeyboardButton(text="📰 Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
+        [InlineKeyboardButton(text="Горячие предложения",           callback_data="hd_type_hot")],
+        [InlineKeyboardButton(text="Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
         [InlineKeyboardButton(text="↩️ Назад",    callback_data="hot_deals_menu")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
@@ -432,35 +444,43 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.message(HotDealsSub.choose_origins)
 async def hd_origins_text(message: Message, state: FSMContext):
-    """Пользователь вводит город вылета текстом — добавляем в список."""
-    city = message.text.strip()
-    iata = get_iata(city)
+    """
+    Пользователь вводит город(а) вылета.
+    Поддерживает ввод через запятую: "Москва, Казань, Сочи"
+    """
+    raw = message.text.strip()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
 
-    if not iata:
-        await message.answer(
-            f"❌ Город «{city}» не найден.\n<i>Попробуйте: Москва, Екатеринбург, Казань</i>",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
-
-    name = get_city_name(iata) or city
     data    = await state.get_data()
-    origins = data.get("origins", [])
+    origins = list(data.get("origins", []))
 
-    # Не добавляем дубли
-    if any(o["iata"] == iata for o in origins):
-        await message.answer(
-            f"Город <b>{name}</b> уже добавлен. Добавьте другой или нажмите «Готово».",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
+    added      = []
+    not_found  = []
+    duplicates = []
 
-    origins.append({"iata": iata, "name": name})
+    for city in parts:
+        iata = get_iata(city)
+        if not iata:
+            not_found.append(city)
+            continue
+        name = get_city_name(iata) or city
+        if any(o["iata"] == iata for o in origins):
+            duplicates.append(name)
+            continue
+        origins.append({"iata": iata, "name": name})
+        added.append(name)
+
     await state.update_data(origins=origins)
 
-    # Обновляем отображение
+    # Показываем обратную связь только если есть проблемы
+    msgs = []
+    if not_found:
+        msgs.append(f"❌ Не найдены: {', '.join(not_found)}")
+    if duplicates:
+        msgs.append(f"Уже добавлены: {', '.join(duplicates)}")
+    if msgs:
+        await message.answer("\n".join(msgs), parse_mode="HTML")
+
     await _ask_origins(message, state, edit=False)
 
 
@@ -572,23 +592,49 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
 # ШАГ 5 — бюджет
 # ════════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data.startswith("hd_budget_"))
-async def hd_step5_budget_btn(callback: CallbackQuery, state: FSMContext):
-    budget = int(callback.data.replace("hd_budget_", ""))
-    await state.update_data(max_price=budget)
-    await state.set_state(HotDealsSub.choose_passengers)
-    await _ask_passengers(callback)
-    await callback.answer()
+# ════════════════════════════════════════════════════════════════
+# ШАГ 5 — бюджет
+# ════════════════════════════════════════════════════════════════
+
+_BUDGET_PRESETS = {
+    "5 000 ₽": 5000, "10 000 ₽": 10000, "15 000 ₽": 15000,
+    "20 000 ₽": 20000, "30 000 ₽": 30000, "Без ограничений": 0,
+}
+
+
+@router.message(HotDealsSub.choose_budget, F.text == "↩️ В начало")
+async def hd_budget_to_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "🔥 <b>Горячие предложения</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Настроить", callback_data="hd_new_sub")],
+            [InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")],
+        ])
+    )
 
 
 @router.message(HotDealsSub.choose_budget)
 async def hd_step5_budget_text(message: Message, state: FSMContext):
-    raw = message.text.strip().replace(" ", "").replace("₽", "").replace(",", "")
+    raw_text = message.text.strip()
+
+    # Проверяем preset-кнопки
+    if raw_text in _BUDGET_PRESETS:
+        budget = _BUDGET_PRESETS[raw_text]
+        await state.update_data(max_price=budget)
+        await state.set_state(HotDealsSub.choose_passengers)
+        await _ask_passengers(message)
+        return
+
+    # Числовой ввод
+    raw = raw_text.replace(" ", "").replace("₽", "").replace(",", "")
     if not raw.isdigit():
         await message.answer(
-            "Введите сумму числом.\n<i>Пример: 12000</i>",
+            "Введите сумму числом или выберите вариант ниже.\n<i>Пример: 12000</i>",
             parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
+            reply_markup=BACK_TO_MAIN,
         )
         return
     await state.update_data(max_price=int(raw))
@@ -600,32 +646,60 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
 # ШАГ 6 — пассажиры
 # ════════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data.startswith("hd_pax_"))
-async def hd_step6_pax(callback: CallbackQuery, state: FSMContext):
-    pax = int(callback.data.replace("hd_pax_", ""))
+@router.message(HotDealsSub.choose_passengers, F.text == "↩️ В начало")
+async def hd_pax_to_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "🔥 <b>Горячие предложения</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Настроить", callback_data="hd_new_sub")],
+            [InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")],
+        ])
+    )
+
+
+@router.message(HotDealsSub.choose_passengers, F.text.regexp(r"^[1-8]$"))
+async def hd_step6_pax(message: Message, state: FSMContext):
+    pax = int(message.text)
     await state.update_data(passengers=pax)
     data = await state.get_data()
+    await message.answer("✅", reply_markup=ReplyKeyboardRemove())
     if data.get("sub_type") == "digest":
         await state.set_state(HotDealsSub.choose_frequency)
-        await _ask_frequency(callback)
+        await _ask_frequency(message)
     else:
         await state.set_state(HotDealsSub.confirm)
-        await _show_confirm(callback, data | {"passengers": pax})
-    await callback.answer()
+        await _show_confirm(message, data | {"passengers": pax})
 
 
 # ════════════════════════════════════════════════════════════════
 # ШАГ 7 — частота (только для дайджеста)
 # ════════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data.startswith("hd_freq_"))
-async def hd_step7_freq(callback: CallbackQuery, state: FSMContext):
-    freq = callback.data.replace("hd_freq_", "")
+@router.message(HotDealsSub.choose_frequency, F.text == "↩️ В начало")
+async def hd_freq_to_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "🔥 <b>Горячие предложения</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Настроить", callback_data="hd_new_sub")],
+            [InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")],
+        ])
+    )
+
+
+@router.message(HotDealsSub.choose_frequency, F.text.in_({"Раз в день", "Раз в неделю"}))
+async def hd_step7_freq(message: Message, state: FSMContext):
+    freq = "daily" if message.text == "Раз в день" else "weekly"
     await state.update_data(frequency=freq)
     data = await state.get_data()
+    await message.answer("✅", reply_markup=ReplyKeyboardRemove())
     await state.set_state(HotDealsSub.confirm)
-    await _show_confirm(callback, data)
-    await callback.answer()
+    await _show_confirm(message, data)
 
 
 # ════════════════════════════════════════════════════════════════
