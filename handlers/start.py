@@ -4,6 +4,9 @@ import os
 import re
 from uuid import uuid4
 from typing import Dict, Any
+
+# Семафор: не более 10 параллельных поисков одновременно (защита от перегрузки API)
+_SEARCH_SEMAPHORE = asyncio.Semaphore(10)
 from aiogram import Router, F
 from aiogram.types import (
     Message,
@@ -190,6 +193,7 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
         reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.route)
+    _schedule_inactivity(callback.message.chat.id, callback.from_user.id)
     await callback.answer()
 
 @router.message(FlightSearch.route)
@@ -257,6 +261,7 @@ async def process_route(message: Message, state: FSMContext):
     )
 
     data = await state.get_data()
+    _cancel_inactivity(message.chat.id)
     if data.get("_edit_mode"):
         # Точечное редактирование — возвращаем к summary без перехода по датам
         await state.update_data(_edit_mode=False)
@@ -270,6 +275,7 @@ async def process_route(message: Message, state: FSMContext):
         reply_markup=CANCEL_KB
     )
     await state.set_state(FlightSearch.depart_date)
+    _schedule_inactivity(message.chat.id, message.from_user.id)
 
 @router.message(FlightSearch.depart_date)
 async def process_depart_date(message: Message, state: FSMContext):
@@ -282,6 +288,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         )
         return
     
+    _cancel_inactivity(message.chat.id)
     await state.update_data(depart_date=message.text)
     data = await state.get_data()
     is_origin_everywhere = data["origin"] == "везде"
@@ -385,6 +392,7 @@ async def process_return_date(message: Message, state: FSMContext):
         )
         return
 
+    _cancel_inactivity(message.chat.id)
     await state.update_data(return_date=message.text)
 
     data = await state.get_data()
@@ -421,6 +429,7 @@ async def ask_flight_type(message: Message, state: FSMContext):
 
 @router.message(FlightSearch.flight_type, F.text.in_(["Прямые", "С пересадкой", "Все варианты"]))
 async def process_flight_type(message: Message, state: FSMContext):
+    _cancel_inactivity(message.chat.id)
     flight_type = _flight_type_text_to_code(message.text)
     await state.update_data(flight_type=flight_type)
 
@@ -469,6 +478,7 @@ async def ask_adults(message: Message, state: FSMContext):
 
 @router.message(FlightSearch.adults, F.text.regexp(r"^[1-9]$"))
 async def process_adults(message: Message, state: FSMContext):
+    _cancel_inactivity(message.chat.id)
     adults = int(message.text)
     await state.update_data(adults=adults)
     if adults == 9:
@@ -672,6 +682,8 @@ async def show_summary(message, state: FSMContext):
     await message.answer(summary, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     await message.answer("Подтвердите или измените параметры:", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
+    _schedule_inactivity(message.chat.id if hasattr(message, "chat") else message.from_user.id,
+                          message.from_user.id)
 
 async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: str):
     """
@@ -732,9 +744,17 @@ async def edit_step(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(FlightSearch.confirm, F.data == "confirm_search")
 async def confirm_search(callback: CallbackQuery, state: FSMContext):
+    _cancel_inactivity(callback.message.chat.id)
     data = await state.get_data()
-    print(f"[DEBUG confirm_search] Состояние FSM перед вызовом API: {data}")
+    logger.info(f"[confirm_search] user={callback.from_user.id} маршрут={data.get('origin_iata')}→{data.get('dest_iata')}")
     await callback.message.edit_text("⏳ Ищу билеты...")
+    # Ограничиваем число параллельных поисков, чтобы не перегружать API
+    async with _SEARCH_SEMAPHORE:
+        await _do_confirm_search(callback, state, data)
+
+
+async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: dict):
+    """Основная логика поиска. Вызывается внутри семафора."""
     
     is_origin_everywhere = data["origin"] == "везде"
     is_dest_everywhere = data["dest"] == "везде"
@@ -927,17 +947,32 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     display_return = format_user_date(data["return_date"]) if data.get("return_date") else None
     await redis_client.set_search_cache(cache_id, {
         "flights": all_flights,
-        "dest_iata": data["dest_iata"],
-        "is_roundtrip": data.get("need_return", False),
+        # маршрут
+        "origin":       data.get("origin", ""),
+        "origin_iata":  data.get("origin_iata", ""),
+        "origin_name":  data.get("origin_name", ""),
+        "dest":         data.get("dest", ""),
+        "dest_iata":    data["dest_iata"],
+        "dest_name":    data.get("dest_name", ""),
+        # даты
+        "depart_date":    data["depart_date"],
+        "return_date":    data.get("return_date"),
+        "need_return":    data.get("need_return", False),
         "display_depart": display_depart,
         "display_return": display_return,
         "original_depart": data["depart_date"],
-        "original_return": data["return_date"],
-        "passenger_desc": data["passenger_desc"],
+        "original_return":  data.get("return_date"),
+        # пассажиры
+        "passenger_desc":  data["passenger_desc"],
         "passengers_code": data["passenger_code"],
+        "passenger_code":  data["passenger_code"],
+        "adults":    data.get("adults", 1),
+        "children":  data.get("children", 0),
+        "infants":   data.get("infants", 0),
+        # прочее
         "origin_everywhere": False,
-        "dest_everywhere": False,
-        "flight_type": flight_type
+        "dest_everywhere":   False,
+        "flight_type": flight_type,
     })
 
     top_flight = find_cheapest_flight_on_exact_date(
@@ -1103,27 +1138,27 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
-    # ── Правка 1: напоминание о «Горячих предложениях» через 5 минут ──
+    # После результатов поиска — через 10 мин напоминаем о горячих предложениях
     asyncio.create_task(
-        _remind_hot_deals(callback.message.chat.id, callback.from_user.id)
+        _remind_hot_deals_after_search(callback.message.chat.id, callback.from_user.id)
     )
 
 
-async def _remind_hot_deals(chat_id: int, user_id: int):
-    """Через 5 минут после завершения поиска предлагаем подписку на горячие."""
-    import asyncio as _asyncio
-    await _asyncio.sleep(5 * 60)  # 5 минут
+async def _get_bot():
+    """Получить экземпляр бота из синглтона."""
+    from utils.bot_instance import bot as _bot
+    return _bot
+
+
+async def _remind_hot_deals_after_search(chat_id: int, user_id: int):
+    """Через 10 минут после завершения поиска — предлагаем подписку на вау-цены."""
+    await asyncio.sleep(10 * 60)
     try:
-        from aiogram import Bot
-        # Получаем бот через глобальный контекст aiogram
-        from aiogram.fsm.storage.base import StorageKey
-        # Импортируем бот из main через глобальную переменную
-        from utils.bot_instance import bot as _bot
+        _bot = await _get_bot()
+        if not _bot:
+            return
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🔥 Подписаться на вау-цены",
-                callback_data="hot_deals_menu"
-            )],
+            [InlineKeyboardButton(text="🔥 Подписаться на вау-цены", callback_data="hot_deals_menu")],
             [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")],
         ])
         await _bot.send_message(
@@ -1132,9 +1167,77 @@ async def _remind_hot_deals(chat_id: int, user_id: int):
             "и я сообщу о вау-ценах туда, как только они появятся!",
             reply_markup=kb
         )
-        logger.info(f"[Reminder] Отправлено напоминание о горячих предложениях user_id={user_id}")
+        logger.info(f"[Reminder/after-search] user_id={user_id}")
     except Exception as e:
-        logger.debug(f"[Reminder] Не удалось отправить напоминание: {e}")
+        logger.debug(f"[Reminder/after-search] ошибка: {e}")
+
+
+# ── Трекер активности пользователя в FSM ─────────────────────────────────────
+# Ключ: chat_id → asyncio.Task напоминания при бездействии
+_inactivity_tasks: dict[int, asyncio.Task] = {}
+
+
+def _cancel_inactivity(chat_id: int):
+    """Отменить текущую задачу напоминания (пользователь активен)."""
+    task = _inactivity_tasks.pop(chat_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+def _schedule_inactivity(chat_id: int, user_id: int):
+    """
+    Перезапустить таймер бездействия.
+    Вызывается при каждом шаге FSM.
+    Напоминание 1 через 3 мин, напоминание 2 (вау-цены) через 10 мин.
+    """
+    _cancel_inactivity(chat_id)
+    task = asyncio.create_task(_inactivity_reminder(chat_id, user_id))
+    _inactivity_tasks[chat_id] = task
+
+
+async def _inactivity_reminder(chat_id: int, user_id: int):
+    """Двухэтапное напоминание при бездействии во время заполнения формы поиска."""
+    try:
+        # ── Этап 1: через 3 минуты — предлагаем продолжить ─────────
+        await asyncio.sleep(3 * 60)
+        _bot = await _get_bot()
+        if not _bot:
+            return
+        kb1 = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Продолжить поиск", callback_data="start_search")],
+            [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
+        await _bot.send_message(
+            chat_id,
+            "👋 Ты ещё здесь? Давай продолжим — я помогу найти дешёвые билеты!",
+            reply_markup=kb1
+        )
+        logger.info(f"[Inactivity/1] Напоминание #1 отправлено user_id={user_id}")
+
+        # ── Этап 2: ещё через 7 минут (итого 10) — вау-цены ────────
+        await asyncio.sleep(7 * 60)
+        _bot = await _get_bot()
+        if not _bot:
+            return
+        kb2 = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔥 Подписаться на вау-цены", callback_data="hot_deals_menu")],
+            [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
+        ])
+        await _bot.send_message(
+            chat_id,
+            "✈️ Укажи интересные направления — и я сообщу о вау-ценах туда, "
+            "как только они появятся!",
+            reply_markup=kb2
+        )
+        logger.info(f"[Inactivity/2] Напоминание #2 отправлено user_id={user_id}")
+
+    except asyncio.CancelledError:
+        pass  # Пользователь снова активен — всё нормально
+    except Exception as e:
+        logger.debug(f"[Inactivity] ошибка: {e}")
+    finally:
+        _inactivity_tasks.pop(chat_id, None)
 
 
 def parse_passengers(s: str) -> str:
@@ -1730,28 +1833,28 @@ async def handle_show_transfer(callback: CallbackQuery):
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
-    
-    # ИГНОРИРУЕМ СОСТОЯНИЯ ИЗ FLYSTACK
-    if current_state and current_state.startswith("FlyStackTrack"):
-        logger.info(f"📝 [Start] Пропускаем сообщение в состоянии FlyStackTrack: {message.text}")
-        return  # Пропускаем, пусть обрабатывает flystack_track.py
+    text = message.text or ""
 
-    # ИГНОРИРУЕМ СОСТОЯНИЯ ИЗ HOT DEALS
+    # Пропускаем команды
+    if text.startswith("/"):
+        return
+
+    # Пропускаем чужие FSM
+    if current_state and current_state.startswith("FlyStackTrack"):
+        return
     if current_state and current_state.startswith("HotDealsSub"):
-        return  # Пропускаем, пусть обрабатывает hot_deals.py
-    
-    # Проверяем ТОЛЬКО состояния из FlightSearch
-    if current_state:
-        logger.warning(f"⚠️ [Start] Пользователь в состоянии {current_state}, отправляем предупреждение")
+        return
+
+    # Внутри FlightSearch — предупреждаем (кроме "В начало")
+    if current_state and current_state.startswith("FlightSearch"):
+        logger.warning(f"⚠️ [Start] Пользователь в состоянии {current_state}: {text[:30]}")
         await message.answer(
             "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
             reply_markup=CANCEL_KB
         )
         return
-    
-    if message.text.startswith("/"):
-        return
-    
+
+    # Вне FSM — пробуем тихий ручной поиск
     await handle_flight_request(message)
 
 @router.callback_query(F.data.startswith("unwatch_"))
@@ -1827,59 +1930,57 @@ async def back_to_summary(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("edit_from_results_"))
 async def edit_from_results(callback: CallbackQuery, state: FSMContext):
     """Кнопка 'Изменить данные' со страницы результатов.
-    Показывает меню выбора что именно изменить, без сброса всего FSM."""
+    Полностью восстанавливает FSM из кэша, затем показывает summary с кнопками редактирования."""
     cache_id = callback.data.replace("edit_from_results_", "")
     cached = await redis_client.get_search_cache(cache_id)
     if not cached:
         await callback.answer("Данные устарели, начните новый поиск", show_alert=True)
         return
 
-    # Восстанавливаем данные поиска в FSM
-    flights = cached.pop("flights", [])  # не храним в FSM
-    await state.update_data(**cached)
-
-    # Строим краткую сводку из кэша
-    origin_iata = flights[0].get("origin", "") if flights else cached.get("dest_iata", "")
-    dest_iata = cached.get("dest_iata", "")
-    from utils.cities_loader import get_city_name, IATA_TO_CITY
-    origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
-
-    edit_buttons = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Маршрут",   callback_data="result_edit_route"),
-         InlineKeyboardButton(text="✏️ Даты",       callback_data="result_edit_dates")],
-        [InlineKeyboardButton(text="✏️ Тип рейса",  callback_data="result_edit_flight_type"),
-         InlineKeyboardButton(text="✏️ Пассажиры",  callback_data="result_edit_passengers")],
-        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
-    ])
-    depart_display = cached.get("display_depart", "")
-    return_display = cached.get("display_return", "")
-    pax = cached.get("passenger_desc", "1 взр.")
-    ft_map = {"direct": "прямые", "transfer": "с пересадками", "all": "все"}
-    ft = ft_map.get(cached.get("flight_type", "all"), "все")
-
-    text = (
-        f"✏️ <b>Изменить параметры поиска</b>\n\n"
-        f"Маршрут: {origin_name} → {dest_name}\n"
-        f"Туда: {depart_display}"
-        + (f" | Обратно: {return_display}" if return_display else "") +
-        f"\nРейсы: {ft} | Пассажиры: {pax}\n\n"
-        f"Что изменить?"
-    )
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=edit_buttons)
+    # Восстанавливаем полное состояние FSM из кэша
+    cached.pop("flights", None)  # рейсы не нужны в FSM
+    fsm_data = {
+        "origin":         cached.get("origin", ""),
+        "origin_iata":    cached.get("origin_iata", ""),
+        "origin_name":    cached.get("origin_name", ""),
+        "dest":           cached.get("dest", ""),
+        "dest_iata":      cached.get("dest_iata", ""),
+        "dest_name":      cached.get("dest_name", ""),
+        "depart_date":    cached.get("depart_date") or cached.get("original_depart", ""),
+        "return_date":    cached.get("return_date") or cached.get("original_return"),
+        "need_return":    cached.get("need_return", False),
+        "flight_type":    cached.get("flight_type", "all"),
+        "adults":         cached.get("adults", 1),
+        "children":       cached.get("children", 0),
+        "infants":        cached.get("infants", 0),
+        "passenger_code": cached.get("passenger_code") or cached.get("passengers_code", "1"),
+        "passenger_desc": cached.get("passenger_desc", "1 взр."),
+        "_edit_mode":     False,
+    }
+    await state.update_data(**fsm_data)
     await state.set_state(FlightSearch.confirm)
+
+    # Показываем summary с кнопками редактирования (через back_to_summary логику)
+    summary_steps = build_choices_summary(fsm_data)
+    summary = "Проверьте даты и данные:\n\n" + summary_steps
+
+    edit_buttons = [
+        [InlineKeyboardButton(text="✏️ Маршрут",    callback_data="edit_route"),
+         InlineKeyboardButton(text="✏️ Даты",        callback_data="edit_dates")],
+        [InlineKeyboardButton(text="✏️ Тип рейса",   callback_data="edit_flight_type"),
+         InlineKeyboardButton(text="✏️ Пассажиры",   callback_data="edit_passengers")],
+    ]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
+        *edit_buttons,
+        [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+    ])
+    await callback.message.edit_text(summary, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
-# ── Обработчики редактирования со страницы результатов ──────────
-# Аналогичны edit_step, но вызываются без состояния FlightSearch.confirm
-
-@router.callback_query(F.data.startswith("result_edit_"))
-async def result_edit_step(callback: CallbackQuery, state: FSMContext):
-    """Точечное редактирование одного параметра со страницы результатов."""
-    action = callback.data.replace("result_edit_", "")
-    await _do_edit_action(callback, state, action)
-    await callback.answer()
+# result_edit_ коллбэки удалены — edit_from_results теперь восстанавливает
+# полный FSM в FlightSearch.confirm и использует те же edit_ коллбэки
 
 
 # Обратная совместимость со старым форматом callback_data

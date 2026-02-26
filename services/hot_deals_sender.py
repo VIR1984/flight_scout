@@ -229,6 +229,7 @@ class HotDealsSender:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"✈️ Забронировать за {price:,} ₽".replace(",", " "), url=booking_link)],
             [InlineKeyboardButton(text="❌ Отписаться от этой подписки", callback_data=f"hd_del_{sub_id}")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
         ])
 
         try:
@@ -347,6 +348,9 @@ class HotDealsSender:
         text += "⚠️ <i>Цены актуальны на момент отправки и могут изменяться.</i>"
         kb_buttons.append([
             InlineKeyboardButton(text="❌ Отписаться от дайджеста", callback_data=f"hd_del_{sub_id}")
+        ])
+        kb_buttons.append([
+            InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
         ])
 
         try:
