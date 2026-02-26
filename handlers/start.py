@@ -335,63 +335,46 @@ async def handle_help(callback: CallbackQuery):
 # ════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data == "my_subscriptions")
-async def handle_my_subscriptions(callback: CallbackQuery):
+async def handle_my_subscriptions(callback: CallbackQuery, state: FSMContext):
     """
     Кнопка "Мои подписки" из главного меню.
-    Перенаправляет в hd_my_subs из hot_deals.py.
-    Если подписок нет — предлагает создать.
+    Если подписок нет — предлагает создать с объяснением.
+    Если есть — сразу открывает список (делегирует в hd_my_subs).
     """
     user_id = callback.from_user.id
     subs = await redis_client.get_hot_subs(user_id)
 
     if not subs:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔥 Создать подписку",  callback_data="hd_new_sub")],
-            [InlineKeyboardButton(text="↩️ В начало",          callback_data="main_menu")],
+            [InlineKeyboardButton(text="🔥 Создать первую подписку", callback_data="hd_new_sub")],
+            [InlineKeyboardButton(text="↩️ В начало",                callback_data="main_menu")],
         ])
         try:
             await callback.message.edit_text(
-                "У вас пока нет подписок на горячие предложения.\n\n"
-                "Подписка позволяет получать уведомления, когда цены на нужные "
-                "направления упадут ниже вашего бюджета.\n\n"
-                "Хотите создать первую?",
+                "📋 <b>Мои подписки</b>\n\n"
+                "У вас пока нет активных подписок.\n\n"
+                "Подписка на горячие предложения — это удобно:\n"
+                "• Вы указываете направления и бюджет\n"
+                "• Бот сам следит за ценами 24/7\n"
+                "• Присылает уведомление, как только цена упадёт\n\n"
+                "Создать первую подписку?",
+                parse_mode="HTML",
                 reply_markup=kb,
             )
         except Exception:
             await callback.message.answer(
-                "У вас пока нет подписок на горячие предложения.\n\n"
+                "📋 <b>Мои подписки</b>\n\n"
+                "У вас пока нет активных подписок.\n\n"
                 "Хотите создать первую?",
+                parse_mode="HTML",
                 reply_markup=kb,
             )
         await callback.answer()
         return
 
-    # Есть подписки — переключаем на callback hd_my_subs из hot_deals роутера
-    # Просто меняем data и вызываем forward
-    callback.data = "hd_my_subs"
-    await callback.answer()
-    # Редиректим через edit + кнопку
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Открыть мои подписки", callback_data="hd_my_subs")],
-        [InlineKeyboardButton(text="↩️ В начало",             callback_data="main_menu")],
-    ])
-    try:
-        await callback.message.edit_text(
-            f"У вас {len(subs)} активных подписок.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
-                [InlineKeyboardButton(text="⚙️ Настроить",   callback_data="hd_new_sub")],
-                [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
-            ])
-        )
-    except Exception:
-        await callback.message.answer(
-            f"У вас {len(subs)} активных подписок.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
-                [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
-            ])
-        )
+    # Есть подписки — открываем список напрямую через импорт хендлера
+    from handlers.hot_deals import hd_my_subs
+    await hd_my_subs(callback, state)
 
 
 # ════════════════════════════════════════════════════════════════

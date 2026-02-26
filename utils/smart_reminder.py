@@ -90,7 +90,7 @@ async def _inactivity_reminder(chat_id: int, user_id: int,
             return
 
         kb1 = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="▶️ Продолжить поиск",    callback_data="start_search")],
+            [InlineKeyboardButton(text="▶️ Продолжить поиск",    callback_data="continue_search")],
             [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
             [InlineKeyboardButton(text="↩️ В начало",            callback_data="main_menu")],
         ])

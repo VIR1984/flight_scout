@@ -73,14 +73,52 @@ def _resolve_city(city_str: str) -> tuple[str | None, str | None]:
 
 
 def parse_passengers(s: str) -> str:
-    """'2 взр, 1 реб' → '21'  |  '3' → '3'  |  '' → '1'"""
+    """
+    Парсит строку пассажиров в код для API.
+
+    Поддерживаемые форматы:
+      ''           → '1'        (1 взрослый по умолчанию)
+      '3'          → '3'        (3 взрослых)
+      '211'        → '211'      (2 взр, 1 реб, 1 млад) — компактный код
+      '21'         → '21'       (2 взр, 1 реб)
+      '2 взр, 1 реб, 1 млад'   → '211'
+      '2 взр'      → '2'
+    """
     if not s:
         return "1"
     s = s.strip()
-    if s.isdigit():
-        return s
+
+    # Компактный числовой код: только цифры, 1-3 символа, первая ≥ 1
+    # Примеры: "1", "2", "21", "211", "311"
+    if re.match(r'^\d{1,3}$', s):
+        digits = s
+        adults = int(digits[0])
+        if adults < 1:
+            adults = 1
+        # Если вся строка — 1 цифра, это просто кол-во взрослых
+        if len(digits) == 1:
+            return str(adults)
+        # 2 цифры: взрослые + дети
+        if len(digits) == 2:
+            children = int(digits[1])
+            result = str(adults)
+            if children:
+                result += str(children)
+            return result
+        # 3 цифры: взрослые + дети + младенцы
+        if len(digits) == 3:
+            children = int(digits[1])
+            infants  = int(digits[2])
+            result = str(adults)
+            if children:
+                result += str(children)
+            if infants:
+                result += str(infants)
+            return result
+
+    # Текстовый формат: "2 взр, 1 реб, 1 млад"
     adults = children = infants = 0
-    for part in s.split(","):
+    for part in re.split(r'[,;]+', s):
         part = part.strip().lower()
         m = re.search(r"\d+", part)
         n = int(m.group()) if m else 1
@@ -91,7 +129,12 @@ def parse_passengers(s: str) -> str:
         elif "мл" in part or "млад" in part:
             infants = n
     adults = adults or 1
-    return str(adults) + (str(children) if children else "") + (str(infants) if infants else "")
+    result = str(adults)
+    if children:
+        result += str(children)
+    if infants:
+        result += str(infants)
+    return result
 
 
 def _parse_quick_search(text: str) -> tuple | None:
