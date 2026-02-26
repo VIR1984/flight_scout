@@ -37,7 +37,7 @@ from handlers.everywhere_search import (
     format_user_date,
     build_passenger_desc,
 )
-from handlers.start_constants import (
+from handlers.flight_constants import (
     CANCEL_KB,
     AIRPORT_NAMES,
     SUPPORTED_TRANSFER_AIRPORTS,
