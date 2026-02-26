@@ -698,19 +698,34 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    text    = "📋 <b>Ваши подписки:</b>\n"
+    blocks  = []
     buttons = []
+
     for idx, (sub_id, sub) in enumerate(subs.items(), 1):
         cat_label, _ = CATEGORIES.get(sub.get("category", ""), ("—", []))
-        sub_icon      = "🔥" if sub.get("sub_type") == "hot" else "📰"
-        price_str     = f"≤{sub['max_price']:,} ₽".replace(",", " ") if sub.get("max_price") else "любая"
+        is_hot   = sub.get("sub_type") == "hot"
+        sub_icon = "🔥" if is_hot else "📰"
+
+        # Бюджет
+        max_price = sub.get("max_price")
+        price_str = f"до {max_price:,} ₽".replace(",", "\u202f") if max_price else "без ограничений"
+
+        # Пассажиры
+        pax = sub.get("passengers", 1)
+        if pax == 1:
+            pax_str = "1 пассажир"
+        elif pax < 5:
+            pax_str = f"{pax} пассажира"
+        else:
+            pax_str = f"{pax} пассажиров"
 
         # Города вылета
         origins = sub.get("origins", [])
-        if origins:
-            origin_str = ", ".join(o["name"] for o in origins)
-        else:
-            origin_str = sub.get("origin_name", sub.get("origin_iata", "?"))
+        origin_str = (
+            ", ".join(o["name"] for o in origins)
+            if origins
+            else sub.get("origin_name", sub.get("origin_iata", "?"))
+        )
 
         # Направление
         dest_str = sub.get("dest_preset_name") or cat_label
@@ -718,18 +733,37 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
         # Месяцы
         travel_months = sub.get("travel_months", [])
         if travel_months:
-            labels = [MONTHS_LABELS.get(mk.split("_")[0], mk) for mk in travel_months]
-            month_str = ", ".join(labels)
+            month_str = ", ".join(
+                MONTHS_LABELS.get(mk.split("_")[0], mk) for mk in travel_months
+            )
         elif sub.get("travel_month"):
-            month_str = f"{MONTHS_LABELS.get(str(sub['travel_month']), '?')} {sub.get('travel_year', '')}"
+            month_str = (
+                f"{MONTHS_LABELS.get(str(sub['travel_month']), '?')} "
+                f"{sub.get('travel_year', '')}"
+            ).strip()
         else:
             month_str = "любой период"
 
-        text += (
-            f"\n{idx}. {sub_icon} {dest_str}\n"
-            f"   🛫 {origin_str} · {month_str} · {price_str} · {sub.get('passengers', 1)} чел.\n"
+        # Частота дайджеста
+        freq_map  = {"daily": "📆 ежедневно", "weekly": "📆 раз в неделю"}
+        freq_line = f"\n{freq_map[sub['frequency']]}" if not is_hot and sub.get("frequency") else ""
+
+        blocks.append(
+            f"<b>{idx}. {sub_icon} {dest_str}</b>\n"
+            f"🛫 {origin_str}\n"
+            f"📅 {month_str}\n"
+            f"💰 {price_str}  ·  👤 {pax_str}{freq_line}"
         )
-        buttons.append([InlineKeyboardButton(text=f"❌ Удалить #{idx}", callback_data=f"hd_del_{sub_id}")])
+        buttons.append([InlineKeyboardButton(
+            text=f"🗑 Удалить №{idx} — {dest_str}",
+            callback_data=f"hd_del_{sub_id}"
+        )])
+
+    divider = "\n\n" + "─" * 20 + "\n\n"
+    text = (
+        f"🔔 <b>Ваши подписки</b>  ({len(subs)} шт.)\n\n"
+        + divider.join(blocks)
+    )
 
     buttons.append([InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")])
     buttons.append([InlineKeyboardButton(text="↩️ Назад",      callback_data="hot_deals_menu")])
