@@ -43,6 +43,7 @@ CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
 
 class FlightSearch(StatesGroup):
     route = State()
+    choose_airport = State()   # выбор конкретного аэропорта (Москва → SVO/DME/VKO...)
     depart_date = State()
     need_return = State()
     return_date = State()
@@ -52,6 +53,92 @@ class FlightSearch(StatesGroup):
     children = State()
     infants = State()
     confirm = State()
+
+
+# ════════════════════════════════════════════════════════════════
+# Города с несколькими аэропортами вылета
+# ════════════════════════════════════════════════════════════════
+
+# metro-IATA (город) → [(iata_аэропорта, «Название (IATA)»), ...]
+MULTI_AIRPORT_CITIES: dict = {
+    "MOW": [
+        ("SVO", "Шереметьево (SVO)"),
+        ("DME", "Домодедово (DME)"),
+        ("VKO", "Внуково (VKO)"),
+        ("ZIA", "Жуковский (ZIA)"),
+    ],
+    "IST": [
+        ("IST", "Стамбул Новый (IST)"),
+        ("SAW", "Сабиха Гёкчен (SAW)"),
+    ],
+    "PAR": [
+        ("CDG", "Шарль-де-Голль (CDG)"),
+        ("ORY", "Орли (ORY)"),
+    ],
+    "LON": [
+        ("LHR", "Хитроу (LHR)"),
+        ("LGW", "Гатвик (LGW)"),
+        ("STN", "Станстед (STN)"),
+    ],
+    "MIL": [
+        ("MXP", "Мальпенса (MXP)"),
+        ("LIN", "Линате (LIN)"),
+        ("BGY", "Бергамо (BGY)"),
+    ],
+    "BKK": [
+        ("BKK", "Суварнабхуми (BKK)"),
+        ("DMK", "Дон Мыанг (DMK)"),
+    ],
+    "TYO": [
+        ("NRT", "Нарита (NRT)"),
+        ("HND", "Ханеда (HND)"),
+    ],
+    "NYC": [
+        ("JFK", "Кеннеди (JFK)"),
+        ("EWR", "Ньюарк (EWR)"),
+        ("LGA", "Ла Гуардия (LGA)"),
+    ],
+    "CHI": [
+        ("ORD", "О'Хара (ORD)"),
+        ("MDW", "Мидуэй (MDW)"),
+    ],
+}
+
+# Обратный индекс: IATA аэропорта → metro-IATA
+_AIRPORT_TO_METRO: dict = {
+    ap: metro
+    for metro, aps in MULTI_AIRPORT_CITIES.items()
+    for ap, _ in aps
+}
+
+
+def _get_metro(iata: str) -> str | None:
+    """SVO → MOW, MOW → MOW, AER → None"""
+    if iata in MULTI_AIRPORT_CITIES:
+        return iata
+    return _AIRPORT_TO_METRO.get(iata)
+
+
+def _has_multi_airports(iata: str) -> bool:
+    metro = _get_metro(iata)
+    return bool(metro and len(MULTI_AIRPORT_CITIES.get(metro, [])) > 1)
+
+
+def _airport_keyboard(metro_iata: str, city_name: str) -> InlineKeyboardMarkup:
+    """Строит клавиатуру выбора аэропорта."""
+    rows = []
+    for ap_iata, ap_label in MULTI_AIRPORT_CITIES.get(metro_iata, []):
+        rows.append([InlineKeyboardButton(
+            text=f"✈️ {ap_label}",
+            callback_data=f"ap_pick_{ap_iata}"
+        )])
+    rows.append([InlineKeyboardButton(
+        text=f"🔀 Любой аэропорт",
+        callback_data=f"ap_any_{metro_iata}"
+    )])
+    rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def validate_route(text: str) -> tuple:
     text = text.strip().lower()
@@ -82,7 +169,11 @@ def build_choices_summary(data: dict) -> str:
     """Строит пошаговую сводку выбора пользователя в правильном порядке."""
     lines = []
     n = 1
-    lines.append(f"{n}. Маршрут: {data.get('origin_name', '')} → {data.get('dest_name', '')}")
+    _ap = data.get("origin_airport_label", "")
+    _route = f"{data.get('origin_name', '')} → {data.get('dest_name', '')}"
+    if _ap:
+        _route += f"  ({_ap})"
+    lines.append(f"{n}. Маршрут: {_route}")
     n += 1
     depart_date = data.get('depart_date', '')
     depart_display = format_user_date(depart_date) if depart_date else ''
@@ -263,9 +354,41 @@ async def process_route(message: Message, state: FSMContext):
     data = await state.get_data()
     _cancel_inactivity(message.chat.id)
     if data.get("_edit_mode"):
-        # Точечное редактирование — возвращаем к summary без перехода по датам
         await state.update_data(_edit_mode=False)
+        # Даже при edit_mode — если мультиаэропорт, спрашиваем заново
+        if orig_iata and _has_multi_airports(orig_iata):
+            metro = _get_metro(orig_iata)
+            await state.update_data(
+                _edit_mode=True,  # сохраняем флаг, чтобы после выбора вернуться к summary
+                origin_airports=None,
+                origin_airport_label=None,
+            )
+            kb = _airport_keyboard(metro, origin_name)
+            await message.answer(
+                f"🛫 Из <b>{origin_name}</b> несколько аэропортов. Из какого летим?",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+            await state.set_state(FlightSearch.choose_airport)
+            return
         await show_summary(message, state)
+        return
+
+    # Если у города вылета несколько аэропортов — спрашиваем
+    if orig_iata and _has_multi_airports(orig_iata):
+        metro = _get_metro(orig_iata)
+        kb = _airport_keyboard(metro, origin_name)
+        await state.update_data(origin_airports=None, origin_airport_label=None)
+        await message.answer(
+            f"🛫 Из <b>{origin_name}</b> можно вылететь из нескольких аэропортов.",
+            parse_mode="HTML"
+        )
+        await message.answer(
+            "Выберите аэропорт вылета:",
+            reply_markup=kb
+        )
+        await state.set_state(FlightSearch.choose_airport)
+        _schedule_inactivity(message.chat.id, message.from_user.id)
         return
 
     await message.answer(
@@ -276,6 +399,68 @@ async def process_route(message: Message, state: FSMContext):
     )
     await state.set_state(FlightSearch.depart_date)
     _schedule_inactivity(message.chat.id, message.from_user.id)
+
+
+# ════════════════════════════════════════════════════════════════
+# Выбор аэропорта вылета
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(FlightSearch.choose_airport, F.data.startswith("ap_pick_"))
+async def process_airport_pick(callback: CallbackQuery, state: FSMContext):
+    """Пользователь выбрал конкретный аэропорт."""
+    ap_iata = callback.data.replace("ap_pick_", "")
+    data = await state.get_data()
+    origin_name = data.get("origin_name", "")
+
+    metro = _get_metro(ap_iata) or ap_iata
+    airports = MULTI_AIRPORT_CITIES.get(metro, [])
+    ap_label = next((lbl for code, lbl in airports if code == ap_iata), ap_iata)
+
+    await state.update_data(
+        origin_iata=ap_iata,
+        origin_airports=[ap_iata],
+        origin_airport_label=ap_label,
+    )
+    await callback.answer(f"✈️ {ap_label}")
+    await _after_airport_pick(callback, state)
+
+
+@router.callback_query(FlightSearch.choose_airport, F.data.startswith("ap_any_"))
+async def process_airport_any(callback: CallbackQuery, state: FSMContext):
+    """Пользователь выбрал «Любой аэропорт»."""
+    metro_iata = callback.data.replace("ap_any_", "")
+    airports   = MULTI_AIRPORT_CITIES.get(metro_iata, [])
+    all_iatas  = [ap for ap, _ in airports]
+    data       = await state.get_data()
+    origin_name = data.get("origin_name", "")
+
+    await state.update_data(
+        origin_iata=metro_iata,
+        origin_airports=all_iatas,
+        origin_airport_label=f"Любой аэропорт",
+    )
+    await callback.answer("🔀 Буду искать по всем аэропортам")
+    await _after_airport_pick(callback, state)
+
+
+async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
+    """Общий переход после выбора аэропорта."""
+    data = await state.get_data()
+
+    if data.get("_edit_mode"):
+        await state.update_data(_edit_mode=False)
+        await show_summary(callback.message, state)
+        return
+
+    await callback.message.edit_text(
+        "Введите дату вылета в формате <code>ДД.ММ</code>\n"
+        "<i>Пример: 10.03</i>",
+        parse_mode="HTML",
+        reply_markup=CANCEL_KB
+    )
+    await state.set_state(FlightSearch.depart_date)
+    _schedule_inactivity(callback.message.chat.id, callback.from_user.id)
+
 
 @router.message(FlightSearch.depart_date)
 async def process_depart_date(message: Message, state: FSMContext):
@@ -694,7 +879,7 @@ async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: st
     if action == "route":
         # Маршрут — вводится текстом, переходим в FlightSearch.route
         # Но помечаем флаг, чтобы после ввода вернуться к summary, а не идти к датам
-        await state.update_data(_edit_mode=True)
+        await state.update_data(_edit_mode=True, origin_airports=None, origin_airport_label=None)
         await callback.message.edit_text(
             "✏️ Введите новый маршрут:\n<b>Город вылета - Город прибытия</b>\n\n<i>Пример: Москва - Сочи</i>",
             parse_mode="HTML",
@@ -793,7 +978,8 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
             await state.clear()
             return
 
-    origins = [data["origin_iata"]]
+    # Если выбран «Любой аэропорт» — ищем по всем; иначе по одному конкретному
+    origins = data.get("origin_airports") or [data["origin_iata"]]
     destinations = [data["dest_iata"]]
     all_flights = []
 
@@ -1252,21 +1438,136 @@ def parse_passengers(s: str) -> str:
         elif "мл" in part or "млад" in part: infants = n
     return str(adults) + (str(children) if children else "") + (str(infants) if infants else "")
 
+
+def _resolve_city(city_str: str) -> tuple:
+    """
+    Резолвит строку в (iata, name).
+    Принимает:
+      - Название: «Москва», «Сочи»
+      - IATA аэропорта/города: «SVO», «MOW», «AER»
+    """
+    c = city_str.strip()
+    # Прямой IATA-код (3 латинские буквы)
+    if re.match(r"^[A-Za-z]{3}$", c):
+        iata = c.upper()
+        name = get_city_name(iata) or IATA_TO_CITY.get(iata, iata)
+        return iata, name
+    # Обычное название города
+    iata = get_iata(c) or CITY_TO_IATA.get(_normalize_name(c))
+    if iata:
+        name = get_city_name(iata) or IATA_TO_CITY.get(iata, c.capitalize())
+        return iata, name
+    return None, None
+
+
+def _parse_quick_search(text: str):
+    """
+    Парсит строку тихого ручного поиска.
+    Форматы:
+      Москва Сочи 10.03
+      Москва Сочи 10.03 211
+      Москва - Сочи 10.03 15.03 2
+      Санкт-Петербург Сочи 10.03 20.03 прямые
+      Везде Сочи 10.03
+
+    Возвращает (origin, dest, depart_date, return_date, passengers_part) или None.
+    Алгоритм:
+      1. Токенизируем по пробелам.
+      2. Ищем первый токен похожий на дату (ДД.ММ) — это depart_date.
+      3. Всё до даты — города (origin + dest).
+      4. Следующий токен-дата (если есть) — return_date.
+      5. Остаток — passengers_part.
+      6. Города: если есть явный разделитель - / → / — разбиваем по нему,
+         иначе пробуем найти оба города перебором (сначала двухсловные, потом однословные).
+    """
+    text = text.strip()
+    # Разбиваем учитывая дефисные разделители как отдельные токены
+    # Нормализуем разделители: " - " → " | ", "→" → " | ", "—" → " | "
+    # Стрелки и «пробел-дефис-пробел» — разделители маршрута.
+    # Дефис ВНУТРИ слова (Санкт-Петербург, Ростов-на-Дону) НЕ трогаем.
+    normalized = re.sub(r'[→—>]|(?<=\s)-(?=\s)|(?<=\s)-$|^-(?=\s)', '|', text)
+    normalized = re.sub(r'\s*\|\s*', ' | ', normalized)
+    # Теперь разбиваем по пробелу
+    tokens = normalized.split()
+
+    DATE_RE = re.compile(r'^\d{1,2}\.\d{1,2}$')
+
+    # Находим индексы дат
+    date_indices = [i for i, t in enumerate(tokens) if DATE_RE.match(t)]
+    if not date_indices:
+        return None  # нет даты — не наш формат
+
+    first_date_idx = date_indices[0]
+    depart_date = tokens[first_date_idx]
+
+    # return_date — следующий токен-дата сразу после depart_date
+    return_date = None
+    after_depart = first_date_idx + 1
+    if after_depart < len(tokens) and DATE_RE.match(tokens[after_depart]):
+        return_date = tokens[after_depart]
+        passengers_part = " ".join(tokens[after_depart + 1:])
+    else:
+        passengers_part = " ".join(tokens[after_depart:])
+
+    # Города — всё до первой даты (убираем разделитель "|")
+    city_tokens = [t for t in tokens[:first_date_idx] if t != "|"]
+    if not city_tokens:
+        return None
+
+    # Если был разделитель "|" — используем его позицию
+    pipe_pos = None
+    for i, t in enumerate(tokens[:first_date_idx]):
+        if t == "|":
+            pipe_pos = i
+            break
+
+    if pipe_pos is not None:
+        # origin = всё до "|", dest = всё от "|" до даты
+        origin_tokens_raw = [t for t in tokens[:pipe_pos]]
+        dest_tokens_raw   = [t for t in tokens[pipe_pos+1:first_date_idx]]
+        origin_city = " ".join(origin_tokens_raw).strip()
+        dest_city   = " ".join(dest_tokens_raw).strip()
+        return origin_city, dest_city, depart_date, return_date, passengers_part
+
+    # Нет явного разделителя — перебираем варианты разбиения
+    # Пробуем сначала "первое слово = origin, остальное = dest", затем наоборот
+    # Проверяем через get_iata
+    n = len(city_tokens)
+    best = None
+    for split in range(1, n):
+        o = " ".join(city_tokens[:split])
+        d = " ".join(city_tokens[split:])
+        o_iata = get_iata(o) or CITY_TO_IATA.get(_normalize_name(o))
+        d_iata = get_iata(d) or CITY_TO_IATA.get(_normalize_name(d))
+        if o_iata and d_iata:
+            best = (o, d)
+            break  # берём первый рабочий вариант
+
+    if best:
+        return best[0], best[1], depart_date, return_date, passengers_part
+
+    # Не нашли пару — возможно один из городов "Везде"
+    if city_tokens[0].lower() == "везде" and n >= 2:
+        return "везде", " ".join(city_tokens[1:]), depart_date, return_date, passengers_part
+    if city_tokens[-1].lower() == "везде" and n >= 2:
+        return " ".join(city_tokens[:-1]), "везде", depart_date, return_date, passengers_part
+
+    return None
+
+
 async def handle_flight_request(message: Message):
-    text = message.text.strip().lower()
-    match = re.match(
-        r"^([а-яёa-z\s]+?)\s*[-→>—\s]+\s*([а-яёa-z\s]+?)\s+(\d{1,2}.\d{1,2})(?:\s*[-–]\s*(\d{1,2}.\d{1,2}))?\s*(.*)?$",
-        text, re.IGNORECASE
-    )
-    if not match:
-        await message.answer(
-            "Неверный формат. Пример:\n`Орск - Пермь 10.03`",
-            parse_mode="HTML",
-            reply_markup=CANCEL_KB
-        )
+    text = message.text.strip()
+    logger.info(f"[QuickSearch] Входящий текст: '{text}'")
+
+    parsed = _parse_quick_search(text)
+    if not parsed:
+        # Не похоже на запрос поиска — молча игнорируем
+        logger.debug(f"[QuickSearch] Не распознан: '{text}'")
         return
-    
-    origin_city, dest_city, depart_date, return_date, passengers_part = match.groups()
+
+    origin_city, dest_city, depart_date, return_date, passengers_part = parsed
+    logger.info(f"[QuickSearch] Распарсено: origin='{origin_city}' dest='{dest_city}' "
+                f"depart='{depart_date}' return='{return_date}' pax='{passengers_part}'")
     is_roundtrip = bool(return_date)
     is_origin_everywhere = origin_city.strip() == "везде"
     is_dest_everywhere = dest_city.strip() == "везде"
@@ -1290,10 +1591,8 @@ async def handle_flight_request(message: Message):
         )
         return
 
-    # ← ПРОВЕРКА: Одинаковые города (ручной ввод)
-    # ← ИСПОЛЬЗУЕМ get_iata() + fallback
-    orig_iata_check = get_iata(origin_city.strip()) or CITY_TO_IATA.get(_normalize_name(origin_city.strip()))
-    dest_iata_check = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
+    orig_iata_check, _ = _resolve_city(origin_city)
+    dest_iata_check, _ = _resolve_city(dest_city)
     
     if orig_iata_check and dest_iata_check and orig_iata_check == dest_iata_check:
         logger.info(f"[DEBUG VALIDATION] Ручной ввод: одинаковые города {orig_iata_check}")
@@ -1334,23 +1633,22 @@ async def handle_flight_request(message: Message):
         if success:
             return
 
-    # ← ИСПОЛЬЗУЕМ get_iata() + fallback для dest
-    dest_iata = get_iata(dest_city.strip()) or CITY_TO_IATA.get(_normalize_name(dest_city.strip()))
+    dest_iata, dest_name = _resolve_city(dest_city)
     if not dest_iata:
         await message.answer(f"Не знаю город прилёта: {dest_city.strip()}", reply_markup=CANCEL_KB)
         return
 
-    origin_clean = origin_city.strip()
-    # ← ИСПОЛЬЗУЕМ get_iata() + fallback для origin
-    orig_iata = get_iata(origin_clean) or CITY_TO_IATA.get(_normalize_name(origin_clean))
+    orig_iata, origin_name = _resolve_city(origin_city)
     if not orig_iata:
-        await message.answer(f"Не знаю город вылета: {origin_clean}", reply_markup=CANCEL_KB)
+        await message.answer(f"Не знаю город вылета: {origin_city.strip()}", reply_markup=CANCEL_KB)
         return
 
-    origins = [orig_iata]
-    # ← ИСПОЛЬЗУЕМ get_city_name() + fallback для названий
-    origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin_clean.capitalize())
-    dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_city.strip().capitalize())
+    # Если orig_iata — metro (MOW) → ищем по всем аэропортам города
+    # Если конкретный аэропорт (SVO) → только он
+    if orig_iata in MULTI_AIRPORT_CITIES:
+        origins = [ap for ap, _ in MULTI_AIRPORT_CITIES[orig_iata]]
+    else:
+        origins = [orig_iata]
     
     passengers_code = parse_passengers((passengers_part or "").strip())
     passenger_desc = build_passenger_desc(passengers_code)
