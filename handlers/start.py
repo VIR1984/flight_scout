@@ -103,10 +103,10 @@ def _has_multi_airports(iata: str) -> bool:
 
 def _airport_keyboard(metro_iata: str, city_name: str) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"✈️ {ap_label}", callback_data=f"ap_pick_{ap_iata}")]
+        [InlineKeyboardButton(text=ap_label, callback_data=f"ap_pick_{ap_iata}")]
         for ap_iata, ap_label in MULTI_AIRPORT_CITIES.get(metro_iata, [])
     ]
-    rows.append([InlineKeyboardButton(text="🔀 Любой аэропорт", callback_data=f"ap_any_{metro_iata}")])
+    rows.append([InlineKeyboardButton(text="Любой аэропорт", callback_data=f"ap_any_{metro_iata}")])
     rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -114,9 +114,14 @@ def _airport_keyboard(metro_iata: str, city_name: str) -> InlineKeyboardMarkup:
 def validate_route(text: str) -> tuple[str, str]:
     text = text.strip().lower()
     if re.search(r'\s+[-→—>]+\s+', text):
+        # "Москва - Сочи", "Москва → Сочи"
         parts = re.split(r'\s+[-→—>]+\s+', text, maxsplit=1)
-    elif any(sym in text for sym in ['→', '—', '>']):
+    elif re.search(r'[→—>]+', text):
+        # "Москва→Сочи"
         parts = re.split(r'[→—>]+', text, maxsplit=1)
+    elif re.search(r'(?<=[а-яёa-z])-(?=[а-яёa-z])', text):
+        # "Москва-Сочи" — дефис без пробелов между буквами
+        parts = re.split(r'(?<=[а-яёa-z])-(?=[а-яёa-z])', text, maxsplit=1)
     else:
         parts = text.split(maxsplit=1)
     if len(parts) < 2:
@@ -132,6 +137,56 @@ def validate_date(date_str: str) -> bool:
         return 1 <= day <= 31 and 1 <= month <= 12
     except Exception:
         return False
+
+
+
+# ── Склонение городов (родительный падеж: "из Москвы") ─────────────────────
+_GENITIVE = {
+    "Москва": "Москвы",
+    "Санкт-Петербург": "Санкт-Петербурга",
+    "Ростов-на-Дону": "Ростова-на-Дону",
+    "Нижний Новгород": "Нижнего Новгорода",
+    "Екатеринбург": "Екатеринбурга",
+    "Новосибирск": "Новосибирска",
+    "Владивосток": "Владивостока",
+    "Хабаровск": "Хабаровска",
+    "Красноярск": "Красноярска",
+    "Краснодар": "Краснодара",
+    "Самара": "Самары",
+    "Уфа": "Уфы",
+    "Казань": "Казани",
+    "Пермь": "Перми",
+    "Воронеж": "Воронежа",
+    "Волгоград": "Волгограда",
+    "Ростов": "Ростова",
+    "Омск": "Омска",
+    "Иркутск": "Иркутска",
+    "Сочи": "Сочи",
+    "Баку": "Баку",
+    "Тбилиси": "Тбилиси",
+    "Токио": "Токио",
+    "Осло": "Осло",
+    "Дели": "Дели",
+    "Гоа": "Гоа",
+    "Батуми": "Батуми",
+}
+
+def _genitive(city: str) -> str:
+    """Склоняет город в родительный падеж. "Москва" → "Москвы"."""
+    if not city:
+        return city
+    if city in _GENITIVE:
+        return _GENITIVE[city]
+    # Простые правила для остальных
+    if city.endswith("а") and not city.endswith("ия"):
+        return city[:-1] + "ы"
+    if city.endswith("я"):
+        return city[:-1] + "и"
+    if city.endswith("ия"):
+        return city[:-2] + "ии"
+    if city[-1].lower() in "бвгджзйклмнпрстфхцчшщ":
+        return city + "а"
+    return city
 
 
 def _flight_type_text_to_code(text: str) -> str:
@@ -211,9 +266,21 @@ def _format_duration(minutes: int) -> str:
 # /start и главное меню
 # ════════════════════════════════════════════════════════════════
 
+def _main_menu_kb() -> InlineKeyboardMarkup:
+    """Главное меню — строим динамически, чтобы кнопки были всегда актуальны."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Найти билеты",          callback_data="start_search")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения",   callback_data="hot_deals_menu")],
+        [InlineKeyboardButton(text="📋 Мои подписки",          callback_data="my_subscriptions")],
+        [InlineKeyboardButton(text="❓ Справка",               callback_data="help_info")],
+    ])
+
+MAIN_MENU_TEXT = "👋 Привет! Я помогу найти дешёвые авиабилеты."
+
 @router.message(Command("start"))
-async def cmd_start(message: Message):
-    await message.answer("👋 Привет! Я найду вам дешёвые авиабилеты.\n", reply_markup=MAIN_MENU_KB)
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
 
 
 @router.callback_query(F.data == "main_menu")
@@ -223,21 +290,210 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext):
     if state:
         await state.clear()
     try:
+        await callback.message.edit_text(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
+    except Exception:
+        await callback.message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# П.6 — Справка
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "help_info")
+async def handle_help(callback: CallbackQuery):
+    text = (
+        "<b>Что умеет этот бот?</b>\n\n"
+        "✈️ <b>Поиск билетов</b> — укажите маршрут, даты и количество пассажиров, "
+        "я найду самый дешёвый вариант и дам ссылку на бронирование.\n\n"
+        "🔥 <b>Горячие предложения</b> — подпишитесь на направления и я сообщу, "
+        "когда цена упадёт ниже вашего бюджета.\n\n"
+        "📊 <b>Дайджест</b> — ежедневная или еженедельная подборка лучших цен "
+        "на выбранные направления.\n\n"
+        "🔍 <b>Быстрый поиск</b> — напишите маршрут прямо в чат: "
+        "<code>Москва Сочи 10.03</code> или <code>SVO AER 15.04</code>.\n\n"
+        "─────────────────────\n"
+        "🔒 <b>О конфиденциальности</b>\n\n"
+        "Бот не собирает и не хранит личные данные. "
+        "Маршруты и даты используются исключительно для поиска билетов в момент запроса "
+        "и не передаются третьим лицам. "
+        "Настройки подписок хранятся анонимно и могут быть удалены в любой момент."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Найти билеты",       callback_data="start_search")],
+        [InlineKeyboardButton(text="↩️ В начало",           callback_data="main_menu")],
+    ])
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# П.7 — Мои подписки (из главного меню)
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "my_subscriptions")
+async def handle_my_subscriptions(callback: CallbackQuery):
+    """
+    Кнопка "Мои подписки" из главного меню.
+    Перенаправляет в hd_my_subs из hot_deals.py.
+    Если подписок нет — предлагает создать.
+    """
+    user_id = callback.from_user.id
+    subs = await redis_client.get_hot_subs(user_id)
+
+    if not subs:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔥 Создать подписку",  callback_data="hd_new_sub")],
+            [InlineKeyboardButton(text="↩️ В начало",          callback_data="main_menu")],
+        ])
+        try:
+            await callback.message.edit_text(
+                "У вас пока нет подписок на горячие предложения.\n\n"
+                "Подписка позволяет получать уведомления, когда цены на нужные "
+                "направления упадут ниже вашего бюджета.\n\n"
+                "Хотите создать первую?",
+                reply_markup=kb,
+            )
+        except Exception:
+            await callback.message.answer(
+                "У вас пока нет подписок на горячие предложения.\n\n"
+                "Хотите создать первую?",
+                reply_markup=kb,
+            )
+        await callback.answer()
+        return
+
+    # Есть подписки — переключаем на callback hd_my_subs из hot_deals роутера
+    # Просто меняем data и вызываем forward
+    callback.data = "hd_my_subs"
+    await callback.answer()
+    # Редиректим через edit + кнопку
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Открыть мои подписки", callback_data="hd_my_subs")],
+        [InlineKeyboardButton(text="↩️ В начало",             callback_data="main_menu")],
+    ])
+    try:
         await callback.message.edit_text(
-            "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
-            reply_markup=MAIN_MENU_KB
+            f"У вас {len(subs)} активных подписок.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
+                [InlineKeyboardButton(text="⚙️ Настроить",   callback_data="hd_new_sub")],
+                [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+            ])
         )
     except Exception:
         await callback.message.answer(
-            "👋 Привет! Я найду вам дешёвые авиабилеты.\n",
-            reply_markup=MAIN_MENU_KB
+            f"У вас {len(subs)} активных подписок.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
+                [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+            ])
         )
-    await callback.answer()
 
 
 # ════════════════════════════════════════════════════════════════
 # FSM: начало поиска
 # ════════════════════════════════════════════════════════════════
+
+
+# ════════════════════════════════════════════════════════════════
+# Умное продолжение — кнопка "Продолжить поиск" из напоминания
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "continue_search")
+async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
+    """Возвращает пользователя ровно на тот шаг FSM, где он остановился."""
+    cancel_inactivity(callback.message.chat.id)
+    current = await state.get_state()
+    data    = await state.get_data()
+
+    # Нет активного FSM — начинаем заново
+    if not current or not current.startswith("FlightSearch"):
+        try:
+            await callback.message.edit_text(
+                "Начнём поиск 👌\n\n"
+                "<b>Напишите маршрут:</b> Город отправления - Город прибытия\n"
+                "<i>Пример: Москва - Сочи</i>",
+                parse_mode="HTML", reply_markup=CANCEL_KB,
+            )
+        except Exception:
+            await callback.message.answer(
+                "Начнём поиск 👌\n\n"
+                "<b>Напишите маршрут:</b> Город отправления - Город прибытия\n"
+                "<i>Пример: Москва - Сочи</i>",
+                parse_mode="HTML", reply_markup=CANCEL_KB,
+            )
+        await state.set_state(FlightSearch.route)
+        schedule_inactivity(callback.message.chat.id, callback.from_user.id)
+        await callback.answer()
+        return
+
+    await callback.answer("▶️ Продолжаем!")
+
+    # Каждый шаг воспроизводит нужный вопрос без сброса данных
+    if current == FlightSearch.route.state:
+        origin = data.get("origin_name", "")
+        hint = f"\n<i>Последний ввод: {origin}</i>" if origin else ""
+        await callback.message.answer(
+            f"<b>Маршрут:</b> Город отправления - Город прибытия{hint}\n<i>Пример: Москва - Сочи</i>",
+            parse_mode="HTML", reply_markup=CANCEL_KB,
+        )
+
+    elif current == FlightSearch.choose_airport.state:
+        orig_iata   = data.get("origin_iata", "")
+        origin_name = data.get("origin_name", "")
+        metro = _get_metro(orig_iata) if orig_iata else None
+        if metro:
+            await callback.message.answer(
+                f"Вы выбрали: <b>{origin_name}</b>\n\n"
+                f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выберите нужный:",
+                parse_mode="HTML",
+                reply_markup=_airport_keyboard(metro, origin_name),
+            )
+        else:
+            await callback.message.answer("Выберите аэропорт:", reply_markup=CANCEL_KB)
+
+    elif current == FlightSearch.depart_date.state:
+        existing = data.get("depart_date", "")
+        hint = f"\n<i>Последний ввод: {existing}</i>" if existing else ""
+        await callback.message.answer(
+            f"Введите дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 10.03</i>",
+            parse_mode="HTML", reply_markup=CANCEL_KB,
+        )
+
+    elif current == FlightSearch.need_return.state:
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Да, нужен"), KeyboardButton(text="Нет, спасибо")],
+                      [KeyboardButton(text="В начало")]],
+            resize_keyboard=True, one_time_keyboard=True,
+        )
+        await callback.message.answer("Нужен ли обратный билет?", reply_markup=kb)
+
+    elif current == FlightSearch.return_date.state:
+        await callback.message.answer(
+            "Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
+            parse_mode="HTML", reply_markup=CANCEL_KB,
+        )
+
+    elif current == FlightSearch.flight_type.state:
+        await ask_flight_type(callback.message, state)
+
+    elif current in (FlightSearch.adults.state, FlightSearch.has_children.state,
+                     FlightSearch.children.state, FlightSearch.infants.state):
+        await ask_adults(callback.message, state)
+
+    elif current == FlightSearch.confirm.state:
+        await show_summary(callback.message, state)
+
+    else:
+        await callback.message.answer("Начнём заново:", reply_markup=MAIN_MENU_KB)
+        return
+
+    schedule_inactivity(callback.message.chat.id, callback.from_user.id)
+
 
 @router.callback_query(F.data == "start_search")
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
@@ -325,7 +581,8 @@ async def process_route(message: Message, state: FSMContext):
             metro = _get_metro(orig_iata)
             await state.update_data(_edit_mode=True, origin_airports=None, origin_airport_label=None)
             await message.answer(
-                f"🛫 Из <b>{origin_name}</b> несколько аэропортов. Из какого летим?",
+                f"Вы выбрали: <b>{origin_name}</b>\n\n"
+                f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выберите нужный:",
                 parse_mode="HTML",
                 reply_markup=_airport_keyboard(metro, origin_name),
             )
@@ -339,10 +596,11 @@ async def process_route(message: Message, state: FSMContext):
         metro = _get_metro(orig_iata)
         await state.update_data(origin_airports=None, origin_airport_label=None)
         await message.answer(
-            f"🛫 Из <b>{origin_name}</b> можно вылететь из нескольких аэропортов.",
+            f"Вы выбрали: <b>{origin_name}</b>\n\n"
+            f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выберите нужный:",
             parse_mode="HTML",
+            reply_markup=_airport_keyboard(metro, origin_name),
         )
-        await message.answer("Выберите аэропорт вылета:", reply_markup=_airport_keyboard(metro, origin_name))
         await state.set_state(FlightSearch.choose_airport)
         schedule_inactivity(message.chat.id, message.from_user.id)
         return
