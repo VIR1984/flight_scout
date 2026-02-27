@@ -1,368 +1,871 @@
-# services/hot_deals_sender.py
+# handlers/hot_deals.py
 """
-Фоновый сервис отправки горячих предложений и дайджестов.
+Хендлер подписки на горячие предложения.
 
-Логика:
-- Каждые 3 часа проверяем все «горячие» подписки:
-    для каждой перебираем ВСЕ направления категории (не случайную выборку),
-    ищем самый дешёвый рейс из origin в каждое из них,
-    если цена ≤ max_price (или max_price == 0) — отправляем уведомление
-    с лучшим найденным предложением.
-- Ежедневно в 09:00 МСК отправляем дайджест (топ-3 из всех направлений).
-- Раз в неделю (понедельник 09:00) — еженедельный дайджест.
+Типы подписок:
+  1. «Горячие предложения» — уведомление, когда появится рейс дешевле бюджета.
+  2. «Дайджест» — ежедневная / еженедельная подборка лучших предложений.
+
+Флоу:
+  Тип → Категория → [Подкатегория назначения] → Города вылета (несколько)
+       → Месяцы (несколько) → Бюджет → Пассажиры → [Частота] → Подтверждение
 """
 
-import asyncio
 import json
 import time
 import logging
-from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Tuple
-from zoneinfo import ZoneInfo
+from datetime import date
+from typing import Optional, List
 
-from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
+from aiogram import Router, F
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from utils.redis_client import redis_client
-from utils.link_converter import convert_to_partner_link
-from services.flight_search import search_flights, generate_booking_link, normalize_date
-from utils.cities_loader import get_city_name
+from utils.cities_loader import get_iata, get_city_name, get_iata_fuzzy, fuzzy_search_city, _normalize_name
+import re as _re
 
 logger = logging.getLogger(__name__)
+router = Router()
 
-MSK = ZoneInfo("Europe/Moscow")
+BACK_TO_MAIN = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+])
 
-# Берём из handlers/hot_deals.py
+
+# ════════════════════════════════════════════════════════════════
+# FSM
+# ════════════════════════════════════════════════════════════════
+
+class HotDealsSub(StatesGroup):
+    choose_sub_type    = State()
+    choose_category    = State()
+    choose_dest_preset = State()   # подкатегория назначения (Турция / Египет / ...)
+    choose_origins     = State()   # мультивыбор городов вылета
+    choose_months      = State()   # мультивыбор месяцев
+    choose_budget      = State()   # ввод бюджета числом
+    choose_passengers  = State()
+    choose_frequency   = State()   # только для дайджеста
+    confirm            = State()
+
+
+# ════════════════════════════════════════════════════════════════
+# Справочники
+# ════════════════════════════════════════════════════════════════
+
 CATEGORIES = {
-    "sea":    ("🏖️ Морские курорты",  ["AYT", "HRG", "SSH", "RHO", "DLM", "LCA", "TFS", "PMI", "CFU", "HER", "PFO", "AER", "SIP", "BUS"]),
-    "city":   ("🏙️ Городские поездки", ["IST", "BCN", "CDG", "FCO", "AMS", "BER", "PRG", "BUD", "WAW", "VIE", "ATH", "HEL", "ARN", "OSL", "CPH"]),
-    "world":  ("🌍 Путешествия по миру", ["DXB", "BKK", "SIN", "KUL", "HKT", "CMB", "NBO", "GRU", "JFK", "LAX", "YYZ", "ICN", "TYO", "PEK", "DEL"]),
-    "russia": ("🇷🇺 По России",         ["AER", "LED", "KZN", "OVB", "SVX", "ROV", "UFA", "CEK", "KRR", "VOG", "MCX", "GRV", "KUF", "IKT", "VVO"]),
+    "sea":    ("🏖️ Морские курорты",    ["AYT","HRG","SSH","RHO","DLM","LCA","TFS","PMI","CFU","HER","PFO","AER","SIP","BUS"]),
+    "world":  ("🌍 Путешествия по миру", ["DXB","BKK","SIN","KUL","HKT","CMB","NBO","GRU","JFK","LAX","YYZ","ICN","TYO","PEK","DEL"]),
+    "russia": ("🇷🇺 По России",          ["AER","LED","KZN","OVB","SVX","ROV","UFA","CEK","KRR","VOG","MCX","GRV","KUF","IKT","VVO"]),
+}
+
+# Подкатегории направлений — быстрые варианты
+# None в iata_list → «Свой вариант» (пользователь вводит текстом)
+CATEGORY_PRESETS = {
+    "sea": [
+        ("🌊 Сочи",          ["AER"]),
+        ("🇹🇷 Турция",       ["AYT","DLM","ADB","BJV"]),
+        ("🇪🇬 Египет",       ["HRG","SSH"]),
+        ("🇹🇭 Таиланд",      ["BKK","HKT","USM"]),
+        ("✏️ Свой вариант",  None),
+    ],
+    "world": [
+        ("🇨🇳 Китай",        ["PEK","PVG","CAN"]),
+        ("🇯🇵 Япония",       ["TYO","OSA","CTS"]),
+        ("🌍 Европа",        ["IST","BCN","CDG","FCO","AMS","BER","PRG"]),
+        ("🇺🇸 США",          ["JFK","LAX","ORD","MIA"]),
+        ("✏️ Свой вариант",  None),
+    ],
+    "russia": [
+        ("🏙️ Москва",               ["SVO","DME","VKO"]),
+        ("🌊 Сочи",                  ["AER"]),
+        ("🏛️ Санкт-Петербург",      ["LED"]),
+        ("🕌 Казань",                ["KZN"]),
+        ("🌊 Калининград",           ["KGD"]),
+        ("✏️ Свой вариант",         None),
+    ],
+}
+
+MONTHS_LABELS = {
+    "1":"Январь",  "2":"Февраль", "3":"Март",    "4":"Апрель",
+    "5":"Май",     "6":"Июнь",    "7":"Июль",    "8":"Август",
+    "9":"Сентябрь","10":"Октябрь","11":"Ноябрь", "12":"Декабрь",
 }
 
 
-class HotDealsSender:
-    def __init__(self, bot: Bot):
-        self.bot = bot
-        self.running = False
-        self.hot_check_interval = 3 * 3600   # 3 часа
-        self.digest_check_interval = 60 * 10  # проверяем таймер каждые 10 мин
+# ════════════════════════════════════════════════════════════════
+# Вспомогательные рендеры
+# ════════════════════════════════════════════════════════════════
 
-    async def start(self):
-        self.running = True
-        logger.info("🔥 HotDealsSender запущен")
-        try:
-            await asyncio.gather(
-                self._hot_deals_loop(),
-                self._digest_loop(),
-            )
-        except asyncio.CancelledError:
-            logger.info("🛑 HotDealsSender остановлен")
-        finally:
-            self.running = False
+async def _ask_origins(target, state: FSMContext, edit: bool = False):
+    """
+    Шаг «Город(а) вылета».
+    Показывает текстовое поле + уже добавленные города.
+    Пользователь вводит город текстом — он добавляется в список.
+    Кнопка «Готово» появляется после первого добавленного города.
+    """
+    data     = await state.get_data()
+    origins  = data.get("origins", [])        # список {"iata": "...", "name": "..."}
+    custom_dest = data.get("dest_iata_list")  # None → пользователь выбрал свой вариант направления
 
-    def stop(self):
-        """Плавная остановка — вызвать перед отменой задачи"""
-        self.running = False
-        logger.info("🛑 HotDealsSender: получен сигнал остановки")
-
-    # ══════════════════════════════════════════════
-    # Горячие предложения — каждые 3 часа
-    # ══════════════════════════════════════════════
-
-    async def _hot_deals_loop(self):
-        # Первый запуск через 1 минуту (дать боту запуститься)
-        await asyncio.sleep(60)
-        while self.running:
-            try:
-                await self._process_hot_subs()
-            except Exception as e:
-                logger.error(f"❌ [HotDeals] Ошибка в цикле горячих: {e}")
-            await asyncio.sleep(self.hot_check_interval)
-
-    async def _process_hot_subs(self):
-        all_subs = await redis_client.get_all_hot_subs()
-        logger.info(f"🔍 [HotDeals] Всего подписок в Redis: {len(all_subs)}")
-        hot_subs = [(uid, sid, s) for uid, sid, s in all_subs if s.get("sub_type") == "hot"]
-        if not hot_subs:
-            logger.info("[HotDeals] Горячих подписок нет — пропускаем")
-            return
-        logger.info(f"🔍 [HotDeals] Проверяем {len(hot_subs)} горячих подписок...")
-
-        for user_id, sub_id, sub in hot_subs:
-            if not self.running:
-                break
-            last = sub.get("last_notified", 0)
-            since_last = time.time() - last
-            logger.debug(f"[HotDeals] sub_id={sub_id} user={user_id} "
-                        f"origin={sub.get('origin_iata')} cat={sub.get('category')} "
-                        f"max_price={sub.get('max_price')} "
-                        f"last_notified={since_last/3600:.1f}ч назад")
-            try:
-                await self._check_hot_sub(user_id, sub_id, sub)
-                await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"❌ [HotDeals] Ошибка sub {sub_id}: {e}", exc_info=True)
-
-    async def _check_hot_sub(self, user_id: int, sub_id: str, sub: dict):
-        # Не чаще 12 часов на одну подписку
-        last = sub.get("last_notified", 0)
-        if time.time() - last < 12 * 3600:
-            return
-
-        origin = sub.get("origin_iata", "")
-        category = sub.get("category", "world")
-        max_price = sub.get("max_price", 0)
-        passengers = sub.get("passengers", 1)
-        travel_month = sub.get("travel_month")
-        travel_year = sub.get("travel_year")
-
-        _, destinations = CATEGORIES.get(category, ("", []))
-
-        # Формируем дату поиска — учитываем несколько месяцев
-        travel_months_list = sub.get("travel_months", [])
-        search_date = None
-
-        if travel_months_list:
-            # Берём ближайший будущий из выбранных месяцев
-            today = date.today()
-            for mk in travel_months_list:
-                try:
-                    m, y = map(int, mk.split("_"))
-                    candidate = date(y, m, 1)
-                    if candidate >= today:
-                        if search_date is None or candidate < search_date:
-                            search_date = candidate
-                except Exception:
-                    pass
-            if search_date is None:
-                search_date = today + timedelta(days=30)
-        elif travel_month:
-            try:
-                search_date = date(travel_year, travel_month, 1)
-                if search_date < date.today():
-                    search_date = date.today() + timedelta(days=7)
-            except Exception:
-                search_date = date.today() + timedelta(days=7)
-        else:
-            search_date = date.today() + timedelta(days=30)
-
-        depart_str = search_date.strftime("%Y-%m-%d")
-
-        # Ищем лучший рейс по всем направлениям категории
-        best_flight = None
-        best_price = None
-        best_dest = None
-
-        # Перебираем ВСЕ направления категории — чтобы не пропустить самое дешёвое
-        scan_dests = [d for d in destinations if d != origin]
-
-        logger.info(f"[HotDeals] Ищем рейсы из {origin}, всего направлений: {len(scan_dests)}")
-        for dest in scan_dests:
-            try:
-                flights = await search_flights(origin, dest, depart_str, None)
-                if not flights:
-                    logger.debug(f"[HotDeals] {origin}→{dest}: рейсов не найдено")
-                    continue
-                cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-                price_per_pax = cheapest.get("value") or cheapest.get("price") or 0
-                logger.debug(f"[HotDeals] {origin}→{dest}: {price_per_pax}₽ ({len(flights)} вариантов)")
-
-                if best_price is None or price_per_pax < best_price:
-                    best_price = price_per_pax
-                    best_flight = cheapest
-                    best_dest = dest
-
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.warning(f"[HotDeals] {origin}→{dest}: ошибка {e}")
-
-        if not best_flight or not best_price:
-            logger.info(f"[HotDeals] sub_id не дал результатов: origin={origin}")
-            return
-
-        # Проверяем бюджет
-        if max_price and best_price > max_price:
-            logger.info(f"[HotDeals] Цена {best_price}₽ > бюджет {max_price}₽ — пропускаем")
-            return
-
-        # Отправляем уведомление
-        await self._send_hot_notification(user_id, sub_id, sub, best_flight, best_price, best_dest, passengers, depart_str)
-
-    async def _send_hot_notification(
-        self, user_id: int, sub_id: str, sub: dict,
-        flight: dict, price: int, dest_iata: str,
-        passengers: int, depart_str: str
-    ):
-        origin_iata = sub.get("origin_iata", "")
-        origin_name = sub.get("origin_name", origin_iata)
-        dest_name = get_city_name(dest_iata) or dest_iata
-        cat_label, _ = CATEGORIES.get(sub.get("category", ""), ("", []))
-
-        total_price = price * passengers
-        pax_str = f"{passengers} чел." if passengers > 1 else "1 чел."
-
+    # Строим текст
+    if origins:
+        names = ", ".join(o["name"] for o in origins)
         text = (
-            f"🔥 <b>Горячее предложение!</b>\n\n"
-            f"📍 {cat_label}\n"
-            f"✈️ <b>{origin_name} → {dest_name}</b>\n"
-            f"📅 Примерно: {depart_str}\n"
-            f"💰 <b>{price:,} ₽</b> / чел.".replace(",", " ")
+            f"Добавьте <b>города вылета</b>. Можно добавить несколько.\n\n"
+            f"<i>Добавлено: {names}</i>\n\n"
+            f"Напишите ещё один город или нажмите «Готово»."
         )
-        if passengers > 1:
-            text += f"\n🧮 Итого за {pax_str}: <b>{total_price:,} ₽</b>".replace(",", " ")
-        text += "\n\n⏰ <i>Цены меняются — бронируйте быстрее!</i>"
-
-        # Ссылка на бронирование
-        clean_link = generate_booking_link(
-            flight=flight,
-            origin=origin_iata,
-            dest=dest_iata,
-            depart_date=depart_str,
-            passengers_code=str(passengers),
-            return_date=None
+    else:
+        text = (
+            "Введите <b>город вылета</b>.\n"
+            "Можно добавить несколько городов — бот будет следить за ценами из каждого.\n\n"
+            "<i>Пример: Москва (или через запятую: Москва, Сочи, Екатринбург)</i>"
         )
-        booking_link = await convert_to_partner_link(clean_link)
 
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✈️ Забронировать за {price:,} ₽".replace(",", " "), url=booking_link)],
-            [InlineKeyboardButton(text="❌ Отписаться от этой подписки", callback_data=f"hd_del_{sub_id}")],
-            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    buttons = []
+    if origins:
+        buttons.append([InlineKeyboardButton(text=f"✅ Готово ({len(origins)} гор.)", callback_data="hd_origins_done")])
+        # Кнопки удаления
+        for o in origins:
+            buttons.append([InlineKeyboardButton(
+                text=f"❌ Убрать {o['name']}",
+                callback_data=f"hd_origin_del_{o['iata']}"
+            )])
+    buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_origins_back")])
+    buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    if edit and hasattr(target, "edit_text"):
+        await target.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        msg = target if isinstance(target, Message) else target.message
+        await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def _ask_months(target, selected: list):
+    """Мультиселект месяцев вылета."""
+    cur_month = date.today().month
+    cur_year  = date.today().year
+    buttons   = []
+    row       = []
+
+    for i in range(12):
+        m   = (cur_month - 1 + i) % 12 + 1
+        y   = cur_year + ((cur_month - 1 + i) // 12)
+        key = f"{m}_{y}"
+        lbl = f"{MONTHS_LABELS[str(m)]} {y}"
+        if key in selected:
+            lbl = "✅ " + lbl
+        row.append(InlineKeyboardButton(text=lbl, callback_data=f"hd_month_{key}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="🗓️ Любой месяц", callback_data="hd_month_any_any")])
+    if selected:
+        buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
+    buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+
+    text = "Выберите <b>месяц вылета</b>. Можно выбрать несколько."
+    if selected:
+        labels = [MONTHS_LABELS.get(k.split("_")[0], k) for k in selected]
+        text += f"\n\n<i>Выбрано: {', '.join(labels)}</i>"
+
+    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    await send(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+async def _ask_budget(target, state: FSMContext):
+    """Ввод бюджета: только ручной ввод. Показывает выбранные месяцы."""
+    data = await state.get_data()
+    travel_months = data.get("travel_months", [])
+
+    if travel_months:
+        labels = [
+            f"{MONTHS_LABELS.get(k.split('_')[0], k.split('_')[0])} {k.split('_')[1]}"
+            for k in travel_months
+        ]
+        month_line = f"📅 Выбранные месяцы: <b>{', '.join(labels)}</b>\n\n"
+    else:
+        month_line = ""
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    ])
+    text = (
+        f"{month_line}"
+        "Укажите <b>максимальную цену на человека</b> (в рублях).\n\n"
+        "Напишите сумму числом — или отправьте <b>0</b> для поиска без ограничений.\n"
+        "<i>Пример: 12000</i>"
+    )
+    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    await send(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def _ask_passengers(target):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1", callback_data="hd_pax_1"),
+         InlineKeyboardButton(text="2", callback_data="hd_pax_2"),
+         InlineKeyboardButton(text="3", callback_data="hd_pax_3"),
+         InlineKeyboardButton(text="4", callback_data="hd_pax_4")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    ])
+    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    await send("Сколько <b>пассажиров</b>?", parse_mode="HTML", reply_markup=kb)
+
+
+async def _ask_frequency(target):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 Раз в день",   callback_data="hd_freq_daily")],
+        [InlineKeyboardButton(text="📆 Раз в неделю", callback_data="hd_freq_weekly")],
+        [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
+    ])
+    send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
+    await send("Как часто присылать <b>дайджест</b>?", parse_mode="HTML", reply_markup=kb)
+
+
+async def _show_confirm(target, data: dict):
+    cat_label, _ = CATEGORIES.get(data.get("category", ""), ("—", []))
+    sub_type      = data.get("sub_type", "hot")
+    max_price     = data.get("max_price", 0)
+    passengers    = data.get("passengers", 1)
+    preset_name   = data.get("dest_preset_name", "")
+
+    # Города вылета
+    origins = data.get("origins", [])
+    if origins:
+        origins_str = ", ".join(o["name"] for o in origins)
+    else:
+        origins_str = data.get("origin_name", data.get("origin_iata", "—"))
+
+    # Направление
+    dest_str = preset_name if preset_name and preset_name != "свой вариант" else cat_label
+
+    # Месяцы
+    travel_months = data.get("travel_months", [])
+    if travel_months:
+        labels = []
+        for mk in travel_months:
+            m_str, y_str = mk.split("_")
+            labels.append(f"{MONTHS_LABELS.get(m_str, m_str)} {y_str}")
+        month_str = ", ".join(labels)
+    elif data.get("travel_month"):
+        month_str = f"{MONTHS_LABELS.get(str(data['travel_month']), '—')} {data.get('travel_year', '')}"
+    else:
+        month_str = "Любой"
+
+    price_str = f"до {max_price:,} ₽".replace(",", " ") if max_price else "Без ограничений"
+
+    if sub_type == "digest":
+        freq_map = {"daily": "раз в день", "weekly": "раз в неделю"}
+        type_str = f"📰 Дайджест ({freq_map.get(data.get('frequency', 'daily'), 'раз в день')})"
+    else:
+        type_str = "🔥 Горячие предложения"
+
+    text = (
+        f"✅ <b>Проверьте настройки подписки:</b>\n\n"
+        f"Тип: {type_str}\n"
+        f"Куда: {dest_str}\n"
+        f"Откуда: {origins_str}\n"
+        f"Период: {month_str}\n"
+        f"Бюджет: {price_str} / чел.\n"
+        f"Пассажиры: {passengers} чел."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подписаться",  callback_data="hd_save")],
+        [InlineKeyboardButton(text="✏️ Изменить",     callback_data="hd_new_sub")],
+        [InlineKeyboardButton(text="❌ Отмена",        callback_data="hot_deals_menu")],
+        [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
+    ])
+    send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
+    await send(text, parse_mode="HTML", reply_markup=kb)
+
+
+# ════════════════════════════════════════════════════════════════
+# Входная точка
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "hot_deals_menu")
+async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state and not current_state.startswith("HotDealsSub"):
+        await callback.answer("⚠️ Сначала завершите или отмените текущий поиск билетов", show_alert=True)
+        return
+
+    await state.clear()
+    user_id = callback.from_user.id
+    subs    = await redis_client.get_hot_subs(user_id)
+
+    text = (
+        "🔥 <b>Горячие предложения</b>\n\n"
+        "Укажите интересные вам направления, даты и бюджет — "
+        "и бот будет присылать уведомления о вау-ценах на билеты.\n\n"
+        "Вы сами решаете:\n"
+        "• Куда хотите лететь (морские курорты, города, весь мир или Россия)\n"
+        "• В каком месяце\n"
+        "• По какой цене\n\n"
+        "Как только появится подходящий рейс — вы узнаете первым!"
+    )
+    buttons = [[InlineKeyboardButton(text="⚙️ Настроить", callback_data="hd_new_sub")]]
+    if subs:
+        buttons.append([InlineKeyboardButton(text=f"📋 Мои подписки ({len(subs)})", callback_data="hd_my_subs")])
+    buttons.append([InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")])
+
+    await callback.message.edit_text(text, parse_mode="HTML",
+                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 1 — тип подписки
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "hd_new_sub")
+async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(HotDealsSub.choose_sub_type)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔥 Горячие предложения",           callback_data="hd_type_hot")],
+        [InlineKeyboardButton(text="📰 Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
+        [InlineKeyboardButton(text="↩️ Назад",    callback_data="hot_deals_menu")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    ])
+    await callback.message.edit_text(
+        "Выберите тип подписки:\n\n"
+        "🔥 <b>Горячие предложения</b> — уведомление, как только появится рейс "
+        "дешевле вашего бюджета по нужному направлению.\n\n"
+        "📰 <b>Дайджест</b> — раз в день или раз в неделю получайте подборку "
+        "лучших предложений из вашего города.",
+        parse_mode="HTML", reply_markup=kb
+    )
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 2 — категория направления
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.in_({"hd_type_hot", "hd_type_digest"}))
+async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
+    sub_type = "hot" if callback.data == "hd_type_hot" else "digest"
+    await state.update_data(sub_type=sub_type)
+    await state.set_state(HotDealsSub.choose_category)
+
+    buttons = [[InlineKeyboardButton(text=label, callback_data=f"hd_cat_{key}")]
+               for key, (label, _) in CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")])
+    buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+
+    await callback.message.edit_text(
+        "Выберите <b>направление</b> (тематику путешествия):",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 3a — подкатегория назначения
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("hd_cat_"))
+async def hd_step3_category_chosen(callback: CallbackQuery, state: FSMContext):
+    cat = callback.data.replace("hd_cat_", "")
+    if cat not in CATEGORIES:
+        await callback.answer("Неверная категория", show_alert=True)
+        return
+
+    await state.update_data(category=cat, origins=[], dest_iata_list=[], dest_preset_name="")
+
+    presets = CATEGORY_PRESETS.get(cat)
+    if presets:
+        await state.set_state(HotDealsSub.choose_dest_preset)
+        cat_label, _ = CATEGORIES[cat]
+        buttons = []
+        for label, iata_list in presets:
+            cb = "hd_preset_custom" if iata_list is None else f"hd_preset_{'|'.join(iata_list)}"
+            buttons.append([InlineKeyboardButton(text=label, callback_data=cb)])
+        buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data=f"hd_type_{await _get_sub_type(state)}")])
+        buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+        await callback.message.edit_text(
+            f"<b>{cat_label}</b> — куда именно хотите лететь?",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+    else:
+        # Нет подкатегорий — сразу к вводу городов вылета
+        await state.set_state(HotDealsSub.choose_origins)
+        await _ask_origins(callback.message, state, edit=True)
+
+    await callback.answer()
+
+
+async def _get_sub_type(state: FSMContext) -> str:
+    data = await state.get_data()
+    return data.get("sub_type", "hot")
+
+
+@router.callback_query(HotDealsSub.choose_dest_preset, F.data.startswith("hd_preset_"))
+async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
+    preset_key = callback.data.replace("hd_preset_", "")
+
+    if preset_key == "custom":
+        await state.update_data(dest_iata_list=[], dest_preset_name="свой вариант")
+    else:
+        iata_list = preset_key.split("|")
+        # Ищем название пресета
+        data = await state.get_data()
+        cat  = data.get("category", "")
+        preset_name = preset_key
+        for lbl, lst in (CATEGORY_PRESETS.get(cat) or []):
+            if lst and lst == iata_list:
+                preset_name = lbl
+                break
+        await state.update_data(dest_iata_list=iata_list, dest_preset_name=preset_name)
+
+    await state.set_state(HotDealsSub.choose_origins)
+    await _ask_origins(callback.message, state, edit=True)
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 3b — мультивыбор городов вылета
+# ════════════════════════════════════════════════════════════════
+
+@router.message(HotDealsSub.choose_origins)
+async def hd_origins_text(message: Message, state: FSMContext):
+    """Пользователь вводит город(а) вылета — можно через запятую."""
+    raw = message.text.strip()
+    tokens = [t.strip() for t in _re.split(r'[,;]+', raw) if t.strip()]
+
+    data = await state.get_data()
+    origins: list = data.get("origins", [])
+
+    added = []
+    not_found = []
+    duplicates = []
+    fuzzy_pending = []  # города, требующие подтверждения
+
+    for token in tokens:
+        # Прямой IATA-код
+        if _re.match(r'^[A-Za-z]{3}$', token):
+            iata = token.upper()
+            name = get_city_name(iata) or iata
+            score = 1.0
+        else:
+            iata, name, score = get_iata_fuzzy(token)
+
+        if not iata:
+            not_found.append(token)
+            continue
+
+        if any(o["iata"] == iata for o in origins):
+            duplicates.append(name)
+            continue
+
+        if score < 1.0:
+            # Нечёткое совпадение — сохраним для подтверждения
+            fuzzy_pending.append({"input": token, "iata": iata, "name": name, "score": score})
+            continue
+
+        origins.append({"iata": iata, "name": name})
+        added.append(name)
+
+    await state.update_data(origins=origins)
+
+    # Если есть нечёткие — показываем для подтверждения
+    if fuzzy_pending:
+        await state.update_data(hd_fuzzy_pending=fuzzy_pending)
+        lines = "\n".join(
+            f"  «{c['input']}» → <b>{c['name']}</b> ({c['iata']}, {int(c['score']*100)}%)"
+            for c in fuzzy_pending
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Да, добавить", callback_data="hd_fuzzy_confirm"),
+            InlineKeyboardButton(text="✏️ Ввести заново", callback_data="hd_fuzzy_retry"),
+        ]])
+        # Показываем уже добавленные
+        prefix = f"✅ Добавлено: <b>{', '.join(added)}</b>\n\n" if added else ""
+        await message.answer(
+            f"{prefix}🤔 Уточните распознанные города:\n{lines}\n\nДобавить их?",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+        return
+
+    # Формируем ответ
+    parts = []
+    if added:
+        parts.append(f"✅ Добавлено: <b>{', '.join(added)}</b>")
+    if duplicates:
+        parts.append(f"⚠️ Уже есть: {', '.join(duplicates)}")
+    if not_found:
+        suggestions = []
+        for nf in not_found:
+            hits = fuzzy_search_city(nf, limit=1)
+            if hits:
+                suggestions.append(f"«{nf}» → {hits[0][0]}?")
+            else:
+                suggestions.append(f"«{nf}»")
+        hint = "; ".join(suggestions)
+        parts.append(f"❌ Не найдено: {hint}")
+
+    if parts:
+        await message.answer("\n".join(parts), parse_mode="HTML")
+
+    # Обновляем экран списка городов
+    await _ask_origins(message, state, edit=False)
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data == "hd_fuzzy_confirm")
+async def hd_fuzzy_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение нечётко найденных городов в hot_deals"""
+    data = await state.get_data()
+    origins: list = data.get("origins", [])
+    pending: list = data.get("hd_fuzzy_pending", [])
+
+    newly_added = []
+    for c in pending:
+        if not any(o["iata"] == c["iata"] for o in origins):
+            origins.append({"iata": c["iata"], "name": c["name"]})
+            newly_added.append(c["name"])
+
+    await state.update_data(origins=origins, hd_fuzzy_pending=[])
+
+    if newly_added:
+        await callback.answer(f"✅ Добавлено: {', '.join(newly_added)}", show_alert=False)
+    await _ask_origins(callback.message, state, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data == "hd_fuzzy_retry")
+async def hd_fuzzy_retry(callback: CallbackQuery, state: FSMContext):
+    """Ввести нечёткие города заново"""
+    await state.update_data(hd_fuzzy_pending=[])
+    await callback.message.edit_text(
+        "✍️ Введите название города заново:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data == "hd_origins_done")
+async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
+    data    = await state.get_data()
+    origins = data.get("origins", [])
+    if not origins:
+        await callback.answer("Добавьте хотя бы один город", show_alert=True)
+        return
+    await state.set_state(HotDealsSub.choose_months)
+    await _ask_months(callback, selected=[])
+    await callback.answer()
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data.startswith("hd_origin_del_"))
+async def hd_origin_delete(callback: CallbackQuery, state: FSMContext):
+    """Удаляем город из списка вылета."""
+    iata    = callback.data.replace("hd_origin_del_", "")
+    data    = await state.get_data()
+    origins = [o for o in data.get("origins", []) if o["iata"] != iata]
+    await state.update_data(origins=origins)
+    await _ask_origins(callback.message, state, edit=True)
+    await callback.answer("Город удалён")
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data == "hd_origins_back")
+async def hd_origins_back(callback: CallbackQuery, state: FSMContext):
+    """Назад — к подкатегориям или к выбору категории."""
+    data = await state.get_data()
+    cat  = data.get("category", "")
+    if CATEGORY_PRESETS.get(cat):
+        await state.set_state(HotDealsSub.choose_dest_preset)
+        # Показываем пресеты заново
+        cat_label, _ = CATEGORIES[cat]
+        buttons = []
+        for label, iata_list in CATEGORY_PRESETS[cat]:
+            cb = "hd_preset_custom" if iata_list is None else f"hd_preset_{'|'.join(iata_list)}"
+            buttons.append([InlineKeyboardButton(text=label, callback_data=cb)])
+        buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data=f"hd_cat_{cat}")])
+        buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+        await callback.message.edit_text(
+            f"<b>{cat_label}</b> — куда именно хотите лететь?",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+    else:
+        # Назад к выбору категории
+        sub_type = data.get("sub_type", "hot")
+        await state.set_state(HotDealsSub.choose_category)
+        buttons = [[InlineKeyboardButton(text=label, callback_data=f"hd_cat_{key}")]
+                   for key, (label, _) in CATEGORIES.items()]
+        buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")])
+        buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+        await callback.message.edit_text(
+            "Выберите <b>направление</b> (тематику путешествия):",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 4 — месяцы вылета
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(HotDealsSub.choose_months, F.data.startswith("hd_month_"))
+async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
+    data      = await state.get_data()
+    parts     = callback.data.split("_")  # hd_month_<m>_<y>
+    month_val = parts[2]
+    year_val  = parts[3]
+
+    if month_val == "any":
+        await state.update_data(travel_months=[], travel_month=None, travel_year=None)
+        await state.set_state(HotDealsSub.choose_budget)
+        await _ask_budget(callback, state)
+        await callback.answer()
+        return
+
+    key      = f"{month_val}_{year_val}"
+    selected = list(data.get("travel_months", []))
+    if key in selected:
+        selected.remove(key)
+        await callback.answer("Снято")
+    else:
+        selected.append(key)
+        await callback.answer("✅ Выбрано")
+
+    await state.update_data(travel_months=selected)
+    await _ask_months(callback, selected=selected)
+
+
+@router.callback_query(HotDealsSub.choose_months, F.data == "hd_months_done")
+async def hd_months_done(callback: CallbackQuery, state: FSMContext):
+    data     = await state.get_data()
+    selected = data.get("travel_months", [])
+    if not selected:
+        await callback.answer("Выберите хотя бы один месяц", show_alert=True)
+        return
+    first = selected[0].split("_")
+    await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
+    await state.set_state(HotDealsSub.choose_budget)
+    await _ask_budget(callback, state)
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 5 — бюджет
+# ════════════════════════════════════════════════════════════════
+
+@router.message(HotDealsSub.choose_budget)
+async def hd_step5_budget_text(message: Message, state: FSMContext):
+    raw = message.text.strip().replace(" ", "").replace("₽", "").replace(",", "")
+    if not raw.isdigit():
+        await message.answer(
+            "Введите сумму числом.\n<i>Пример: 12000</i>",
+            parse_mode="HTML",
+            reply_markup=BACK_TO_MAIN
+        )
+        return
+    await state.update_data(max_price=int(raw))
+    await state.set_state(HotDealsSub.choose_passengers)
+    await _ask_passengers(message)
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 6 — пассажиры
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("hd_pax_"))
+async def hd_step6_pax(callback: CallbackQuery, state: FSMContext):
+    pax = int(callback.data.replace("hd_pax_", ""))
+    await state.update_data(passengers=pax)
+    data = await state.get_data()
+    if data.get("sub_type") == "digest":
+        await state.set_state(HotDealsSub.choose_frequency)
+        await _ask_frequency(callback)
+    else:
+        await state.set_state(HotDealsSub.confirm)
+        await _show_confirm(callback, data | {"passengers": pax})
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 7 — частота (только для дайджеста)
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("hd_freq_"))
+async def hd_step7_freq(callback: CallbackQuery, state: FSMContext):
+    freq = callback.data.replace("hd_freq_", "")
+    await state.update_data(frequency=freq)
+    data = await state.get_data()
+    await state.set_state(HotDealsSub.confirm)
+    await _show_confirm(callback, data)
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# Сохранение подписки
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "hd_save")
+async def hd_save(callback: CallbackQuery, state: FSMContext):
+    data    = await state.get_data()
+    user_id = callback.from_user.id
+    logger.info(f"[HotDeals] Сохранение подписки user_id={user_id}")
+
+    origins = data.get("origins", [])
+    # Обратная совместимость: первый город как origin_iata/origin_name
+    first_origin = origins[0] if origins else {}
+
+    sub = {
+        "user_id":         user_id,
+        "sub_type":        data.get("sub_type", "hot"),
+        "category":        data.get("category", "world"),
+        "dest_iata_list":  data.get("dest_iata_list", []),
+        "dest_preset_name": data.get("dest_preset_name", ""),
+        "origins":         origins,
+        "origin_iata":     first_origin.get("iata", ""),
+        "origin_name":     first_origin.get("name", ""),
+        "travel_months":   data.get("travel_months", []),
+        "travel_month":    data.get("travel_month"),
+        "travel_year":     data.get("travel_year"),
+        "max_price":       data.get("max_price", 0),
+        "passengers":      data.get("passengers", 1),
+        "frequency":       data.get("frequency", "daily"),
+        "created_at":      int(time.time()),
+        "last_notified":   0,
+    }
+
+    await redis_client.save_hot_sub(user_id, sub)
+    await state.clear()
+
+    await callback.message.edit_text(
+        "🎉 <b>Подписка оформлена!</b>\n\n"
+        "Как только появится подходящий рейс, сразу пришлю уведомление.\n\n"
+        "Управлять подписками: кнопка «📋 Мои подписки» в разделе «🔥 Горячие предложения».",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
+            [InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")],
         ])
+    )
+    await callback.answer("✅ Подписка сохранена!")
 
-        try:
-            await self.bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb)
-            # Обновляем last_notified
-            sub["last_notified"] = int(time.time())
-            await redis_client.update_hot_sub(user_id, sub_id, sub)
-            logger.info(f"✅ [HotDeals] Уведомление отправлено {user_id}: {origin_iata}→{dest_iata} {price}₽")
-        except TelegramForbiddenError:
-            logger.warning(f"⚠️ [HotDeals] Пользователь {user_id} заблокировал бота — удаляем подписку")
-            await redis_client.delete_hot_sub(user_id, sub_id)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-        except TelegramAPIError as e:
-            logger.error(f"❌ [HotDeals] Telegram API: {e}")
 
-    # ══════════════════════════════════════════════
-    # Дайджест — ежедневно / еженедельно
-    # ══════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+# Список подписок
+# ════════════════════════════════════════════════════════════════
 
-    async def _digest_loop(self):
-        await asyncio.sleep(120)  # старт через 2 минуты
-        logger.info("[Digest] Цикл дайджестов запущен")
-        while self.running:
-            try:
-                now = datetime.now(MSK)
-                logger.debug(f"[Digest] Проверка таймера: {now.strftime('%H:%M')} МСК")
-                # Отправляем дайджест в 09:00 МСК
-                if now.hour == 9 and now.minute < 10:
-                    is_monday = (now.weekday() == 0)
-                    logger.info(f"[Digest] Запуск отправки (понедельник={is_monday})")
-                    await self._process_digest_subs(is_monday_run=is_monday)
-                    await asyncio.sleep(600)  # подождать 10 мин, не слать повторно
-            except Exception as e:
-                logger.error(f"❌ [Digest] Ошибка в цикле: {e}", exc_info=True)
-            await asyncio.sleep(self.digest_check_interval)
+@router.callback_query(F.data == "hd_my_subs")
+async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    subs    = await redis_client.get_hot_subs(user_id)
 
-    async def _process_digest_subs(self, is_monday_run: bool):
-        all_subs = await redis_client.get_all_hot_subs()
-        digest_subs = [(uid, sid, s) for uid, sid, s in all_subs if s.get("sub_type") == "digest"]
-        if not digest_subs:
-            return
-        logger.info(f"📰 [Digest] Обрабатываем {len(digest_subs)} дайджест-подписок...")
-
-        for user_id, sub_id, sub in digest_subs:
-            freq = sub.get("frequency", "daily")
-            if freq == "weekly" and not is_monday_run:
-                continue  # еженедельный — только по понедельникам
-            try:
-                await self._send_digest(user_id, sub_id, sub)
-                await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"❌ [Digest] sub {sub_id}: {e}")
-
-    async def _send_digest(self, user_id: int, sub_id: str, sub: dict):
-        origin = sub.get("origin_iata", "")
-        category = sub.get("category", "world")
-        max_price = sub.get("max_price", 0)
-        passengers = sub.get("passengers", 1)
-
-        cat_label, destinations = CATEGORIES.get(category, ("", []))
-        depart_date = (date.today() + timedelta(days=14)).strftime("%Y-%m-%d")
-
-        # Перебираем ВСЕ направления категории — топ-3 будут действительно лучшими
-        scan_dests = [d for d in destinations if d != origin]
-
-        deals: List[Tuple[int, str, dict]] = []
-        for dest in scan_dests:
-            try:
-                flights = await search_flights(origin, dest, depart_date, None)
-                if not flights:
-                    continue
-                cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-                price = cheapest.get("value") or cheapest.get("price") or 0
-                if price and (not max_price or price <= max_price):
-                    deals.append((price, dest, cheapest))
-                await asyncio.sleep(0.3)
-            except Exception:
-                pass
-
-        if not deals:
-            return
-
-        deals.sort(key=lambda x: x[0])
-        top = deals[:3]
-
-        origin_name = sub.get("origin_name", origin)
-        freq = sub.get("frequency", "daily")
-        freq_str = "Ежедневная подборка" if freq == "daily" else "Еженедельная подборка"
-
-        text = f"📰 <b>{freq_str} горячих рейсов</b>\n{cat_label}\n🛫 Из: <b>{origin_name}</b>\n\n"
-
-        kb_buttons = []
-        for i, (price, dest_iata, flight) in enumerate(top, 1):
-            dest_name = get_city_name(dest_iata) or dest_iata
-            total = price * passengers
-            text += f"{i}. ✈️ <b>{origin_name} → {dest_name}</b>\n"
-            text += f"   💰 от <b>{price:,} ₽</b> / чел.".replace(",", " ")
-            if passengers > 1:
-                text += f" · {total:,} ₽ за {passengers} чел.".replace(",", " ")
-            text += "\n\n"
-
-            clean_link = generate_booking_link(
-                flight=flight, origin=origin, dest=dest_iata,
-                depart_date=depart_date, passengers_code=str(passengers), return_date=None
-            )
-            booking_link = await convert_to_partner_link(clean_link)
-            kb_buttons.append([
-                InlineKeyboardButton(
-                    text=f"✈️ {dest_name} — {price:,} ₽".replace(",", " "),
-                    url=booking_link
-                )
+    if not subs:
+        await callback.message.edit_text(
+            "У вас нет активных подписок.\nНажмите «⚙️ Настроить», чтобы создать первую!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")],
+                [InlineKeyboardButton(text="↩️ Назад",      callback_data="hot_deals_menu")],
+                [InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")],
             ])
+        )
+        await callback.answer()
+        return
 
-        text += "⚠️ <i>Цены актуальны на момент отправки и могут изменяться.</i>"
-        kb_buttons.append([
-            InlineKeyboardButton(text="❌ Отписаться от дайджеста", callback_data=f"hd_del_{sub_id}")
-        ])
-        kb_buttons.append([
-            InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")
-        ])
+    blocks  = []
+    buttons = []
 
-        try:
-            await self.bot.send_message(
-                user_id, text, parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+    for idx, (sub_id, sub) in enumerate(subs.items(), 1):
+        cat_label, _ = CATEGORIES.get(sub.get("category", ""), ("—", []))
+        is_hot   = sub.get("sub_type") == "hot"
+        sub_icon = "🔥" if is_hot else "📰"
+
+        # Бюджет
+        max_price = sub.get("max_price")
+        price_str = f"до {max_price:,} ₽".replace(",", "\u202f") if max_price else "без ограничений"
+
+        # Пассажиры
+        pax = sub.get("passengers", 1)
+        if pax == 1:
+            pax_str = "1 пассажир"
+        elif pax < 5:
+            pax_str = f"{pax} пассажира"
+        else:
+            pax_str = f"{pax} пассажиров"
+
+        # Города вылета
+        origins = sub.get("origins", [])
+        origin_str = (
+            ", ".join(o["name"] for o in origins)
+            if origins
+            else sub.get("origin_name", sub.get("origin_iata", "?"))
+        )
+
+        # Направление
+        dest_str = sub.get("dest_preset_name") or cat_label
+
+        # Месяцы
+        travel_months = sub.get("travel_months", [])
+        if travel_months:
+            month_str = ", ".join(
+                MONTHS_LABELS.get(mk.split("_")[0], mk) for mk in travel_months
             )
-            sub["last_notified"] = int(time.time())
-            await redis_client.update_hot_sub(user_id, sub_id, sub)
-            logger.info(f"✅ [Digest] Отправлен {user_id}")
-        except TelegramForbiddenError:
-            logger.warning(f"⚠️ [Digest] Пользователь {user_id} заблокировал бота — удаляем")
-            await redis_client.delete_hot_sub(user_id, sub_id)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-        except TelegramAPIError as e:
-            logger.error(f"❌ [Digest] API error: {e}")
+        elif sub.get("travel_month"):
+            month_str = (
+                f"{MONTHS_LABELS.get(str(sub['travel_month']), '?')} "
+                f"{sub.get('travel_year', '')}"
+            ).strip()
+        else:
+            month_str = "любой период"
+
+        # Частота дайджеста
+        freq_map  = {"daily": "📆 ежедневно", "weekly": "📆 раз в неделю"}
+        freq_line = f"\n{freq_map[sub['frequency']]}" if not is_hot and sub.get("frequency") else ""
+
+        blocks.append(
+            f"<b>{idx}. {sub_icon} {dest_str}</b>\n"
+            f"🛫 {origin_str}\n"
+            f"📅 {month_str}\n"
+            f"💰 {price_str}  ·  👤 {pax_str}{freq_line}"
+        )
+        buttons.append([InlineKeyboardButton(
+            text=f"🗑 Удалить №{idx} — {dest_str}",
+            callback_data=f"hd_del_{sub_id}"
+        )])
+
+    divider = "\n\n" + "─" * 20 + "\n\n"
+    text = (
+        f"🔔 <b>Ваши подписки</b>  ({len(subs)} шт.)\n\n"
+        + divider.join(blocks)
+    )
+
+    buttons.append([InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")])
+    buttons.append([InlineKeyboardButton(text="↩️ Назад",      callback_data="hot_deals_menu")])
+    buttons.append([InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")])
+
+    await callback.message.edit_text(
+        text, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════════════
+# Удаление подписки
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("hd_del_"))
+async def hd_delete_sub(callback: CallbackQuery, state: FSMContext):
+    sub_id  = callback.data.replace("hd_del_", "")
+    user_id = callback.from_user.id
+    await redis_client.delete_hot_sub(user_id, sub_id)
+    await callback.answer("✅ Подписка удалена")
+    await hd_my_subs(callback)
