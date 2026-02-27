@@ -2,8 +2,9 @@
 import json
 import os
 import aiohttp
+from difflib import SequenceMatcher, get_close_matches
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 CITIES_API_URL = "https://api.travelpayouts.com/data/ru/cities.json"
 CACHE_FILE = Path("data/cities_cache.json")
@@ -229,6 +230,108 @@ def search_cities(query: str, limit: int = 10) -> List[dict]:
     
     print(f"[CITIES_LOADER] [search_cities] ✅ Найдено {len(results)} результатов")
     return results
+
+def fuzzy_search_city(
+    query: str,
+    threshold: float = 0.65,
+    limit: int = 3
+) -> List[Tuple[str, str, float]]:
+    """
+    Нечёткий поиск города по названию. Ловит опечатки пользователя.
+
+    Алгоритм:
+      1. Точное вхождение подстроки — самый высокий приоритет.
+      2. Оценка схожести через SequenceMatcher (учитывает транспозиции,
+         вставки, удаления).
+      3. Возвращает только результаты выше порога threshold.
+
+    Args:
+        query:     Название города, введённое пользователем.
+        threshold: Минимальный коэффициент схожести (0.0–1.0).
+        limit:     Максимум возвращаемых вариантов.
+
+    Returns:
+        Список кортежей (display_name, iata_code, score), отсортированных
+        по убыванию схожести.
+
+    Примеры опечаток, которые обрабатывает функция:
+        «москав»   → Москва (MOW)
+        «санк-птербург» → Санкт-Петербург (LED)
+        «дубаи»    → Дубай (DXB)
+        «бангок»   → Бангкок (BKK)
+        «прага»    → Прага (PRG)  ← точное совпадение
+    """
+    if not query or not CITY_TO_IATA:
+        return []
+
+    query_norm = _normalize_name(query)
+    scored: List[Tuple[str, str, float]] = []
+    seen_iata: set = set()
+
+    for city_key, iata in CITY_TO_IATA.items():
+        if iata in seen_iata:
+            continue
+
+        # Бонус за вхождение подстроки
+        if query_norm in city_key:
+            score = 0.9 + len(query_norm) / max(len(city_key), 1) * 0.1
+        else:
+            score = SequenceMatcher(None, query_norm, city_key).ratio()
+
+        if score >= threshold:
+            display = IATA_TO_CITY.get(iata, city_key.capitalize())
+            scored.append((display, iata, round(score, 3)))
+            seen_iata.add(iata)
+
+    scored.sort(key=lambda x: x[2], reverse=True)
+    result = scored[:limit]
+
+    if result:
+        top = ", ".join(f"'{d}' ({i}, {s:.0%})" for d, i, s in result)
+        print(f"[CITIES_LOADER] [fuzzy_search] '{query}' → {top}")
+    else:
+        print(f"[CITIES_LOADER] [fuzzy_search] '{query}' → ничего не найдено (порог: {threshold})")
+
+    return result
+
+
+def get_iata_fuzzy(city_name: str, threshold: float = 0.65) -> Tuple[Optional[str], Optional[str], float]:
+    """
+    Расширенная версия get_iata: сначала точный поиск, затем нечёткий.
+
+    Returns:
+        (iata, display_name, score)
+        score == 1.0  → точное совпадение
+        score < 1.0   → нечёткое, требует подтверждения
+        score == 0.0  → город не найден
+    """
+    # 1. Точный поиск
+    exact = get_iata(city_name)
+    if exact:
+        display = get_city_name(exact) or city_name.capitalize()
+        return exact, display, 1.0
+
+    # 2. Нечёткий поиск
+    candidates = fuzzy_search_city(city_name, threshold=threshold, limit=1)
+    if candidates:
+        display, iata, score = candidates[0]
+        return iata, display, score
+
+    return None, None, 0.0
+
+
+def format_fuzzy_suggestion(original: str, display_name: str, iata: str, score: float) -> str:
+    """
+    Формирует читаемое сообщение-подсказку для пользователя.
+
+    Пример: «Не нашёл «дубаи» ✈️ Может, вы имели в виду Дубай (DXB)?»
+    """
+    confidence_emoji = "🎯" if score >= 0.85 else "🤔"
+    return (
+        f"Не нашёл «{original}»\n"
+        f"{confidence_emoji} Может, вы имели в виду *{display_name}* ({iata})?"
+    )
+
 
 # Тест при прямом запуске
 if __name__ == "__main__":
