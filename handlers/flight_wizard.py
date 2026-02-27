@@ -9,6 +9,7 @@ from states.flight_states import FlightSearch
 from services.flight_search import search_flights, generate_booking_link, normalize_date
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities import CITY_TO_IATA, GLOBAL_HUBS, IATA_TO_CITY
+from utils.cities_loader import get_iata_fuzzy, fuzzy_search_city, format_fuzzy_suggestion, _normalize_name
 from utils.redis_client import redis_client
 from datetime import datetime
 
@@ -102,28 +103,433 @@ def format_user_date(date_str: str) -> str:
     except:
         return date_str
 
-# ===== Обработчики шагов =====
+
+def _parse_city_input(raw: str) -> list[dict]:
+    """
+    Разбирает строку с городами (через запятую или один город).
+    
+    Каждый токен прогоняется через нечёткий поиск.
+    Возвращает список словарей:
+        {
+            "input":   оригинальный ввод,
+            "iata":    найденный IATA или None,
+            "name":    отображаемое название или None,
+            "score":   0.0–1.0,
+            "exact":   True если точное совпадение,
+        }
+    """
+    tokens = [t.strip() for t in re.split(r'[,;]+', raw) if t.strip()]
+    results = []
+    seen_iata: set[str] = set()
+
+    for token in tokens:
+        norm = _normalize_name(token)
+
+        # "Везде" — особый случай
+        if norm in ("везде", "anywhere", "any"):
+            results.append({"input": token, "iata": "ANY", "name": "Везде", "score": 1.0, "exact": True})
+            continue
+
+        # IATA напрямую (3 латинских буквы)
+        if re.match(r'^[A-Za-z]{3}$', token.strip()):
+            iata = token.strip().upper()
+            name = IATA_TO_CITY.get(iata, iata)
+            entry = {"input": token, "iata": iata, "name": name, "score": 1.0, "exact": True}
+        else:
+            iata, name, score = get_iata_fuzzy(token)
+            entry = {"input": token, "iata": iata, "name": name, "score": score, "exact": score == 1.0}
+
+        # Дедупликация по IATA
+        if entry["iata"] and entry["iata"] in seen_iata:
+            continue
+
+        if entry["iata"]:
+            seen_iata.add(entry["iata"])
+
+        results.append(entry)
+
+    return results
+
+
+def _build_origin_summary(cities: list[dict]) -> str:
+    """Формирует строку-сводку найденных городов для подтверждения."""
+    lines = []
+    for c in cities:
+        if c["exact"]:
+            lines.append(f"✅ {c['name']} ({c['iata']})")
+        else:
+            pct = int(c["score"] * 100)
+            lines.append(f"🤔 {c['name']} ({c['iata']}) ~{pct}% — уточнение")
+    return "\n".join(lines)
+
+
+def _build_origin_edit_keyboard(cities: list[dict]) -> InlineKeyboardMarkup:
+    """
+    Строит клавиатуру редактирования списка городов вылета.
+    Каждый город — строка с кнопкой ❌ для удаления.
+    Внизу — «➕ Добавить город» и «✅ Готово».
+    """
+    rows = []
+    for i, c in enumerate(cities):
+        label = f"{c['name']} ({c['iata']})"
+        rows.append([
+            InlineKeyboardButton(text=f"🏙 {label}", callback_data="noop"),
+            InlineKeyboardButton(text="❌", callback_data=f"origin_remove:{i}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Добавить город", callback_data="origin_add")])
+    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data="origin_done")])
+    rows.append([InlineKeyboardButton(text="↩️ Отмена", callback_data="cancel_search")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ===== Шаг 1а: Запрос городов вылета =====
 
 @router.callback_query(F.data == "start_search")
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
-    """Начало пошагового поиска"""
+    """Начало пошагового поиска — запрашиваем города вылета"""
     await callback.message.edit_text(
         "✈️ <b>Начнём поиск билетов!</b>\n\n"
-        "📍 <b>Шаг 1 из 5:</b> Введите маршрут в формате:\n"
-        "<code>Город отправления - Город прибытия</code>\n\n"
-        "📌 <b>Примеры:</b>\n"
-        "• Москва - Сочи\n"
-        "• СПБ - Бангкок\n"
-        "• Везде - Стамбул (поиск из всех городов)\n\n"
-        "💡 Можно писать через дефис или через пробел",
+        "📍 <b>Шаг 1 из 5:</b> Введите город(а) вылета\n\n"
+        "💡 <b>Можно ввести несколько городов через запятую:</b>\n"
+        "<code>Москва, Казань, Екатеринбург</code>\n\n"
+        "📌 <b>Также поддерживается:</b>\n"
+        "• IATA-коды: <code>MOW, KZN</code>\n"
+        "• Один город: <code>Санкт-Петербург</code>\n"
+        "• Везде: <code>Везде</code>",
         parse_mode="HTML"
     )
-    await state.set_state(FlightSearch.route)
+    await state.set_state(FlightSearch.origin_cities)
     await callback.answer()
+
+
+@router.message(FlightSearch.origin_cities)
+async def process_origin_cities(message: Message, state: FSMContext):
+    """Обработка ввода городов вылета"""
+    parsed = _parse_city_input(message.text)
+
+    # Нет ни одного токена
+    if not parsed:
+        await message.answer(
+            "❌ Не удалось распознать города. Попробуйте ещё раз.\n"
+            "Пример: <code>Москва, Казань</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    # Есть нераспознанные города
+    not_found = [c for c in parsed if not c["iata"]]
+    if not_found:
+        names = ", ".join(f"«{c['input']}»" for c in not_found)
+        await message.answer(
+            f"❌ Не нашёл город(а): {names}\n"
+            "Проверьте написание или используйте IATA-код (например, MOW).",
+            parse_mode="HTML"
+        )
+        return
+
+    # Нечёткие совпадения — показываем для подтверждения
+    fuzzy = [c for c in parsed if not c["exact"]]
+    if fuzzy:
+        lines = []
+        for c in fuzzy:
+            lines.append(
+                f"  «{c['input']}» → <b>{c['name']}</b> ({c['iata']}, {int(c['score']*100)}%)"
+            )
+        confirm_text = (
+            "🤔 Уточните, правильно ли распознаны города:\n\n"
+            + "\n".join(lines) + "\n\n"
+            "Нажмите <b>Да</b>, чтобы продолжить, или <b>Нет</b>, чтобы ввести заново."
+        )
+        await state.update_data(pending_origins=parsed)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Да, верно", callback_data="origins_fuzzy_confirm"),
+            InlineKeyboardButton(text="✏️ Ввести заново", callback_data="origins_fuzzy_retry"),
+        ]])
+        await message.answer(confirm_text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    # Всё точно — сохраняем и спрашиваем город прилёта
+    await state.update_data(origins=parsed)
+    await _ask_dest_city(message, state, parsed)
+
+
+@router.callback_query(F.data == "origins_fuzzy_confirm")
+async def origins_fuzzy_confirm(callback: CallbackQuery, state: FSMContext):
+    """Пользователь подтвердил нечёткие совпадения"""
+    data = await state.get_data()
+    origins = data.get("pending_origins", [])
+    await state.update_data(origins=origins, pending_origins=None)
+    await _ask_dest_city(callback.message, state, origins, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "origins_fuzzy_retry")
+async def origins_fuzzy_retry(callback: CallbackQuery, state: FSMContext):
+    """Пользователь хочет ввести города заново"""
+    await callback.message.edit_text(
+        "📍 Введите город(а) вылета заново:\n"
+        "Пример: <code>Москва, Казань, Сочи</code>",
+        parse_mode="HTML"
+    )
+    await state.set_state(FlightSearch.origin_cities)
+    await callback.answer()
+
+
+async def _ask_dest_city(message, state: FSMContext, origins: list[dict], edit: bool = False):
+    """Показываем подтверждение городов вылета и запрашиваем город прилёта"""
+    summary = _build_origin_summary(origins)
+    names_list = ", ".join(c["name"] for c in origins)
+
+    text = (
+        f"✅ <b>Город(а) вылета:</b>\n{summary}\n\n"
+        "🏁 <b>Шаг 1б:</b> Введите город прилёта\n\n"
+        "📌 Пример: <code>Сочи</code> или <code>AER</code>"
+    )
+    if edit:
+        await message.edit_text(text, parse_mode="HTML")
+    else:
+        await message.answer(text, parse_mode="HTML")
+    await state.set_state(FlightSearch.dest_city)
+
+
+# ===== Шаг 1б: Город прилёта =====
+
+@router.message(FlightSearch.dest_city)
+async def process_dest_city(message: Message, state: FSMContext):
+    """Обработка города прилёта"""
+    parsed = _parse_city_input(message.text)
+
+    if not parsed or not parsed[0]["iata"]:
+        # Нечёткий поиск для подсказки
+        suggestions = fuzzy_search_city(message.text, limit=3)
+        hint = ""
+        if suggestions:
+            hint = "\n💡 Похожие города: " + ", ".join(f"{n} ({i})" for n, i, _ in suggestions)
+        await message.answer(
+            f"❌ Не нашёл город «{message.text}».{hint}\n"
+            "Попробуйте ещё раз или введите IATA-код.",
+            parse_mode="HTML"
+        )
+        return
+
+    dest = parsed[0]
+
+    # Нечёткое совпадение — подтверждение
+    if not dest["exact"]:
+        await state.update_data(pending_dest=dest)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"✅ Да, {dest['name']}", callback_data="dest_fuzzy_confirm"),
+            InlineKeyboardButton(text="✏️ Ввести заново", callback_data="dest_fuzzy_retry"),
+        ]])
+        await message.answer(
+            f"🤔 Имели в виду <b>{dest['name']}</b> ({dest['iata']}, {int(dest['score']*100)}%)?",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+        return
+
+    await _save_dest_and_continue(message, state, dest)
+
+
+@router.callback_query(F.data == "dest_fuzzy_confirm")
+async def dest_fuzzy_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    dest = data.get("pending_dest")
+    await state.update_data(pending_dest=None)
+    await _save_dest_and_continue(callback.message, state, dest, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "dest_fuzzy_retry")
+async def dest_fuzzy_retry(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🏁 Введите город прилёта:\nПример: <code>Дубай</code> или <code>DXB</code>",
+        parse_mode="HTML"
+    )
+    await state.set_state(FlightSearch.dest_city)
+    await callback.answer()
+
+
+async def _save_dest_and_continue(message, state: FSMContext, dest: dict, edit: bool = False):
+    """Сохраняем город прилёта и переходим к дате"""
+    await state.update_data(
+        dest=dest["name"].lower(),
+        dest_iata=dest["iata"],
+        dest_name=dest["name"],
+    )
+    data = await state.get_data()
+    origins = data.get("origins", [])
+    origins_str = ", ".join(c["name"] for c in origins)
+
+    text = (
+        f"✅ <b>Маршрут:</b> {origins_str} → {dest['name']}\n\n"
+        "📅 <b>Шаг 2 из 5:</b> Введите дату вылета в формате <code>ДД.ММ</code>\n\n"
+        "📌 Пример: <code>10.03</code>"
+    )
+    if edit:
+        await message.edit_text(text, parse_mode="HTML")
+    else:
+        await message.answer(text, parse_mode="HTML")
+    await state.set_state(FlightSearch.depart_date)
+
+
+# ===== Редактирование городов вылета из сводки =====
+
+@router.callback_query(F.data == "edit_origins")
+async def edit_origins(callback: CallbackQuery, state: FSMContext):
+    """Открыть экран редактирования городов вылета"""
+    data = await state.get_data()
+    origins = data.get("origins", [])
+    kb = _build_origin_edit_keyboard(origins)
+    names = "\n".join(f"  • {c['name']} ({c['iata']})" for c in origins)
+    await callback.message.edit_text(
+        f"📍 <b>Города вылета:</b>\n{names}\n\n"
+        "Нажмите ❌ рядом с городом, чтобы удалить его.\n"
+        "Нажмите <b>➕ Добавить город</b>, чтобы добавить ещё.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("origin_remove:"))
+async def origin_remove(callback: CallbackQuery, state: FSMContext):
+    """Удалить город из списка вылетов"""
+    idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    origins: list = data.get("origins", [])
+
+    if len(origins) <= 1:
+        await callback.answer("⚠️ Должен остаться хотя бы один город вылета!", show_alert=True)
+        return
+
+    removed = origins.pop(idx)
+    await state.update_data(origins=origins)
+
+    kb = _build_origin_edit_keyboard(origins)
+    names = "\n".join(f"  • {c['name']} ({c['iata']})" for c in origins)
+    await callback.message.edit_text(
+        f"🗑 Удалён: <b>{removed['name']}</b>\n\n"
+        f"📍 <b>Города вылета:</b>\n{names}\n\n"
+        "Нажмите ❌ рядом с городом, чтобы удалить его.\n"
+        "Нажмите <b>➕ Добавить город</b>, чтобы добавить ещё.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "origin_add")
+async def origin_add(callback: CallbackQuery, state: FSMContext):
+    """Запросить ввод нового города для добавления"""
+    data = await state.get_data()
+    origins = data.get("origins", [])
+    existing = ", ".join(c["name"] for c in origins)
+    await callback.message.edit_text(
+        f"📍 Текущие города вылета: <b>{existing}</b>\n\n"
+        "✍️ Введите название города, который хотите добавить:",
+        parse_mode="HTML"
+    )
+    await state.set_state(FlightSearch.edit_origin_add)
+    await callback.answer()
+
+
+@router.message(FlightSearch.edit_origin_add)
+async def process_origin_add(message: Message, state: FSMContext):
+    """Обработка нового города из режима редактирования"""
+    parsed = _parse_city_input(message.text)
+
+    if not parsed or not parsed[0]["iata"]:
+        suggestions = fuzzy_search_city(message.text, limit=3)
+        hint = ""
+        if suggestions:
+            hint = "\n💡 Похожие: " + ", ".join(f"{n} ({i})" for n, i, _ in suggestions)
+        await message.answer(
+            f"❌ Не нашёл город «{message.text}».{hint}\n"
+            "Попробуйте ещё раз:",
+            parse_mode="HTML"
+        )
+        return
+
+    new_city = parsed[0]
+    data = await state.get_data()
+    origins: list = data.get("origins", [])
+
+    # Проверка дубликата
+    if any(c["iata"] == new_city["iata"] for c in origins):
+        await message.answer(
+            f"⚠️ Город <b>{new_city['name']}</b> уже есть в списке.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Нечёткое — подтверждение
+    if not new_city["exact"]:
+        await state.update_data(pending_add_city=new_city)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"✅ Да, {new_city['name']}", callback_data="origin_add_confirm"),
+            InlineKeyboardButton(text="✏️ Ввести заново", callback_data="origin_add"),
+        ]])
+        await message.answer(
+            f"🤔 Имели в виду <b>{new_city['name']}</b> ({new_city['iata']}, {int(new_city['score']*100)}%)?",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+        return
+
+    origins.append(new_city)
+    await state.update_data(origins=origins)
+    await _show_origins_edit(message, state, origins, added=new_city["name"])
+
+
+@router.callback_query(F.data == "origin_add_confirm")
+async def origin_add_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтвердить добавление нечётко найденного города"""
+    data = await state.get_data()
+    new_city = data.get("pending_add_city")
+    origins: list = data.get("origins", [])
+    origins.append(new_city)
+    await state.update_data(origins=origins, pending_add_city=None)
+    await _show_origins_edit(callback.message, state, origins, added=new_city["name"], edit=True)
+    await callback.answer()
+
+
+async def _show_origins_edit(message, state: FSMContext, origins: list, added: str = None, edit: bool = False):
+    """Показать обновлённый список городов вылета"""
+    kb = _build_origin_edit_keyboard(origins)
+    names = "\n".join(f"  • {c['name']} ({c['iata']})" for c in origins)
+    prefix = f"✅ Добавлен: <b>{added}</b>\n\n" if added else ""
+    text = (
+        f"{prefix}"
+        f"📍 <b>Города вылета:</b>\n{names}\n\n"
+        "Нажмите ❌ рядом с городом, чтобы удалить его.\n"
+        "Нажмите <b>➕ Добавить город</b>, чтобы добавить ещё."
+    )
+    if edit:
+        await message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await state.set_state(FlightSearch.confirm)
+
+
+@router.callback_query(F.data == "noop")
+async def noop_handler(callback: CallbackQuery):
+    """Заглушка для информационных кнопок"""
+    await callback.answer()
+
+
+@router.callback_query(F.data == "origin_done")
+async def origin_done(callback: CallbackQuery, state: FSMContext):
+    """Завершить редактирование городов, вернуться к сводке"""
+    await show_summary(callback.message, state)
+    await callback.answer()
+
+
+# ===== Шаги 2–5 остаются без изменений =====
 
 @router.message(FlightSearch.route)
 async def process_route(message: Message, state: FSMContext):
-    """Обработка маршрута"""
+    """Обработка маршрута (legacy-ввод одной строкой)"""
     origin, dest = validate_route(message.text)
     
     if not origin or not dest:
@@ -152,8 +558,10 @@ async def process_route(message: Message, state: FSMContext):
     
     dest_name = IATA_TO_CITY.get(dest_iata, dest.capitalize())
     
-    # Сохраняем данные
+    # Сохраняем как список из одного города для совместимости
+    origins = [{"input": origin, "iata": orig_iata, "name": origin_name, "score": 1.0, "exact": True}]
     await state.update_data(
+        origins=origins,
         origin=origin,
         origin_iata=orig_iata,
         dest=dest,
@@ -162,7 +570,6 @@ async def process_route(message: Message, state: FSMContext):
         dest_name=dest_name
     )
     
-    # Переходим к дате вылета
     await message.answer(
         f"✅ Маршрут: <b>{origin_name} → {dest_name}</b>\n\n"
         "📅 <b>Шаг 2 из 5:</b> Введите дату вылета в формате <code>ДД.ММ</code>\n\n"
@@ -372,9 +779,18 @@ async def show_summary(message, state: FSMContext):
     passenger_code = build_passenger_code(adults, children, infants)
     passenger_desc = build_passenger_desc(passenger_code)
     
+    # Города вылета (новый формат — список, или старый — одиночный)
+    origins: list = data.get("origins") or []
+    if not origins and data.get("origin_name"):
+        origins = [{"name": data["origin_name"], "iata": data.get("origin_iata", ""), "exact": True}]
+    
+    origins_display = ", ".join(c["name"] for c in origins) if origins else "—"
+    dest_name = data.get("dest_name", "—")
+    
     summary = (
         "📋 <b>Проверьте данные:</b>\n\n"
-        f"📍 Маршрут: <b>{data['origin_name']} → {data['dest_name']}</b>\n"
+        f"📍 Откуда: <b>{origins_display}</b>\n"
+        f"🏁 Куда: <b>{dest_name}</b>\n"
         f"📅 Вылет: <b>{data['depart_date']}</b>\n"
     )
     
@@ -386,6 +802,7 @@ async def show_summary(message, state: FSMContext):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Начать поиск", callback_data="confirm_search")],
+        [InlineKeyboardButton(text="✏️ Изменить города вылета", callback_data="edit_origins")],
         [InlineKeyboardButton(text="✏️ Изменить маршрут", callback_data="edit_route")],
         [InlineKeyboardButton(text="✏️ Изменить даты", callback_data="edit_dates")],
         [InlineKeyboardButton(text="✏️ Изменить пассажиров", callback_data="edit_passengers")],
@@ -408,12 +825,18 @@ async def confirm_search(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("⏳ Ищу билеты (включая с пересадками)...")
     
     # Определяем пункты вылета
-    if data["origin"] == "везде":
+    origins_data: list = data.get("origins") or []
+    if origins_data and origins_data[0].get("iata") == "ANY":
+        # Везде
         origins = GLOBAL_HUBS[:5]
         origin_name = "Везде"
+    elif origins_data:
+        origins = [c["iata"] for c in origins_data if c.get("iata")]
+        origin_name = ", ".join(c["name"] for c in origins_data)
     else:
-        origins = [data["origin_iata"]]
-        origin_name = data["origin_name"]
+        # Fallback на старый формат
+        origins = [data["origin_iata"]] if data.get("origin_iata") else GLOBAL_HUBS[:5]
+        origin_name = data.get("origin_name", "Везде")
     
     dest_iata = data["dest_iata"]
     dest_name = data["dest_name"]
