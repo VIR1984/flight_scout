@@ -4,10 +4,11 @@
 
 Логика:
 - Каждые 3 часа проверяем все «горячие» подписки:
-    для каждой берём CATEGORIES[category][:5] направлений,
+    для каждой перебираем ВСЕ направления категории (не случайную выборку),
     ищем самый дешёвый рейс из origin в каждое из них,
-    если цена ≤ max_price (или max_price == 0) — отправляем уведомление.
-- Ежедневно в 09:00 МСК отправляем дайджест (топ-3 предложения).
+    если цена ≤ max_price (или max_price == 0) — отправляем уведомление
+    с лучшим найденным предложением.
+- Ежедневно в 09:00 МСК отправляем дайджест (топ-3 из всех направлений).
 - Раз в неделю (понедельник 09:00) — еженедельный дайджест.
 """
 
@@ -15,7 +16,6 @@ import asyncio
 import json
 import time
 import logging
-import random
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -155,12 +155,11 @@ class HotDealsSender:
         best_price = None
         best_dest = None
 
-        sample_dests = random.sample(destinations, min(6, len(destinations)))
+        # Перебираем ВСЕ направления категории — чтобы не пропустить самое дешёвое
+        scan_dests = [d for d in destinations if d != origin]
 
-        logger.info(f"[HotDeals] Ищем рейсы из {origin}, направлений: {sample_dests}")
-        for dest in sample_dests:
-            if dest == origin:
-                continue
+        logger.info(f"[HotDeals] Ищем рейсы из {origin}, всего направлений: {len(scan_dests)}")
+        for dest in scan_dests:
             try:
                 flights = await search_flights(origin, dest, depart_str, None)
                 if not flights:
@@ -175,6 +174,9 @@ class HotDealsSender:
                     best_flight = cheapest
                     best_dest = dest
 
+                # Обновляем базовую цену при каждом наблюдении
+                await redis_client.update_baseline_price(origin, dest, price_per_pax)
+
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.warning(f"[HotDeals] {origin}→{dest}: ошибка {e}")
@@ -188,13 +190,38 @@ class HotDealsSender:
             logger.info(f"[HotDeals] Цена {best_price}₽ > бюджет {max_price}₽ — пропускаем")
             return
 
+        # ── Проверка базовой цены: слать только если цена реально упала ──────
+        # Порог: цена должна быть ниже базовой минимум на DROP_THRESHOLD %
+        DROP_THRESHOLD = 0.10   # 10 % — настраивай под себя
+        baseline = await redis_client.get_baseline_price(origin, best_dest)
+        if baseline is not None:
+            drop = (baseline - best_price) / baseline
+            if drop < DROP_THRESHOLD:
+                logger.info(
+                    f"[HotDeals] {origin}→{best_dest}: цена {best_price}₽ "
+                    f"(базовая {baseline:.0f}₽, снижение {drop:.1%}) — "
+                    f"меньше порога {DROP_THRESHOLD:.0%}, пропускаем"
+                )
+                return
+            logger.info(
+                f"[HotDeals] 🔥 {origin}→{best_dest}: цена {best_price}₽ "
+                f"ниже базовой {baseline:.0f}₽ на {drop:.1%} — отправляем!"
+            )
+        else:
+            # Базовой цены ещё нет — первый раз видим маршрут, шлём без проверки
+            logger.info(f"[HotDeals] {origin}→{best_dest}: базовой цены нет, шлём как есть")
+
         # Отправляем уведомление
-        await self._send_hot_notification(user_id, sub_id, sub, best_flight, best_price, best_dest, passengers, depart_str)
+        await self._send_hot_notification(
+            user_id, sub_id, sub, best_flight, best_price, best_dest,
+            passengers, depart_str, baseline=baseline,
+        )
 
     async def _send_hot_notification(
         self, user_id: int, sub_id: str, sub: dict,
         flight: dict, price: int, dest_iata: str,
-        passengers: int, depart_str: str
+        passengers: int, depart_str: str,
+        baseline: Optional[float] = None,
     ):
         origin_iata = sub.get("origin_iata", "")
         origin_name = sub.get("origin_name", origin_iata)
@@ -204,12 +231,20 @@ class HotDealsSender:
         total_price = price * passengers
         pax_str = f"{passengers} чел." if passengers > 1 else "1 чел."
 
+        # Строка со скидкой, если знаем базовую цену
+        if baseline is not None and baseline > price:
+            drop_pct = int((baseline - price) / baseline * 100)
+            discount_line = f"\n📉 Обычно от <b>{int(baseline):,} ₽</b> — дешевле на <b>{drop_pct}%</b>".replace(",", " ")
+        else:
+            discount_line = ""
+
         text = (
             f"🔥 <b>Горячее предложение!</b>\n\n"
             f"📍 {cat_label}\n"
             f"✈️ <b>{origin_name} → {dest_name}</b>\n"
             f"📅 Примерно: {depart_str}\n"
             f"💰 <b>{price:,} ₽</b> / чел.".replace(",", " ")
+            + discount_line
         )
         if passengers > 1:
             text += f"\n🧮 Итого за {pax_str}: <b>{total_price:,} ₽</b>".replace(",", " ")
@@ -291,21 +326,57 @@ class HotDealsSender:
         passengers = sub.get("passengers", 1)
 
         cat_label, destinations = CATEGORIES.get(category, ("", []))
-        sample_dests = random.sample(destinations, min(8, len(destinations)))
 
-        depart_date = (date.today() + timedelta(days=14)).strftime("%Y-%m-%d")
+        # ── Дата поиска по выбранному месяцу (не хардкод +14 дней) ──────────
+        travel_months_list = sub.get("travel_months", [])
+        travel_month = sub.get("travel_month")
+        travel_year  = sub.get("travel_year")
+        today = date.today()
+        search_date: Optional[date] = None
+
+        if travel_months_list:
+            # берём ближайший будущий из выбранных месяцев
+            for mk in travel_months_list:
+                try:
+                    m, y = map(int, mk.split("_"))
+                    candidate = date(y, m, 15)       # середина месяца
+                    if candidate >= today and (search_date is None or candidate < search_date):
+                        search_date = candidate
+                except Exception:
+                    pass
+        elif travel_month and travel_year:
+            try:
+                candidate = date(travel_year, travel_month, 15)
+                if candidate >= today:
+                    search_date = candidate
+            except Exception:
+                pass
+
+        if search_date is None:
+            search_date = today + timedelta(days=30)   # fallback
+
+        depart_date = search_date.strftime("%Y-%m-%d")
+        logger.info(f"[Digest] user={user_id} origin={origin} cat={category} "
+                    f"depart={depart_date} ({len(destinations)} направлений)")
+
+        # Перебираем ВСЕ направления категории — топ-3 будут действительно лучшими
+        scan_dests = [d for d in destinations if d != origin]
 
         deals: List[Tuple[int, str, dict]] = []
-        for dest in sample_dests:
-            if dest == origin:
-                continue
+        for dest in scan_dests:
             try:
                 flights = await search_flights(origin, dest, depart_date, None)
                 if not flights:
                     continue
                 cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
                 price = cheapest.get("value") or cheapest.get("price") or 0
-                if price and (not max_price or price <= max_price):
+                if not price:
+                    continue
+
+                # Обновляем базовую цену каждый раз когда видим маршрут
+                await redis_client.update_baseline_price(origin, dest, price)
+
+                if not max_price or price <= max_price:
                     deals.append((price, dest, cheapest))
                 await asyncio.sleep(0.3)
             except Exception:
