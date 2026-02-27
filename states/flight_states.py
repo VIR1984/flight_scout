@@ -8,8 +8,10 @@ class FlightSearch(StatesGroup):
     edit_origin_add = State()
     # Шаг 1в: Город прилёта
     dest_city = State()
-    # (устаревший) Шаг 1: Маршрут одной строкой — оставлен для совместимости
+    # Шаг 1: Маршрут одной строкой (legacy и start.py)
     route = State()
+    # Выбор аэропорта при мультиаэропортных городах (start.py)
+    choose_airport = State()
     # Шаг 2: Дата вылета
     depart_date = State()
     # Шаг 3: Нужен ли обратный билет
@@ -17,10 +19,11 @@ class FlightSearch(StatesGroup):
     # Шаг 4: Дата возврата (если нужен)
     return_date = State()
     # Шаг 5: Тип рейса
-    flight_type = State()     # Прямой / С пересадкой / Все
+    flight_type = State()
     # Шаг 6: Пассажиры
-    adults = State()          # Взрослые
-    children = State()        # Дети
-    infants = State()         # Младенцы
+    adults = State()
+    has_children = State()   # используется в start.py (Yes/No вопрос)
+    children = State()
+    infants = State()
     # Финал: Подтверждение и поиск
     confirm = State()

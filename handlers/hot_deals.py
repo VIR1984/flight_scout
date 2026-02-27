@@ -26,7 +26,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from utils.redis_client import redis_client
-from utils.cities_loader import get_iata, get_city_name
+from utils.cities_loader import get_iata, get_city_name, get_iata_fuzzy, fuzzy_search_city, _normalize_name
+import re as _re
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -432,36 +433,119 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.message(HotDealsSub.choose_origins)
 async def hd_origins_text(message: Message, state: FSMContext):
-    """Пользователь вводит город вылета текстом — добавляем в список."""
-    city = message.text.strip()
-    iata = get_iata(city)
+    """Пользователь вводит город(а) вылета — можно через запятую."""
+    raw = message.text.strip()
+    tokens = [t.strip() for t in _re.split(r'[,;]+', raw) if t.strip()]
 
-    if not iata:
-        await message.answer(
-            f"❌ Город «{city}» не найден.\n<i>Попробуйте: Москва, Екатеринбург, Казань</i>",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
+    data = await state.get_data()
+    origins: list = data.get("origins", [])
 
-    name = get_city_name(iata) or city
-    data    = await state.get_data()
-    origins = data.get("origins", [])
+    added = []
+    not_found = []
+    duplicates = []
+    fuzzy_pending = []  # города, требующие подтверждения
 
-    # Не добавляем дубли
-    if any(o["iata"] == iata for o in origins):
-        await message.answer(
-            f"Город <b>{name}</b> уже добавлен. Добавьте другой или нажмите «Готово».",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
+    for token in tokens:
+        # Прямой IATA-код
+        if _re.match(r'^[A-Za-z]{3}$', token):
+            iata = token.upper()
+            name = get_city_name(iata) or iata
+            score = 1.0
+        else:
+            iata, name, score = get_iata_fuzzy(token)
 
-    origins.append({"iata": iata, "name": name})
+        if not iata:
+            not_found.append(token)
+            continue
+
+        if any(o["iata"] == iata for o in origins):
+            duplicates.append(name)
+            continue
+
+        if score < 1.0:
+            # Нечёткое совпадение — сохраним для подтверждения
+            fuzzy_pending.append({"input": token, "iata": iata, "name": name, "score": score})
+            continue
+
+        origins.append({"iata": iata, "name": name})
+        added.append(name)
+
     await state.update_data(origins=origins)
 
-    # Обновляем отображение
+    # Если есть нечёткие — показываем для подтверждения
+    if fuzzy_pending:
+        await state.update_data(hd_fuzzy_pending=fuzzy_pending)
+        lines = "\n".join(
+            f"  «{c['input']}» → <b>{c['name']}</b> ({c['iata']}, {int(c['score']*100)}%)"
+            for c in fuzzy_pending
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Да, добавить", callback_data="hd_fuzzy_confirm"),
+            InlineKeyboardButton(text="✏️ Ввести заново", callback_data="hd_fuzzy_retry"),
+        ]])
+        # Показываем уже добавленные
+        prefix = f"✅ Добавлено: <b>{', '.join(added)}</b>\n\n" if added else ""
+        await message.answer(
+            f"{prefix}🤔 Уточните распознанные города:\n{lines}\n\nДобавить их?",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+        return
+
+    # Формируем ответ
+    parts = []
+    if added:
+        parts.append(f"✅ Добавлено: <b>{', '.join(added)}</b>")
+    if duplicates:
+        parts.append(f"⚠️ Уже есть: {', '.join(duplicates)}")
+    if not_found:
+        suggestions = []
+        for nf in not_found:
+            hits = fuzzy_search_city(nf, limit=1)
+            if hits:
+                suggestions.append(f"«{nf}» → {hits[0][0]}?")
+            else:
+                suggestions.append(f"«{nf}»")
+        hint = "; ".join(suggestions)
+        parts.append(f"❌ Не найдено: {hint}")
+
+    if parts:
+        await message.answer("\n".join(parts), parse_mode="HTML")
+
+    # Обновляем экран списка городов
     await _ask_origins(message, state, edit=False)
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data == "hd_fuzzy_confirm")
+async def hd_fuzzy_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение нечётко найденных городов в hot_deals"""
+    data = await state.get_data()
+    origins: list = data.get("origins", [])
+    pending: list = data.get("hd_fuzzy_pending", [])
+
+    newly_added = []
+    for c in pending:
+        if not any(o["iata"] == c["iata"] for o in origins):
+            origins.append({"iata": c["iata"], "name": c["name"]})
+            newly_added.append(c["name"])
+
+    await state.update_data(origins=origins, hd_fuzzy_pending=[])
+
+    if newly_added:
+        await callback.answer(f"✅ Добавлено: {', '.join(newly_added)}", show_alert=False)
+    await _ask_origins(callback.message, state, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(HotDealsSub.choose_origins, F.data == "hd_fuzzy_retry")
+async def hd_fuzzy_retry(callback: CallbackQuery, state: FSMContext):
+    """Ввести нечёткие города заново"""
+    await state.update_data(hd_fuzzy_pending=[])
+    await callback.message.edit_text(
+        "✍️ Введите название города заново:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 
 @router.callback_query(HotDealsSub.choose_origins, F.data == "hd_origins_done")

@@ -57,6 +57,7 @@ from handlers.everywhere_search import (
     format_user_date,
     build_passenger_desc,
 )
+from states.flight_states import FlightSearch
 
 router = Router()
 
@@ -65,24 +66,6 @@ _SEARCH_SEMAPHORE = asyncio.Semaphore(10)
 
 # Контекст трансферов: user_id → dict
 transfer_context: dict[int, dict] = {}
-
-
-# ════════════════════════════════════════════════════════════════
-# FSM
-# ════════════════════════════════════════════════════════════════
-
-class FlightSearch(StatesGroup):
-    route          = State()
-    choose_airport = State()
-    depart_date    = State()
-    need_return    = State()
-    return_date    = State()
-    flight_type    = State()
-    adults         = State()
-    has_children   = State()
-    children       = State()
-    infants        = State()
-    confirm        = State()
 
 
 # ════════════════════════════════════════════════════════════════
