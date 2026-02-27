@@ -30,7 +30,7 @@ from services.flight_search import (
     format_passenger_desc,
 )
 from services.transfer_search import search_transfers, generate_transfer_link
-from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
+from utils.cities_loader import get_iata, get_city_name, fuzzy_get_iata, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
@@ -511,10 +511,21 @@ async def process_route(message: Message, state: FSMContext):
     if origin != "везде":
         orig_iata = get_iata(origin) or CITY_TO_IATA.get(_normalize_name(origin))
         if not orig_iata:
-            await message.answer(
-                f"❌ Не знаю город отправления: {origin}\nПопробуйте ещё раз.",
-                reply_markup=CANCEL_KB,
-            )
+            # П.2: пробуем нечёткий поиск
+            fuzzy_iata, fuzzy_name = fuzzy_get_iata(origin)
+            if fuzzy_iata:
+                await message.answer(
+                    f"❓ Не нашёл «{origin}» — может быть, вы имели в виду <b>{fuzzy_name}</b>?\n"
+                    f"Напишите маршрут ещё раз с правильным названием.\n\n"
+                    f"<i>Пример: {fuzzy_name} - Сочи</i>",
+                    parse_mode="HTML", reply_markup=CANCEL_KB,
+                )
+            else:
+                await message.answer(
+                    f"❌ Не знаю город отправления: <b>{origin}</b>\n"
+                    f"Проверьте написание и попробуйте ещё раз.",
+                    parse_mode="HTML", reply_markup=CANCEL_KB,
+                )
             return
         origin_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, origin.capitalize())
     else:
@@ -523,10 +534,21 @@ async def process_route(message: Message, state: FSMContext):
     if dest != "везде":
         dest_iata = get_iata(dest) or CITY_TO_IATA.get(_normalize_name(dest))
         if not dest_iata:
-            await message.answer(
-                f"❌ Не знаю город прибытия: {dest}\nПопробуйте ещё раз.",
-                reply_markup=CANCEL_KB,
-            )
+            # П.2: нечёткий поиск
+            fuzzy_iata, fuzzy_name = fuzzy_get_iata(dest)
+            if fuzzy_iata:
+                await message.answer(
+                    f"❓ Не нашёл «{dest}» — может быть, вы имели в виду <b>{fuzzy_name}</b>?\n"
+                    f"Напишите маршрут ещё раз с правильным названием.\n\n"
+                    f"<i>Пример: Москва - {fuzzy_name}</i>",
+                    parse_mode="HTML", reply_markup=CANCEL_KB,
+                )
+            else:
+                await message.answer(
+                    f"❌ Не знаю город прибытия: <b>{dest}</b>\n"
+                    f"Проверьте написание и попробуйте ещё раз.",
+                    parse_mode="HTML", reply_markup=CANCEL_KB,
+                )
             return
         dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest.capitalize())
     else:

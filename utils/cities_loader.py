@@ -182,6 +182,56 @@ def get_iata(city_name: str) -> Optional[str]:
     
     return result
 
+
+def _levenshtein(a: str, b: str) -> int:
+    """Расстояние Левенштейна между двумя строками."""
+    if len(a) < len(b):
+        return _levenshtein(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j+1]+1, curr[j]+1, prev[j]+(0 if ca==cb else 1)))
+        prev = curr
+    return prev[-1]
+
+
+def fuzzy_get_iata(city_name: str, max_dist: int = 2) -> tuple[Optional[str], Optional[str]]:
+    """
+    Нечёткий поиск города: исправляет опечатки типа «масква» → «Москва».
+
+    Возвращает (iata, правильное_название) или (None, None).
+    max_dist=2 ловит большинство опечаток не давая ложных срабатываний.
+    """
+    if not city_name or not CITY_TO_IATA:
+        return None, None
+
+    q = _normalize_name(city_name)
+    if len(q) < 3:
+        return None, None
+
+    best_iata  = None
+    best_name  = None
+    best_dist  = max_dist + 1
+
+    for norm_city, iata in CITY_TO_IATA.items():
+        # Пропускаем слишком короткие и слишком длинные названия
+        # (не стоит предлагать "Рим" вместо "Ром", или сравнивать с очень длинными)
+        if abs(len(norm_city) - len(q)) > 4:
+            continue
+        d = _levenshtein(q, norm_city)
+        if d < best_dist:
+            best_dist = d
+            best_iata = iata
+            best_name = IATA_TO_CITY.get(iata, norm_city.capitalize())
+
+    if best_iata:
+        print(f"[CITIES_LOADER] [fuzzy_get_iata] '{city_name}' → '{best_name}' ({best_iata}), dist={best_dist}")
+        return best_iata, best_name
+    return None, None
+
 def get_city_name(iata: str) -> Optional[str]:
     """Возвращает название города по IATA-коду"""
     if not iata:
