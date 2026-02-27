@@ -150,66 +150,69 @@ class HotDealsSender:
 
         depart_str = search_date.strftime("%Y-%m-%d")
 
-        # Ищем лучший рейс по всем направлениям категории
-        best_flight = None
-        best_price = None
-        best_dest = None
+        # Перебираем ВСЕ направления — собираем кандидатов (price, dest, flight, baseline)
+        DROP_THRESHOLD = 0.10
+        candidates: list = []
 
-        # Перебираем ВСЕ направления категории — чтобы не пропустить самое дешёвое
         scan_dests = [d for d in destinations if d != origin]
+        logger.info(f"[HotDeals] sub={sub_id} origin={origin}, направлений: {len(scan_dests)}")
 
-        logger.info(f"[HotDeals] Ищем рейсы из {origin}, всего направлений: {len(scan_dests)}")
         for dest in scan_dests:
             try:
                 flights = await search_flights(origin, dest, depart_str, None)
                 if not flights:
                     logger.debug(f"[HotDeals] {origin}→{dest}: рейсов не найдено")
                     continue
+
                 cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
                 price_per_pax = cheapest.get("value") or cheapest.get("price") or 0
-                logger.debug(f"[HotDeals] {origin}→{dest}: {price_per_pax}₽ ({len(flights)} вариантов)")
+                if not price_per_pax:
+                    continue
 
-                if best_price is None or price_per_pax < best_price:
-                    best_price = price_per_pax
-                    best_flight = cheapest
-                    best_dest = dest
+                logger.debug(f"[HotDeals] {origin}→{dest}: {price_per_pax}₽")
 
                 # Обновляем базовую цену при каждом наблюдении
                 await redis_client.update_baseline_price(origin, dest, price_per_pax)
 
+                # Фильтр бюджета
+                if max_price and price_per_pax > max_price:
+                    continue
+
+                # Фильтр снижения цены
+                baseline = await redis_client.get_baseline_price(origin, dest)
+                if baseline is not None:
+                    drop = (baseline - price_per_pax) / baseline
+                    if drop < DROP_THRESHOLD:
+                        logger.debug(f"[HotDeals] {origin}→{dest}: снижение {drop:.1%} < порога — пропуск")
+                        continue
+
+                candidates.append((price_per_pax, dest, cheapest, baseline))
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.warning(f"[HotDeals] {origin}→{dest}: ошибка {e}")
 
-        if not best_flight or not best_price:
-            logger.info(f"[HotDeals] sub_id не дал результатов: origin={origin}")
+        if not candidates:
+            logger.info(f"[HotDeals] sub={sub_id}: нет подходящих кандидатов")
             return
 
-        # Проверяем бюджет
-        if max_price and best_price > max_price:
-            logger.info(f"[HotDeals] Цена {best_price}₽ > бюджет {max_price}₽ — пропускаем")
+        # Сортируем по цене — дешевле в начале
+        candidates.sort(key=lambda x: x[0])
+
+        # Берём первый маршрут, который ещё не на кулдауне (24ч)
+        chosen = None
+        for price, dest, flight, baseline in candidates:
+            if await redis_client.is_route_on_cooldown(sub_id, dest):
+                logger.debug(f"[HotDeals] {origin}→{dest}: на кулдауне, пропускаем")
+                continue
+            chosen = (price, dest, flight, baseline)
+            break
+
+        if chosen is None:
+            logger.info(f"[HotDeals] sub={sub_id}: все {len(candidates)} кандидатов на кулдауне")
             return
 
-        # ── Проверка базовой цены: слать только если цена реально упала ──────
-        # Порог: цена должна быть ниже базовой минимум на DROP_THRESHOLD %
-        DROP_THRESHOLD = 0.10   # 10 % — настраивай под себя
-        baseline = await redis_client.get_baseline_price(origin, best_dest)
-        if baseline is not None:
-            drop = (baseline - best_price) / baseline
-            if drop < DROP_THRESHOLD:
-                logger.info(
-                    f"[HotDeals] {origin}→{best_dest}: цена {best_price}₽ "
-                    f"(базовая {baseline:.0f}₽, снижение {drop:.1%}) — "
-                    f"меньше порога {DROP_THRESHOLD:.0%}, пропускаем"
-                )
-                return
-            logger.info(
-                f"[HotDeals] 🔥 {origin}→{best_dest}: цена {best_price}₽ "
-                f"ниже базовой {baseline:.0f}₽ на {drop:.1%} — отправляем!"
-            )
-        else:
-            # Базовой цены ещё нет — первый раз видим маршрут, шлём без проверки
-            logger.info(f"[HotDeals] {origin}→{best_dest}: базовой цены нет, шлём как есть")
+        best_price, best_dest, best_flight, baseline = chosen
+        logger.info(f"[HotDeals] 🔥 sub={sub_id}: {origin}→{best_dest} {best_price}₽ — отправляем")
 
         # Отправляем уведомление
         await self._send_hot_notification(
@@ -269,9 +272,11 @@ class HotDealsSender:
 
         try:
             await self.bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb)
-            # Обновляем last_notified
+            # Обновляем общий таймер подписки
             sub["last_notified"] = int(time.time())
             await redis_client.update_hot_sub(user_id, sub_id, sub)
+            # Ставим кулдаун на конкретный маршрут — 24 часа
+            await redis_client.set_route_cooldown(sub_id, dest_iata)
             logger.info(f"✅ [HotDeals] Уведомление отправлено {user_id}: {origin_iata}→{dest_iata} {price}₽")
         except TelegramForbiddenError:
             logger.warning(f"⚠️ [HotDeals] Пользователь {user_id} заблокировал бота — удаляем подписку")

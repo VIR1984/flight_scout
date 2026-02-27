@@ -273,6 +273,24 @@ class RedisClient:
         await self.client.set(key, json.dumps({"avg": round(avg, 2)}), ex=ttl)
         return avg
 
+    # ===== Кулдаун маршрутов =====
+
+    async def is_route_on_cooldown(self, sub_id: str, dest: str, cooldown: int = 86400) -> bool:
+        """True если этот маршрут уже отправляли по данной подписке
+        менее cooldown секунд назад (по умолчанию 24 часа)."""
+        if not self.client:
+            return False
+        key = f"{self.prefix}route_cd:{sub_id}:{dest}"
+        return await self.client.exists(key) > 0
+
+    async def set_route_cooldown(self, sub_id: str, dest: str, cooldown: int = 86400) -> None:
+        """Помечает маршрут как отправленный. Ключ живёт cooldown секунд и
+        исчезает автоматически — никакой ручной очистки не нужно."""
+        if not self.client:
+            return
+        key = f"{self.prefix}route_cd:{sub_id}:{dest}"
+        await self.client.set(key, "1", ex=cooldown)
+
 
 # Singleton
 redis_client = RedisClient()
