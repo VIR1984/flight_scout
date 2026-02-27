@@ -103,36 +103,37 @@ MONTHS_LABELS = {
 async def _ask_origins(target, state: FSMContext, edit: bool = False):
     """
     Шаг «Город(а) вылета».
-    Показывает текстовое поле + уже добавленные города.
-    Пользователь вводит город текстом — он добавляется в список.
-    Кнопка «Готово» появляется после первого добавленного города.
+    Первый показ — пустой список, просим ввести города.
+    После ввода — показываем добавленные с кнопками ❌ для редактирования.
     """
-    data     = await state.get_data()
-    origins  = data.get("origins", [])        # список {"iata": "...", "name": "..."}
-    custom_dest = data.get("dest_iata_list")  # None → пользователь выбрал свой вариант направления
+    data    = await state.get_data()
+    origins = data.get("origins", [])
 
-    # Строим текст
     if origins:
         names = ", ".join(o["name"] for o in origins)
         text = (
-            f"Добавьте <b>города вылета</b>. Можно добавить несколько.\n\n"
-            f"<i>Добавлено: {names}</i>\n\n"
-            f"Напишите ещё один город или нажмите «Готово»."
+            f"🛫 <b>Города вылета</b>\n\n"
+            f"Добавлено: <b>{names}</b>\n\n"
+            f"Допишите ещё города через запятую или нажмите «Готово».\n"
+            f"Чтобы убрать город — нажмите ❌ рядом с ним."
         )
     else:
         text = (
-            "Введите <b>город вылета</b>.\n"
-            "Можно добавить несколько городов — бот будет следить за ценами из каждого.\n\n"
-            "<i>Пример: Москва</i>"
+            "Введите <b>город(а) вылета</b>.\n\n"
+            "Можно сразу несколько — через запятую или пробел:\n"
+            "<i>Москва, Казань, Екатеринбург</i>\n\n"
+            "Бот будет следить за ценами из каждого города."
         )
 
     buttons = []
     if origins:
-        buttons.append([InlineKeyboardButton(text=f"✅ Готово ({len(origins)} гор.)", callback_data="hd_origins_done")])
-        # Кнопки удаления
+        buttons.append([InlineKeyboardButton(
+            text=f"✅ Готово ({len(origins)} {_city_word(len(origins))})",
+            callback_data="hd_origins_done"
+        )])
         for o in origins:
             buttons.append([InlineKeyboardButton(
-                text=f"❌ Убрать {o['name']}",
+                text=f"❌ {o['name']}",
                 callback_data=f"hd_origin_del_{o['iata']}"
             )])
     buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_origins_back")])
@@ -144,6 +145,16 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
     else:
         msg = target if isinstance(target, Message) else target.message
         await msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+def _city_word(n: int) -> str:
+    """Склонение слова 'город': 1 город, 2 города, 5 городов."""
+    if 11 <= n % 100 <= 19:
+        return "городов"
+    r = n % 10
+    if r == 1: return "город"
+    if 2 <= r <= 4: return "города"
+    return "городов"
 
 
 async def _ask_months(target, selected: list):
@@ -432,35 +443,50 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.message(HotDealsSub.choose_origins)
 async def hd_origins_text(message: Message, state: FSMContext):
-    """Пользователь вводит город вылета текстом — добавляем в список."""
-    city = message.text.strip()
-    iata = get_iata(city)
+    """
+    Пользователь вводит город(а) вылета — через запятую или пробел.
+    Примеры: «Москва», «Москва, Казань», «Москва Сочи Казань»
+    """
+    raw = message.text.strip()
 
-    if not iata:
-        await message.answer(
-            f"❌ Город «{city}» не найден.\n<i>Попробуйте: Москва, Екатеринбург, Казань</i>",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
+    # Разбиваем по запятым; если запятых нет — по пробелам
+    if "," in raw:
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+    else:
+        parts = raw.split()
 
-    name = get_city_name(iata) or city
     data    = await state.get_data()
-    origins = data.get("origins", [])
+    origins = list(data.get("origins", []))
 
-    # Не добавляем дубли
-    if any(o["iata"] == iata for o in origins):
-        await message.answer(
-            f"Город <b>{name}</b> уже добавлен. Добавьте другой или нажмите «Готово».",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
+    added     = []
+    not_found = []
+    dupes     = []
 
-    origins.append({"iata": iata, "name": name})
+    for part in parts:
+        iata = get_iata(part)
+        if not iata:
+            not_found.append(part)
+            continue
+        name = get_city_name(iata) or part.capitalize()
+        if any(o["iata"] == iata for o in origins):
+            dupes.append(name)
+            continue
+        origins.append({"iata": iata, "name": name})
+        added.append(name)
+
     await state.update_data(origins=origins)
 
-    # Обновляем отображение
+    # Обратная связь
+    feedback = []
+    if added:
+        feedback.append(f"✅ Добавлены: <b>{', '.join(added)}</b>")
+    if dupes:
+        feedback.append(f"Уже есть: {', '.join(dupes)}")
+    if not_found:
+        feedback.append(f"❌ Не найдены: {', '.join(not_found)}")
+    if feedback:
+        await message.answer("\n".join(feedback), parse_mode="HTML")
+
     await _ask_origins(message, state, edit=False)
 
 
