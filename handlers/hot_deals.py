@@ -193,19 +193,13 @@ async def _ask_months(target, selected: list):
 
 
 async def _ask_budget(target):
-    """Ввод бюджета: текстом + быстрые кнопки."""
+    """Ввод бюджета: только ручной ввод числом."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="5 000 ₽",          callback_data="hd_budget_5000"),
-         InlineKeyboardButton(text="10 000 ₽",         callback_data="hd_budget_10000")],
-        [InlineKeyboardButton(text="15 000 ₽",         callback_data="hd_budget_15000"),
-         InlineKeyboardButton(text="20 000 ₽",         callback_data="hd_budget_20000")],
-        [InlineKeyboardButton(text="30 000 ₽",         callback_data="hd_budget_30000"),
-         InlineKeyboardButton(text="Без ограничений",  callback_data="hd_budget_0")],
-        [InlineKeyboardButton(text="↩️ В начало",      callback_data="main_menu")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     text = (
         "Укажите <b>максимальную цену на человека</b> (в рублях).\n\n"
-        "Напишите сумму числом в ответном сообщении или выберите вариант ниже.\n"
+        "Напишите сумму числом — или <b>0</b> для поиска без ограничений.\n"
         "<i>Пример: 12000</i>"
     )
     send = target.answer if isinstance(target, Message) else target.message.edit_text
@@ -597,15 +591,6 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
 # ════════════════════════════════════════════════════════════════
 # ШАГ 5 — бюджет
 # ════════════════════════════════════════════════════════════════
-
-@router.callback_query(F.data.startswith("hd_budget_"))
-async def hd_step5_budget_btn(callback: CallbackQuery, state: FSMContext):
-    budget = int(callback.data.replace("hd_budget_", ""))
-    await state.update_data(max_price=budget)
-    await state.set_state(HotDealsSub.choose_passengers)
-    await _ask_passengers(callback)
-    await callback.answer()
-
 
 @router.message(HotDealsSub.choose_budget)
 async def hd_step5_budget_text(message: Message, state: FSMContext):

@@ -227,6 +227,62 @@ class RedisClient:
         await self.client.srem(f"{self.prefix}hotsubs_all", key)
         logger.info(f"🗑️ [HotSub] Удалена подписка {sub_id} пользователя {user_id}")
 
+    # ══════════════════════════════════════════════
+    # Базовая цена маршрута (EMA — скользящее среднее)
+    # ══════════════════════════════════════════════
+
+    async def get_baseline_price(self, origin: str, dest: str) -> Optional[float]:
+        """Возвращает сохранённое EMA-среднее для маршрута origin→dest, или None."""
+        if not self.client:
+            return None
+        raw = await self.client.get(f"{self.prefix}baseline:{origin}:{dest}")
+        if raw is None:
+            return None
+        try:
+            return float(json.loads(raw)["avg"])
+        except Exception:
+            return None
+
+    async def update_baseline_price(
+        self, origin: str, dest: str, new_price: float,
+        alpha: float = 0.3, ttl: int = 86400 * 30,
+    ) -> float:
+        """
+        Обновляет EMA: avg = alpha * new_price + (1-alpha) * old_avg.
+        Первое наблюдение сохраняется as-is. Возвращает актуальное среднее.
+        TTL 30 дней — чтобы стale-данные не накапливались.
+        """
+        if not self.client:
+            return new_price
+        existing = await self.get_baseline_price(origin, dest)
+        avg = new_price if existing is None else alpha * new_price + (1 - alpha) * existing
+        await self.client.set(
+            f"{self.prefix}baseline:{origin}:{dest}",
+            json.dumps({"avg": round(avg, 2)}),
+            ex=ttl,
+        )
+        return avg
+
+    # ══════════════════════════════════════════════
+    # Кулдаун маршрута (не слать одно направление чаще раза в сутки)
+    # ══════════════════════════════════════════════
+
+    async def is_route_on_cooldown(
+        self, sub_id: str, dest: str, cooldown: int = 86400
+    ) -> bool:
+        """True если маршрут уже отправлялся по этой подписке менее cooldown секунд назад."""
+        if not self.client:
+            return False
+        return await self.client.exists(f"{self.prefix}route_cd:{sub_id}:{dest}") > 0
+
+    async def set_route_cooldown(
+        self, sub_id: str, dest: str, cooldown: int = 86400
+    ) -> None:
+        """Помечает маршрут как отправленный. Ключ живёт cooldown секунд и удаляется сам."""
+        if not self.client:
+            return
+        await self.client.set(f"{self.prefix}route_cd:{sub_id}:{dest}", "1", ex=cooldown)
+
 
 # Singleton
 redis_client = RedisClient()
