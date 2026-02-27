@@ -414,7 +414,8 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    await callback.answer("▶️ Продолжаем!")
+    await callback.answer()
+    await callback.message.answer("▶️ <b>Продолжаем!</b>", parse_mode="HTML")
 
     # Каждый шаг воспроизводит нужный вопрос без сброса данных
     if current == FlightSearch.route.state:
@@ -610,7 +611,9 @@ async def process_airport_pick(callback: CallbackQuery, state: FSMContext):
         ap_iata,
     )
     await state.update_data(origin_iata=ap_iata, origin_airports=[ap_iata], origin_airport_label=ap_label)
-    await callback.answer(f"✈️ {ap_label}")
+    # Дублируем выбор пользователя в чат (видно в диалоге)
+    await callback.message.answer(f"✈️ Выбран аэропорт: <b>{ap_label}</b>", parse_mode="HTML")
+    await callback.answer()
     await _after_airport_pick(callback, state)
 
 
@@ -624,7 +627,8 @@ async def process_airport_any(callback: CallbackQuery, state: FSMContext):
         origin_airports=all_iatas,
         origin_airport_label="Любой аэропорт",
     )
-    await callback.answer("🔀 Буду искать по всем аэропортам")
+    await callback.message.answer("🔀 Выбран: <b>Любой аэропорт</b>", parse_mode="HTML")
+    await callback.answer()
     await _after_airport_pick(callback, state)
 
 
@@ -1391,7 +1395,13 @@ async def edit_from_results(callback: CallbackQuery, state: FSMContext):
     cache_id = callback.data.replace("edit_from_results_", "")
     cached   = await redis_client.get_search_cache(cache_id)
     if not cached:
-        await callback.answer("Данные устарели, начните новый поиск", show_alert=True)
+        await callback.answer()
+        await callback.message.answer(
+            "⚠️ Данные поиска устарели. Выполните новый поиск.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")]
+            ]),
+        )
         return
 
     cached.pop("flights", None)
@@ -1439,11 +1449,16 @@ async def handle_watch_price(callback: CallbackQuery):
     cancel_inactivity(callback.message.chat.id)
     parts = callback.data.split("_")
 
+    _stale_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")]
+    ])
+
     if parts[1] == "all":
         cache_id = parts[2]
         data = await redis_client.get_search_cache(cache_id)
         if not data:
-            await callback.answer("Данные устарели", show_alert=True)
+            await callback.answer()
+            await callback.message.answer("⚠️ Данные поиска устарели. Выполните новый поиск.", reply_markup=_stale_kb)
             return
         is_origin_everywhere = data.get("origin_everywhere", False)
         is_dest_everywhere   = data.get("dest_everywhere", False)
@@ -1465,7 +1480,8 @@ async def handle_watch_price(callback: CallbackQuery):
         price    = int(parts[2])
         data     = await redis_client.get_search_cache(cache_id)
         if not data:
-            await callback.answer("Данные устарели", show_alert=True)
+            await callback.answer()
+            await callback.message.answer("⚠️ Данные поиска устарели. Выполните новый поиск.", reply_markup=_stale_kb)
             return
         top  = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
         origin      = top["origin"]
@@ -1492,7 +1508,13 @@ async def handle_set_threshold(callback: CallbackQuery):
 
     data = await redis_client.get_search_cache(cache_id)
     if not data:
-        await callback.answer("Данные устарели", show_alert=True)
+        await callback.answer()
+        await callback.message.answer(
+            "⚠️ Данные поиска устарели. Выполните новый поиск.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")]
+            ]),
+        )
         return
 
     top    = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -1541,7 +1563,8 @@ async def handle_unwatch(callback: CallbackQuery):
     key     = callback.data.split("unwatch_")[1]
     user_id = callback.from_user.id
     if f":{user_id}:" not in key:
-        await callback.answer("❌ Это не ваше отслеживание!", show_alert=True)
+        await callback.answer()
+        await callback.message.answer("❌ Это не ваше отслеживание — отменить его нельзя.")
         return
     await redis_client.remove_watch(user_id, key)
     await callback.message.edit_text(
@@ -1563,9 +1586,14 @@ async def handle_ask_transfer(callback: CallbackQuery):
     user_id = callback.from_user.id
     context = transfer_context.get(user_id)
     if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
+        await callback.answer()
+        await callback.message.answer(
+            "⚠️ Данные о трансфере устарели. Выполните новый поиск билетов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")]
+            ]),
+        )
         return
-    airport_iata = context["airport_iata"]
     airport_name = AIRPORT_NAMES.get(airport_iata, airport_iata)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, покажи варианты", callback_data=f"show_transfer_{user_id}")],
@@ -1600,14 +1628,20 @@ async def handle_show_transfer(callback: CallbackQuery):
     user_id = callback.from_user.id
     if redis_client.client:
         if await redis_client.client.get(f"declined_transfer:{user_id}"):
-            await callback.answer(
-                "Вы недавно отказались от трансферов. Предложения снова появятся через несколько дней.",
-                show_alert=True,
+            await callback.answer()
+            await callback.message.answer(
+                "ℹ️ Вы недавно отказались от трансферов. Предложения снова появятся через несколько дней."
             )
             return
     context = transfer_context.get(user_id)
     if not context:
-        await callback.answer("Данные устарели, пожалуйста, выполните поиск заново", show_alert=True)
+        await callback.answer()
+        await callback.message.answer(
+            "⚠️ Данные о трансфере устарели. Выполните новый поиск билетов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✈️ Новый поиск", callback_data="start_search")]
+            ]),
+        )
         return
 
     await callback.message.edit_text("Ищу варианты трансфера... 🚖")
