@@ -30,6 +30,107 @@ from utils.cities_loader import get_iata, get_city_name
 
 logger = logging.getLogger(__name__)
 router = Router()
+# ════════════════════════════════════════════════════════════════
+# Нечёткий поиск (исправление опечаток)
+# ════════════════════════════════════════════════════════════════
+
+def _levenshtein(a: str, b: str) -> int:
+    if len(a) < len(b):
+        return _levenshtein(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j+1]+1, curr[j]+1, prev[j]+(0 if ca==cb else 1)))
+        prev = curr
+    return prev[-1]
+
+
+_KNOWN_CITIES = [
+    "Москва","Санкт-Петербург","Новосибирск","Екатеринбург","Казань",
+    "Нижний Новгород","Челябинск","Самара","Омск","Ростов-на-Дону",
+    "Уфа","Красноярск","Пермь","Воронеж","Волгоград","Краснодар",
+    "Саратов","Тюмень","Иркутск","Хабаровск","Владивосток","Сочи",
+    "Калининград","Мурманск","Архангельск","Ставрополь","Барнаул",
+    "Симферополь","Чита","Улан-Удэ","Махачкала","Ярославль",
+    "Стамбул","Дубай","Бангкок","Пхукет","Анталья","Барселона",
+    "Рим","Париж","Берлин","Амстердам","Прага","Вена","Варшава",
+    "Будапешт","Пекин","Токио","Сеул","Сингапур","Дели","Бали",
+    "Тбилиси","Ереван","Баку","Алматы","Ташкент","Минск",
+    "Таиланд","Турция","Египет","Мальдивы","Грузия","Армения",
+    "Италия","Испания","Франция","Германия","Греция","Португалия",
+    "Черногория","Сербия","США","Канада","Индия","Китай","Япония",
+]
+
+_COUNTRY_TO_IATA: dict = {
+    "таиланд":    ["BKK","HKT","USM","CNX"],
+    "турция":     ["IST","AYT","ADB","DLM","BJV","SAW"],
+    "египет":     ["HRG","SSH","CAI"],
+    "оаэ":        ["DXB","AUH","SHJ"],
+    "эмираты":    ["DXB","AUH","SHJ"],
+    "индия":      ["DEL","BOM","MAA","CCU"],
+    "китай":      ["PEK","PVG","CAN","CTU"],
+    "япония":     ["NRT","HND","KIX","CTS"],
+    "мальдивы":   ["MLE"],
+    "шри-ланка":  ["CMB"],
+    "шри ланка":  ["CMB"],
+    "грузия":     ["TBS","BUS"],
+    "армения":    ["EVN"],
+    "азербайджан":["GYD"],
+    "казахстан":  ["ALA","NQZ"],
+    "узбекистан": ["TAS","SKD"],
+    "италия":     ["FCO","MXP","VCE","NAP"],
+    "испания":    ["MAD","BCN","AGP","PMI"],
+    "франция":    ["CDG","ORY","LYS","NCE"],
+    "германия":   ["FRA","MUC","BER","DUS"],
+    "греция":     ["ATH","SKG","HER","RHO","CFU"],
+    "португалия": ["LIS","OPO","FAO"],
+    "черногория": ["TGD","TIV"],
+    "сербия":     ["BEG"],
+    "беларусь":   ["MSQ"],
+    "бали":       ["DPS"],
+    "вьетнам":    ["SGN","HAN","DAD"],
+    "сочи":       ["AER"],
+    "камбоджа":   ["REP","PNH"],
+    "малайзия":   ["KUL"],
+    "сингапур":   ["SIN"],
+    "израиль":    ["TLV"],
+    "кипр":       ["LCA","PFO"],
+    "куба":       ["HAV"],
+    "мексика":    ["MEX","CUN"],
+    "доминикана": ["PUJ","SDQ"],
+    "сша":        ["JFK","LAX","ORD","MIA","SFO"],
+    "канада":     ["YYZ","YVR","YUL"],
+}
+
+
+def _fuzzy_suggest(query: str, max_dist: int = 3) -> str | None:
+    q = query.strip().lower()
+    if len(q) < 3:
+        return None
+    best, best_d = None, max_dist + 1
+    for city in _KNOWN_CITIES:
+        d = _levenshtein(q, city.lower())
+        for part in city.lower().split():
+            d = min(d, _levenshtein(q, part))
+        if d < best_d:
+            best_d, best = d, city
+    return best if best_d <= max_dist else None
+
+
+def _country_iata_list(query: str) -> list | None:
+    q = query.strip().lower()
+    if q in _COUNTRY_TO_IATA:
+        return _COUNTRY_TO_IATA[q]
+    best, best_d = None, 2
+    for country in _COUNTRY_TO_IATA:
+        d = _levenshtein(q, country)
+        if d < best_d:
+            best_d, best = d, country
+    return _COUNTRY_TO_IATA[best] if best else None
+
 
 BACK_TO_MAIN = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
@@ -44,6 +145,7 @@ class HotDealsSub(StatesGroup):
     choose_sub_type    = State()
     choose_category    = State()
     choose_dest_preset = State()   # подкатегория назначения (Турция / Египет / ...)
+    choose_custom_dest = State()   # «Свой вариант» — пользователь вводит страну/направление
     choose_origins     = State()   # мультивыбор городов вылета
     choose_months      = State()   # мультивыбор месяцев
     choose_budget      = State()   # ввод бюджета числом
@@ -116,14 +218,14 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
         names = ", ".join(o["name"] for o in origins)
         text = (
             f"<b>Города вылета</b>\n\n"
-            f"Добавлены: <i>{names}</i>\n\n"
-            f"Напишите ещё город или несколько через запятую, либо нажмите «Готово»."
+            f"Добавлены: <b>{names}</b>\n\n"
+            "Напишите ещё город или несколько через запятую.\n"
+            "Или нажмите «Готово»."
         )
     else:
         text = (
             "<b>Из какого города вылетаете?</b>\n\n"
-            "Можно указать один или сразу несколько городов через запятую — "
-            "бот будет следить за ценами из каждого.\n\n"
+            "Можно указать сразу несколько через запятую.\n\n"
             "<i>Примеры:\n"
             "• Москва\n"
             "• Москва, Казань, Екатеринбург</i>"
@@ -170,7 +272,7 @@ async def _ask_months(target, selected: list):
     if row:
         buttons.append(row)
 
-    buttons.append([InlineKeyboardButton(text="Любой месяц", callback_data="hd_month_any_any")])
+    buttons.append([InlineKeyboardButton(text="🗓️ Любой месяц", callback_data="hd_month_any_any")])
     if selected:
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
@@ -218,8 +320,8 @@ async def _ask_passengers(target):
 
 async def _ask_frequency(target):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Раз в день",   callback_data="hd_freq_daily")],
-        [InlineKeyboardButton(text="Раз в неделю", callback_data="hd_freq_weekly")],
+        [InlineKeyboardButton(text="📅 Раз в день",   callback_data="hd_freq_daily")],
+        [InlineKeyboardButton(text="📆 Раз в неделю", callback_data="hd_freq_weekly")],
         [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
     ])
     send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
@@ -262,7 +364,7 @@ async def _show_confirm(target, data: dict):
         freq_map = {"daily": "раз в день", "weekly": "раз в неделю"}
         type_str = f"📰 Дайджест ({freq_map.get(data.get('frequency', 'daily'), 'раз в день')})"
     else:
-        type_str = "Горячие предложения"
+        type_str = "🔥 Горячие предложения"
 
     text = (
         f"✅ <b>Проверьте настройки подписки:</b>\n\n"
@@ -326,8 +428,8 @@ async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
 async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(HotDealsSub.choose_sub_type)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Горячие предложения",           callback_data="hd_type_hot")],
-        [InlineKeyboardButton(text="Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения",           callback_data="hd_type_hot")],
+        [InlineKeyboardButton(text="📰 Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
         [InlineKeyboardButton(text="↩️ Назад",    callback_data="hot_deals_menu")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
@@ -411,21 +513,111 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
     preset_key = callback.data.replace("hd_preset_", "")
 
     if preset_key == "custom":
-        await state.update_data(dest_iata_list=[], dest_preset_name="свой вариант")
-    else:
-        iata_list = preset_key.split("|")
-        # Ищем название пресета
-        data = await state.get_data()
-        cat  = data.get("category", "")
-        preset_name = preset_key
-        for lbl, lst in (CATEGORY_PRESETS.get(cat) or []):
-            if lst and lst == iata_list:
-                preset_name = lbl
-                break
-        await state.update_data(dest_iata_list=iata_list, dest_preset_name=preset_name)
+        # П.3: «Свой вариант» → просим ввести страну/направление
+        await state.update_data(dest_iata_list=[], dest_preset_name="")
+        await state.set_state(HotDealsSub.choose_custom_dest)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_custom_back")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
+        await callback.message.edit_text(
+            "<b>Куда хотите полететь?</b>\n\n"
+            "Введите страну или город назначения.\n\n"
+            "<i>Примеры:\n"
+            "• Таиланд\n"
+            "• Мальдивы\n"
+            "• Грузия\n"
+            "• Барселона</i>",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+
+    iata_list = preset_key.split("|")
+    data = await state.get_data()
+    cat  = data.get("category", "")
+    preset_name = preset_key
+    for lbl, lst in (CATEGORY_PRESETS.get(cat) or []):
+        if lst and lst == iata_list:
+            preset_name = lbl
+            break
+    await state.update_data(dest_iata_list=iata_list, dest_preset_name=preset_name)
 
     await state.set_state(HotDealsSub.choose_origins)
     await _ask_origins(callback.message, state, edit=True)
+    await callback.answer()
+
+
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 3c — «Свой вариант»: ввод страны или города назначения
+# ════════════════════════════════════════════════════════════════
+
+@router.message(HotDealsSub.choose_custom_dest)
+async def hd_custom_dest_text(message: Message, state: FSMContext):
+    """
+    П.1: дублируем выбор в чат.
+    П.2: fuzzy-подсказка при опечатке.
+    """
+    raw = message.text.strip()
+
+    # 1. Это страна/регион?
+    iata_list = _country_iata_list(raw)
+    if iata_list:
+        name = raw.capitalize()
+        await state.update_data(dest_iata_list=iata_list, dest_preset_name=name)
+        await message.answer(f"Направление: <b>{name}</b>", parse_mode="HTML")
+        await state.set_state(HotDealsSub.choose_origins)
+        await _ask_origins(message, state, edit=False)
+        return
+
+    # 2. Конкретный город?
+    iata = get_iata(raw)
+    if iata:
+        name = get_city_name(iata) or raw.capitalize()
+        await state.update_data(dest_iata_list=[iata], dest_preset_name=name)
+        await message.answer(f"Направление: <b>{name}</b>", parse_mode="HTML")
+        await state.set_state(HotDealsSub.choose_origins)
+        await _ask_origins(message, state, edit=False)
+        return
+
+    # 3. П.2: нечёткий поиск
+    suggestion = _fuzzy_suggest(raw)
+    if suggestion:
+        await message.answer(
+            f"❓ «{raw}» не найден — может быть, <b>{suggestion}</b>?\n"
+            f"Введите точнее или попробуйте другое название.",
+            parse_mode="HTML"
+        )
+        return
+
+    # 4. Принимаем как свободный текст
+    name = raw.capitalize()
+    await state.update_data(dest_iata_list=[], dest_preset_name=name)
+    await message.answer(f"Направление: <b>{name}</b>", parse_mode="HTML")
+    await state.set_state(HotDealsSub.choose_origins)
+    await _ask_origins(message, state, edit=False)
+
+
+@router.callback_query(HotDealsSub.choose_custom_dest, F.data == "hd_custom_back")
+async def hd_custom_dest_back(callback: CallbackQuery, state: FSMContext):
+    """Назад — к пресетам направления."""
+    data = await state.get_data()
+    cat  = data.get("category", "")
+    await state.set_state(HotDealsSub.choose_dest_preset)
+    cat_label, _ = CATEGORIES.get(cat, ("—", []))
+    buttons = []
+    for label, iata_list in (CATEGORY_PRESETS.get(cat) or []):
+        cb = "hd_preset_custom" if iata_list is None else f"hd_preset_{'|'.join(iata_list)}"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=cb)])
+    buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data=f"hd_cat_{cat}")])
+    buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+    await callback.message.edit_text(
+        f"<b>{cat_label}</b> — куда именно хотите лететь?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
     await callback.answer()
 
 
@@ -436,41 +628,53 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
 @router.message(HotDealsSub.choose_origins)
 async def hd_origins_text(message: Message, state: FSMContext):
     """
-    Пользователь вводит город(а) вылета.
-    Поддерживает ввод через запятую: "Москва, Казань, Сочи"
+    П.1: явное подтверждение каждого добавленного города сообщением в чат.
+    П.2: fuzzy-подсказка при опечатке.
+    П.4: поддержка нескольких городов через запятую.
     """
-    raw = message.text.strip()
+    raw   = message.text.strip()
     parts = [p.strip() for p in raw.split(",") if p.strip()]
 
     data    = await state.get_data()
     origins = list(data.get("origins", []))
 
     added      = []
-    not_found  = []
     duplicates = []
+    not_found  = []
+    typos      = []  # (введённое, предложение)
 
     for city in parts:
         iata = get_iata(city)
-        if not iata:
-            not_found.append(city)
-            continue
-        name = get_city_name(iata) or city
-        if any(o["iata"] == iata for o in origins):
-            duplicates.append(name)
-            continue
-        origins.append({"iata": iata, "name": name})
-        added.append(name)
+        if iata:
+            name = get_city_name(iata) or city.capitalize()
+            if any(o["iata"] == iata for o in origins):
+                duplicates.append(name)
+            else:
+                origins.append({"iata": iata, "name": name})
+                added.append(name)
+        else:
+            suggestion = _fuzzy_suggest(city)
+            if suggestion:
+                typos.append((city, suggestion))
+            else:
+                not_found.append(city)
 
     await state.update_data(origins=origins)
 
-    # Показываем обратную связь только если есть проблемы
-    msgs = []
-    if not_found:
-        msgs.append(f"❌ Не найдены: {', '.join(not_found)}")
+    # П.1: дублируем результат в чат
+    lines = []
+    if added:
+        lines.append(f"✅ Добавлены: <b>{', '.join(added)}</b>")
     if duplicates:
-        msgs.append(f"Уже добавлены: {', '.join(duplicates)}")
-    if msgs:
-        await message.answer("\n".join(msgs), parse_mode="HTML")
+        lines.append(f"Уже в списке: {', '.join(duplicates)}")
+    if not_found:
+        lines.append(f"❌ Не найдены: {', '.join(not_found)}")
+    for wrong, right in typos:
+        # П.2: подсказка при опечатке
+        lines.append(f"❓ «{wrong}» не найден — может, <b>{right}</b>? Введите точнее.")
+
+    if lines:
+        await message.answer("\n".join(lines), parse_mode="HTML")
 
     await _ask_origins(message, state, edit=False)
 
@@ -480,7 +684,8 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
     data    = await state.get_data()
     origins = data.get("origins", [])
     if not origins:
-        await callback.answer("Добавьте хотя бы один город", show_alert=True)
+        await callback.answer()
+        await callback.message.answer("Добавьте хотя бы один город вылета.")
         return
     await state.set_state(HotDealsSub.choose_months)
     await _ask_months(callback, selected=[])
@@ -494,8 +699,8 @@ async def hd_origin_delete(callback: CallbackQuery, state: FSMContext):
     data    = await state.get_data()
     origins = [o for o in data.get("origins", []) if o["iata"] != iata]
     await state.update_data(origins=origins)
+    await callback.answer()
     await _ask_origins(callback.message, state, edit=True)
-    await callback.answer("Город удалён")
 
 
 @router.callback_query(HotDealsSub.choose_origins, F.data == "hd_origins_back")
