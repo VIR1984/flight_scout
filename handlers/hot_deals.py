@@ -182,20 +182,27 @@ async def _ask_months(target, selected: list):
     await send(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
-async def _ask_budget(target):
-    """Ввод бюджета: текстом + быстрые кнопки."""
+async def _ask_budget(target, state: FSMContext):
+    """Ввод бюджета: только ручной ввод. Показывает выбранные месяцы."""
+    data = await state.get_data()
+    travel_months = data.get("travel_months", [])
+
+    if travel_months:
+        labels = [
+            f"{MONTHS_LABELS.get(k.split('_')[0], k.split('_')[0])} {k.split('_')[1]}"
+            for k in travel_months
+        ]
+        month_line = f"📅 Выбранные месяцы: <b>{', '.join(labels)}</b>\n\n"
+    else:
+        month_line = ""
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="5 000 ₽",          callback_data="hd_budget_5000"),
-         InlineKeyboardButton(text="10 000 ₽",         callback_data="hd_budget_10000")],
-        [InlineKeyboardButton(text="15 000 ₽",         callback_data="hd_budget_15000"),
-         InlineKeyboardButton(text="20 000 ₽",         callback_data="hd_budget_20000")],
-        [InlineKeyboardButton(text="30 000 ₽",         callback_data="hd_budget_30000"),
-         InlineKeyboardButton(text="Без ограничений",  callback_data="hd_budget_0")],
-        [InlineKeyboardButton(text="↩️ В начало",      callback_data="main_menu")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     text = (
+        f"{month_line}"
         "Укажите <b>максимальную цену на человека</b> (в рублях).\n\n"
-        "Напишите сумму числом в ответном сообщении или выберите вариант ниже.\n"
+        "Напишите сумму числом — или отправьте <b>0</b> для поиска без ограничений.\n"
         "<i>Пример: 12000</i>"
     )
     send = target.answer if isinstance(target, Message) else target.message.edit_text
@@ -621,7 +628,7 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
     if month_val == "any":
         await state.update_data(travel_months=[], travel_month=None, travel_year=None)
         await state.set_state(HotDealsSub.choose_budget)
-        await _ask_budget(callback)
+        await _ask_budget(callback, state)
         await callback.answer()
         return
 
@@ -648,22 +655,13 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
     first = selected[0].split("_")
     await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
     await state.set_state(HotDealsSub.choose_budget)
-    await _ask_budget(callback)
+    await _ask_budget(callback, state)
     await callback.answer()
 
 
 # ════════════════════════════════════════════════════════════════
 # ШАГ 5 — бюджет
 # ════════════════════════════════════════════════════════════════
-
-@router.callback_query(F.data.startswith("hd_budget_"))
-async def hd_step5_budget_btn(callback: CallbackQuery, state: FSMContext):
-    budget = int(callback.data.replace("hd_budget_", ""))
-    await state.update_data(max_price=budget)
-    await state.set_state(HotDealsSub.choose_passengers)
-    await _ask_passengers(callback)
-    await callback.answer()
-
 
 @router.message(HotDealsSub.choose_budget)
 async def hd_step5_budget_text(message: Message, state: FSMContext):
