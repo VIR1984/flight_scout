@@ -29,10 +29,7 @@ from services.flight_search import (
     update_passengers_in_link,
     format_passenger_desc,
 )
-from utils.cities_loader import (
-    get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name,
-    get_iata_fuzzy, fuzzy_search_city, format_fuzzy_suggestion,
-)
+from utils.cities_loader import get_iata, get_city_name, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
 from utils.redis_client import redis_client
 from utils.link_converter import convert_to_partner_link
 from handlers.everywhere_search import (
@@ -73,25 +70,6 @@ def _resolve_city(city_str: str) -> tuple[str | None, str | None]:
         name = get_city_name(iata) or IATA_TO_CITY.get(iata, c.capitalize())
         return iata, name
     return None, None
-
-
-def _resolve_city_fuzzy(city_str: str) -> tuple[str | None, str | None, float]:
-    """
-    Расширенная версия _resolve_city с нечётким поиском.
-
-    Returns:
-        (iata, display_name, score)
-        score == 1.0  → точное совпадение, можно использовать сразу
-        0 < score < 1 → нечёткое, нужно подтверждение пользователя
-        score == 0.0  → не найдено совсем
-    """
-    iata, name = _resolve_city(city_str)
-    if iata:
-        return iata, name, 1.0
-
-    # Точный не найден — пробуем нечёткий
-    fuzzy_iata, fuzzy_name, score = get_iata_fuzzy(city_str)
-    return fuzzy_iata, fuzzy_name, score
 
 
 def parse_passengers(s: str) -> str:
@@ -331,44 +309,15 @@ async def handle_flight_request(message: Message) -> None:
         return
 
     # ── Резолв городов ────────────────────────────────────────────
-    dest_iata, dest_name, dest_score = _resolve_city_fuzzy(dest_city)
+    dest_iata, dest_name = _resolve_city(dest_city)
     if not dest_iata:
+        # Тихо игнорируем — не мусорим в чат
         logger.debug(f"[QuickSearch] Не найден город прилёта: '{dest_city}'")
-        await message.answer(
-            f"❌ Не удалось найти город *{dest_city}*\\.\n"
-            f"Проверьте написание или введите IATA\\-код \\(например, AER, DXB\\)\\.",
-            parse_mode="MarkdownV2",
-            reply_markup=CANCEL_KB,
-        )
-        return
-    if dest_score < 1.0:
-        logger.debug(f"[QuickSearch] Нечёткое совпадение для '{dest_city}': {dest_name} ({dest_iata}, {dest_score:.0%})")
-        suggestion = format_fuzzy_suggestion(dest_city, dest_name, dest_iata, dest_score)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=f"✅ Да, {dest_name}", callback_data=f"fuzzy_confirm:{dest_iata}"),
-            InlineKeyboardButton(text="❌ Нет, другой", callback_data="fuzzy_cancel"),
-        ]])
-        await message.answer(suggestion, parse_mode="Markdown", reply_markup=kb)
         return
 
-    orig_iata, origin_name, orig_score = _resolve_city_fuzzy(origin_city)
+    orig_iata, origin_name = _resolve_city(origin_city)
     if not orig_iata:
         logger.debug(f"[QuickSearch] Не найден город вылета: '{origin_city}'")
-        await message.answer(
-            f"❌ Не удалось найти город *{origin_city}*\\.\n"
-            f"Проверьте написание или введите IATA\\-код \\(например, MOW, LED\\)\\.",
-            parse_mode="MarkdownV2",
-            reply_markup=CANCEL_KB,
-        )
-        return
-    if orig_score < 1.0:
-        logger.debug(f"[QuickSearch] Нечёткое совпадение для '{origin_city}': {origin_name} ({orig_iata}, {orig_score:.0%})")
-        suggestion = format_fuzzy_suggestion(origin_city, origin_name, orig_iata, orig_score)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=f"✅ Да, {origin_name}", callback_data=f"fuzzy_confirm:{orig_iata}"),
-            InlineKeyboardButton(text="❌ Нет, другой", callback_data="fuzzy_cancel"),
-        ]])
-        await message.answer(suggestion, parse_mode="Markdown", reply_markup=kb)
         return
 
     # Если metro (MOW) → ищем по всем аэропортам

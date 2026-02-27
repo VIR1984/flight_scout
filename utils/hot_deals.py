@@ -115,15 +115,18 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
     if origins:
         names = ", ".join(o["name"] for o in origins)
         text = (
-            f"Добавьте <b>города вылета</b>. Можно добавить несколько.\n\n"
-            f"<i>Добавлено: {names}</i>\n\n"
-            f"Напишите ещё один город или нажмите «Готово»."
+            f"<b>Города вылета</b>\n\n"
+            f"Добавлены: <i>{names}</i>\n\n"
+            f"Напишите ещё город или несколько через запятую, либо нажмите «Готово»."
         )
     else:
         text = (
-            "Введите <b>город вылета</b>.\n"
-            "Можно добавить несколько городов — бот будет следить за ценами из каждого.\n\n"
-            "<i>Пример: Москва</i>"
+            "<b>Из какого города вылетаете?</b>\n\n"
+            "Можно указать один или сразу несколько городов через запятую — "
+            "бот будет следить за ценами из каждого.\n\n"
+            "<i>Примеры:\n"
+            "• Москва\n"
+            "• Москва, Казань, Екатеринбург</i>"
         )
 
     buttons = []
@@ -167,7 +170,7 @@ async def _ask_months(target, selected: list):
     if row:
         buttons.append(row)
 
-    buttons.append([InlineKeyboardButton(text="🗓️ Любой месяц", callback_data="hd_month_any_any")])
+    buttons.append([InlineKeyboardButton(text="Любой месяц", callback_data="hd_month_any_any")])
     if selected:
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
@@ -215,8 +218,8 @@ async def _ask_passengers(target):
 
 async def _ask_frequency(target):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📅 Раз в день",   callback_data="hd_freq_daily")],
-        [InlineKeyboardButton(text="📆 Раз в неделю", callback_data="hd_freq_weekly")],
+        [InlineKeyboardButton(text="Раз в день",   callback_data="hd_freq_daily")],
+        [InlineKeyboardButton(text="Раз в неделю", callback_data="hd_freq_weekly")],
         [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
     ])
     send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
@@ -259,7 +262,7 @@ async def _show_confirm(target, data: dict):
         freq_map = {"daily": "раз в день", "weekly": "раз в неделю"}
         type_str = f"📰 Дайджест ({freq_map.get(data.get('frequency', 'daily'), 'раз в день')})"
     else:
-        type_str = "🔥 Горячие предложения"
+        type_str = "Горячие предложения"
 
     text = (
         f"✅ <b>Проверьте настройки подписки:</b>\n\n"
@@ -323,8 +326,8 @@ async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
 async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(HotDealsSub.choose_sub_type)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 Горячие предложения",           callback_data="hd_type_hot")],
-        [InlineKeyboardButton(text="📰 Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
+        [InlineKeyboardButton(text="Горячие предложения",           callback_data="hd_type_hot")],
+        [InlineKeyboardButton(text="Дайджест (раз в день / неделю)", callback_data="hd_type_digest")],
         [InlineKeyboardButton(text="↩️ Назад",    callback_data="hot_deals_menu")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
@@ -432,35 +435,43 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.message(HotDealsSub.choose_origins)
 async def hd_origins_text(message: Message, state: FSMContext):
-    """Пользователь вводит город вылета текстом — добавляем в список."""
-    city = message.text.strip()
-    iata = get_iata(city)
+    """
+    Пользователь вводит город(а) вылета.
+    Поддерживает ввод через запятую: "Москва, Казань, Сочи"
+    """
+    raw = message.text.strip()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
 
-    if not iata:
-        await message.answer(
-            f"❌ Город «{city}» не найден.\n<i>Попробуйте: Москва, Екатеринбург, Казань</i>",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
-
-    name = get_city_name(iata) or city
     data    = await state.get_data()
-    origins = data.get("origins", [])
+    origins = list(data.get("origins", []))
 
-    # Не добавляем дубли
-    if any(o["iata"] == iata for o in origins):
-        await message.answer(
-            f"Город <b>{name}</b> уже добавлен. Добавьте другой или нажмите «Готово».",
-            parse_mode="HTML",
-            reply_markup=BACK_TO_MAIN
-        )
-        return
+    added      = []
+    not_found  = []
+    duplicates = []
 
-    origins.append({"iata": iata, "name": name})
+    for city in parts:
+        iata = get_iata(city)
+        if not iata:
+            not_found.append(city)
+            continue
+        name = get_city_name(iata) or city
+        if any(o["iata"] == iata for o in origins):
+            duplicates.append(name)
+            continue
+        origins.append({"iata": iata, "name": name})
+        added.append(name)
+
     await state.update_data(origins=origins)
 
-    # Обновляем отображение
+    # Показываем обратную связь только если есть проблемы
+    msgs = []
+    if not_found:
+        msgs.append(f"❌ Не найдены: {', '.join(not_found)}")
+    if duplicates:
+        msgs.append(f"Уже добавлены: {', '.join(duplicates)}")
+    if msgs:
+        await message.answer("\n".join(msgs), parse_mode="HTML")
+
     await _ask_origins(message, state, edit=False)
 
 
