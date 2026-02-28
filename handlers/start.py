@@ -681,7 +681,8 @@ async def process_airport_pick(callback: CallbackQuery, state: FSMContext):
         ap_iata,
     )
     await state.update_data(origin_iata=ap_iata, origin_airports=[ap_iata], origin_airport_label=ap_label)
-    await callback.answer(f"✈️ {ap_label}")
+    await callback.answer()
+    await callback.message.answer(ap_label)  # дублируем выбор пользователя в чат
     await _after_airport_pick(callback, state)
 
 
@@ -695,7 +696,8 @@ async def process_airport_any(callback: CallbackQuery, state: FSMContext):
         origin_airports=all_iatas,
         origin_airport_label="Любой аэропорт",
     )
-    await callback.answer("🔀 Буду искать по всем аэропортам")
+    await callback.answer()
+    await callback.message.answer("Любой аэропорт")  # дублируем выбор пользователя в чат
     await _after_airport_pick(callback, state)
 
 

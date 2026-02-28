@@ -96,7 +96,7 @@ async def _inactivity_reminder(chat_id: int, user_id: int,
         ])
         await bot.send_message(
             chat_id,
-            "👋 Ещё ищете билеты? Продолжим — форма сохранена!",
+            "👋 Ещё ищете билеты? Продолжим?",
             reply_markup=kb1,
         )
         logger.info(f"[SmartReminder] Напоминание #1 → chat_id={chat_id}")
