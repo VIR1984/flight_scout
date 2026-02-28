@@ -264,13 +264,7 @@ def _format_duration(minutes: int) -> str:
 # /start и главное меню
 # ════════════════════════════════════════════════════════════════
 
-# Inline-подсказка под приветствием — только при первом входе.
-# Дальше пользователь пользуется нижней панелью NAV_KB.
-def _welcome_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Найти билеты",        callback_data="start_search")],
-        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
-    ])
+# Inline-кнопок при старте нет — пользователь использует нижнюю панель NAV_KB
 
 MAIN_MENU_TEXT = (
     "👋 Привет! Я помогу найти дешёвые авиабилеты.\n\n"
@@ -282,8 +276,6 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     # NAV_KB отправляется один раз и остаётся как постоянная нижняя панель
     await message.answer(MAIN_MENU_TEXT, parse_mode="HTML", reply_markup=NAV_KB)
-    # Inline-подсказка поверх для наглядности при первом запуске
-    await message.answer("С чего начнём?", reply_markup=_welcome_kb())
 
 
 @router.callback_query(F.data == "main_menu")
@@ -295,12 +287,10 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             "Выберите раздел в нижней панели навигации.",
-            reply_markup=_welcome_kb(),
         )
     except Exception:
         await callback.message.answer(
             "Выберите раздел в нижней панели навигации.",
-            reply_markup=_welcome_kb(),
         )
     await callback.answer()
 

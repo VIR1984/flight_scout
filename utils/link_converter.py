@@ -7,7 +7,7 @@ from utils.logger import logger
 async def convert_to_partner_link(clean_link: str) -> str:
     """
     Единая точка преобразования ссылок через Travelpayouts API (links/v1/create).
-    Возвращает партнёрскую ссылку вида https://tp.media/r?... или исходную при ошибке.
+    Возвращает короткую партнёрскую ссылку вида aviasales.tp.st/xxxxx или исходную при ошибке.
     """
     # === 1. ОЧИСТКА ССЫЛКИ ===
     parsed = urlparse(clean_link)
@@ -38,10 +38,10 @@ async def convert_to_partner_link(clean_link: str) -> str:
     payload = {
         "trs": trs,          # ← Project ID (обязательно!)
         "marker": marker,    # ← Partner ID (число!)
-        "shorten": False,    # ← False для полной ссылки с campaign_id
+        "shorten": True,     # ← Короткая ссылка вида aviasales.tp.st/xxxxx
         "links": [{          # ← Массив объектов (обязательно!)
             "url": clean_link,
-            "sub_id": sub_id  # ← Обратите внимание: sub_id (с подчёркиванием!)
+            "sub_id": sub_id  # ← sub_id для статистики
         }]
     }
     
@@ -69,7 +69,7 @@ async def convert_to_partner_link(clean_link: str) -> str:
                         link_result = data["result"]["links"][0]
                         if link_result.get("code") == "success":
                             partner_url = link_result.get("partner_url")
-                            if partner_url and partner_url.startswith("https://tp.media"):
+                            if partner_url and partner_url.startswith("https://"):
                                 logger.info(f"✅ Partner URL: {partner_url[:70]}...")
                                 return partner_url
                             logger.error(f"❌ Ответ без валидной ссылки: {link_result}")
