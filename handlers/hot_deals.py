@@ -692,23 +692,12 @@ async def hd_save(callback: CallbackQuery, state: FSMContext):
 # Список подписок
 # ════════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data == "hd_my_subs")
-async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    subs    = await redis_client.get_hot_subs(user_id)
-
-    if not subs:
-        await callback.message.edit_text(
-            "У вас нет активных подписок.\nНажмите «⚙️ Настроить», чтобы создать первую!",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")],
-                [InlineKeyboardButton(text="↩️ Назад",      callback_data="hot_deals_menu")],
-                [InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")],
-            ])
-        )
-        await callback.answer()
-        return
-
+async def hd_my_subs_text_kb(user_id: int, subs: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """
+    Вспомогательная функция: строит текст и клавиатуру списка подписок.
+    Используется как из callback-хендлера hd_my_subs,
+    так и из nav_subs в start.py (нажатие кнопки нижней панели).
+    """
     blocks  = []
     buttons = []
 
@@ -717,11 +706,9 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
         is_hot   = sub.get("sub_type") == "hot"
         sub_icon = "🔥" if is_hot else "📰"
 
-        # Бюджет
         max_price = sub.get("max_price")
         price_str = f"до {max_price:,} ₽".replace(",", "\u202f") if max_price else "без ограничений"
 
-        # Пассажиры
         pax = sub.get("passengers", 1)
         if pax == 1:
             pax_str = "1 пассажир"
@@ -730,7 +717,6 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
         else:
             pax_str = f"{pax} пассажиров"
 
-        # Города вылета
         origins = sub.get("origins", [])
         origin_str = (
             ", ".join(o["name"] for o in origins)
@@ -738,10 +724,8 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
             else sub.get("origin_name", sub.get("origin_iata", "?"))
         )
 
-        # Направление
         dest_str = sub.get("dest_preset_name") or cat_label
 
-        # Месяцы
         travel_months = sub.get("travel_months", [])
         if travel_months:
             month_str = ", ".join(
@@ -755,7 +739,6 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
         else:
             month_str = "любой период"
 
-        # Частота дайджеста
         freq_map  = {"daily": "📆 ежедневно", "weekly": "📆 раз в неделю"}
         freq_line = f"\n{freq_map[sub['frequency']]}" if not is_hot and sub.get("frequency") else ""
 
@@ -777,13 +760,29 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext):
     )
 
     buttons.append([InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")])
-    buttons.append([InlineKeyboardButton(text="↩️ Назад",      callback_data="hot_deals_menu")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")])
 
-    await callback.message.edit_text(
-        text, parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-    )
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@router.callback_query(F.data == "hd_my_subs")
+async def hd_my_subs(callback: CallbackQuery, state: FSMContext = None):
+    user_id = callback.from_user.id
+    subs    = await redis_client.get_hot_subs(user_id)
+
+    if not subs:
+        await callback.message.edit_text(
+            "У вас нет активных подписок.\nНажмите «⚙️ Настроить», чтобы создать первую!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")],
+                [InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")],
+            ])
+        )
+        await callback.answer()
+        return
+
+    text, kb = await hd_my_subs_text_kb(user_id, subs)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
