@@ -12,6 +12,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -40,7 +43,7 @@ from utils.smart_reminder import (
 from handlers.quick_search import handle_flight_request
 from handlers.flight_constants import (
     CANCEL_KB,
-    MAIN_MENU_KB,
+    NAV_KB,
     MULTI_AIRPORT_CITIES,
     AIRPORT_TO_METRO,
     AIRPORT_NAMES,
@@ -104,7 +107,6 @@ def _airport_keyboard(metro_iata: str, city_name: str) -> InlineKeyboardMarkup:
         for ap_iata, ap_label in MULTI_AIRPORT_CITIES.get(metro_iata, [])
     ]
     rows.append([InlineKeyboardButton(text="Любой аэропорт", callback_data=f"ap_any_{metro_iata}")])
-    rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -258,26 +260,30 @@ def _format_duration(minutes: int) -> str:
     if minutes %  60: parts.append(f"{minutes % 60}м")
     return " ".join(parts) or "—"
 
-
 # ════════════════════════════════════════════════════════════════
 # /start и главное меню
 # ════════════════════════════════════════════════════════════════
 
-def _main_menu_kb() -> InlineKeyboardMarkup:
-    """Главное меню — строим динамически, чтобы кнопки были всегда актуальны."""
+# Inline-подсказка под приветствием — только при первом входе.
+# Дальше пользователь пользуется нижней панелью NAV_KB.
+def _welcome_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Найти билеты",          callback_data="start_search")],
-        [InlineKeyboardButton(text="🔥 Горячие предложения",   callback_data="hot_deals_menu")],
-        [InlineKeyboardButton(text="📋 Мои подписки",          callback_data="my_subscriptions")],
-        [InlineKeyboardButton(text="❓ Справка",               callback_data="help_info")],
+        [InlineKeyboardButton(text="✈️ Найти билеты",        callback_data="start_search")],
+        [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
     ])
 
-MAIN_MENU_TEXT = "👋 Привет! Я помогу найти дешёвые авиабилеты."
+MAIN_MENU_TEXT = (
+    "👋 Привет! Я помогу найти дешёвые авиабилеты.\n\n"
+    "Используйте кнопки <b>внизу экрана</b> для навигации."
+)
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
+    # NAV_KB отправляется один раз и остаётся как постоянная нижняя панель
+    await message.answer(MAIN_MENU_TEXT, parse_mode="HTML", reply_markup=NAV_KB)
+    # Inline-подсказка поверх для наглядности при первом запуске
+    await message.answer("С чего начнём?", reply_markup=_welcome_kb())
 
 
 @router.callback_query(F.data == "main_menu")
@@ -287,38 +293,113 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext):
     if state:
         await state.clear()
     try:
-        await callback.message.edit_text(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
+        await callback.message.edit_text(
+            "Выберите раздел в нижней панели навигации.",
+            reply_markup=_welcome_kb(),
+        )
     except Exception:
-        await callback.message.answer(MAIN_MENU_TEXT, reply_markup=_main_menu_kb())
+        await callback.message.answer(
+            "Выберите раздел в нижней панели навигации.",
+            reply_markup=_welcome_kb(),
+        )
     await callback.answer()
 
 
 # ════════════════════════════════════════════════════════════════
-# П.6 — Справка
+# Обработчики кнопок нижней панели (ReplyKeyboard)
+# ════════════════════════════════════════════════════════════════
+
+@router.message(F.text == "✈️ Поиск")
+async def nav_search(message: Message, state: FSMContext):
+    """Нижняя панель → Поиск."""
+    current = await state.get_state()
+    if current and not current.startswith("FlyStackTrack"):
+        await state.clear()
+    cancel_inactivity(message.chat.id)
+    await message.answer(
+        "Начнём поиск билетов 👌\n\n"
+        "<b>Напишите маршрут:</b> Город отправления — Город прибытия\n\n"
+        "<i>Пример: Москва — Сочи</i>\n\n"
+        "Если ещё не решили откуда или куда — напишите «Везде».",
+        parse_mode="HTML",
+        reply_markup=CANCEL_KB,
+    )
+    await state.set_state(FlightSearch.route)
+    schedule_inactivity(message.chat.id, message.from_user.id)
+
+
+@router.message(F.text == "🔥 Горячие")
+async def nav_hot(message: Message, state: FSMContext):
+    """Нижняя панель → Горячие предложения."""
+    cancel_inactivity(message.chat.id)
+    await state.clear()
+    user_id = message.from_user.id
+    subs = await redis_client.get_hot_subs(user_id)
+    text = (
+        "🔥 <b>Горячие предложения</b>\n\n"
+        "Укажите направления и бюджет — бот сам следит за ценами "
+        "и пришлёт уведомление, когда появятся выгодные билеты."
+    )
+    buttons = [[InlineKeyboardButton(text="⚙️ Настроить подписку", callback_data="hd_new_sub")]]
+    if subs:
+        buttons.append([InlineKeyboardButton(
+            text=f"📋 Мои подписки ({len(subs)})", callback_data="hd_my_subs"
+        )])
+    await message.answer(text, parse_mode="HTML",
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@router.message(F.text == "📋 Подписки")
+async def nav_subs(message: Message, state: FSMContext):
+    """Нижняя панель → Подписки."""
+    cancel_inactivity(message.chat.id)
+    user_id = message.from_user.id
+    subs = await redis_client.get_hot_subs(user_id)
+    if not subs:
+        await message.answer(
+            "📋 <b>Мои подписки</b>\n\nАктивных подписок нет.\n"
+            "Хотите настроить уведомления о горячих ценах?",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔥 Создать подписку", callback_data="hd_new_sub")]
+            ]),
+        )
+    else:
+        from handlers.hot_deals import hd_my_subs_text_kb
+        text, kb = await hd_my_subs_text_kb(user_id, subs)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.message(F.text == "❓ Помощь")
+async def nav_help(message: Message, state: FSMContext):
+    """Нижняя панель → Помощь."""
+    text = (
+        "❓ <b>Как пользоваться</b>\n\n"
+        "✈️ <b>Поиск</b> — маршрут, даты, пассажиры → лучшие цены.\n\n"
+        "🔥 <b>Горячие</b> — подпишитесь на направления, "
+        "и я напишу когда цена упадёт на 10%+.\n\n"
+        "📋 <b>Подписки</b> — просмотр и управление активными подписками.\n\n"
+        "<i>Нажмите «✈️ Поиск» чтобы начать.</i>"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+
+# ════════════════════════════════════════════════════════════════
+# П.6 — Справка (callback, для обратной совместимости)
 # ════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data == "help_info")
 async def handle_help(callback: CallbackQuery):
     text = (
-        "<b>Что умеет этот бот?</b>\n\n"
-        "✈️ <b>Поиск билетов</b> — укажите маршрут, даты и количество пассажиров, "
-        "я найду самый дешёвый вариант и дам ссылку на бронирование.\n\n"
-        "🔥 <b>Горячие предложения</b> — подпишитесь на направления и я сообщу, "
-        "когда цена упадёт ниже вашего бюджета.\n\n"
-        "📊 <b>Дайджест</b> — ежедневная или еженедельная подборка лучших цен "
-        "на выбранные направления.\n\n"
-        "🔍 <b>Быстрый поиск</b> — напишите маршрут прямо в чат: "
-        "<code>Москва Сочи 10.03</code> или <code>SVO AER 15.04</code>.\n\n"
-        "─────────────────────\n"
-        "🔒 <b>О конфиденциальности</b>\n\n"
-        "Бот не собирает и не хранит личные данные. "
-        "Маршруты и даты используются исключительно для поиска билетов в момент запроса "
-        "и не передаются третьим лицам. "
-        "Настройки подписок хранятся анонимно и могут быть удалены в любой момент."
+        "❓ <b>Как пользоваться</b>\n\n"
+        "✈️ <b>Поиск билетов</b> — маршрут, даты, пассажиры → лучшие цены.\n\n"
+        "🔥 <b>Горячие предложения</b> — подпишитесь, "
+        "и я напишу когда цена упадёт на 10%+.\n\n"
+        "📋 <b>Подписки</b> — просмотр и управление.\n\n"
+        "📉 <b>Следить за ценой</b> — уведомление при изменении цены на маршруте."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Найти билеты",       callback_data="start_search")],
-        [InlineKeyboardButton(text="↩️ В начало",           callback_data="main_menu")],
+        [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
     ])
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -328,48 +409,30 @@ async def handle_help(callback: CallbackQuery):
 
 
 # ════════════════════════════════════════════════════════════════
-# П.7 — Мои подписки (из главного меню)
+# П.7 — Мои подписки (из callback, для обратной совместимости)
 # ════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data == "my_subscriptions")
 async def handle_my_subscriptions(callback: CallbackQuery, state: FSMContext):
-    """
-    Кнопка "Мои подписки" из главного меню.
-    Если подписок нет — предлагает создать с объяснением.
-    Если есть — сразу открывает список (делегирует в hd_my_subs).
-    """
     user_id = callback.from_user.id
     subs = await redis_client.get_hot_subs(user_id)
-
     if not subs:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔥 Создать первую подписку", callback_data="hd_new_sub")],
-            [InlineKeyboardButton(text="↩️ В начало",                callback_data="main_menu")],
+            [InlineKeyboardButton(text="🔥 Создать подписку", callback_data="hd_new_sub")],
         ])
         try:
             await callback.message.edit_text(
-                "📋 <b>Мои подписки</b>\n\n"
-                "У вас пока нет активных подписок.\n\n"
-                "Подписка на горячие предложения — это удобно:\n"
-                "• Вы указываете направления и бюджет\n"
-                "• Бот сам следит за ценами 24/7\n"
-                "• Присылает уведомление, как только цена упадёт\n\n"
-                "Создать первую подписку?",
-                parse_mode="HTML",
-                reply_markup=kb,
+                "📋 <b>Мои подписки</b>\n\nАктивных подписок нет.\n"
+                "Хотите настроить уведомления о горячих ценах?",
+                parse_mode="HTML", reply_markup=kb,
             )
         except Exception:
             await callback.message.answer(
-                "📋 <b>Мои подписки</b>\n\n"
-                "У вас пока нет активных подписок.\n\n"
-                "Хотите создать первую?",
-                parse_mode="HTML",
-                reply_markup=kb,
+                "📋 <b>Мои подписки</b>\n\nАктивных подписок нет.",
+                parse_mode="HTML", reply_markup=kb,
             )
         await callback.answer()
         return
-
-    # Есть подписки — открываем список напрямую через импорт хендлера
     from handlers.hot_deals import hd_my_subs
     await hd_my_subs(callback, state)
 
@@ -446,9 +509,8 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
 
     elif current == FlightSearch.need_return.state:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, нужен",   callback_data="return_yes"),
+            [InlineKeyboardButton(text="✅ Да, нужен",    callback_data="return_yes"),
              InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="return_no")],
-            [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
         ])
         await callback.message.answer("Нужен ли обратный билет?", reply_markup=kb)
 
@@ -469,7 +531,7 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
         await show_summary(callback.message, state)
 
     else:
-        await callback.message.answer("Начнём заново:", reply_markup=MAIN_MENU_KB)
+        await callback.message.answer("Используйте кнопки внизу экрана.")
         return
 
     schedule_inactivity(callback.message.chat.id, callback.from_user.id)
@@ -701,9 +763,8 @@ async def process_depart_date(message: Message, state: FSMContext):
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, нужен",   callback_data="return_yes"),
+        [InlineKeyboardButton(text="✅ Да, нужен",    callback_data="return_yes"),
          InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="return_no")],
-        [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
     ])
     await message.answer("Нужен ли обратный билет?", reply_markup=kb)
     await state.set_state(FlightSearch.need_return)
@@ -736,7 +797,7 @@ async def need_return_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
+    await message.answer("Используйте кнопки навигации внизу.")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -780,10 +841,9 @@ async def process_return_date(message: Message, state: FSMContext):
 
 async def ask_flight_type(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Прямые",         callback_data="ft_direct"),
-         InlineKeyboardButton(text="🔀 С пересадкой",   callback_data="ft_transfer")],
-        [InlineKeyboardButton(text="🔍 Все варианты",   callback_data="ft_all")],
-        [InlineKeyboardButton(text="↩️ В начало",       callback_data="main_menu")],
+        [InlineKeyboardButton(text="✈️ Прямые",       callback_data="ft_direct"),
+         InlineKeyboardButton(text="🔀 С пересадкой", callback_data="ft_transfer")],
+        [InlineKeyboardButton(text="🔍 Все варианты", callback_data="ft_all")],
     ])
     await message.answer("Какие рейсы показывать?", reply_markup=kb)
     await state.set_state(FlightSearch.flight_type)
@@ -808,7 +868,7 @@ async def flight_type_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
+    await message.answer("Используйте кнопки навигации внизу.")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -819,8 +879,7 @@ async def ask_adults(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=str(i), callback_data=f"adults_{i}") for i in range(1, 5)],
         [InlineKeyboardButton(text=str(i), callback_data=f"adults_{i}") for i in range(5, 9)],
-        [InlineKeyboardButton(text="9",           callback_data="adults_9"),
-         InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        [InlineKeyboardButton(text="9",    callback_data="adults_9")],
     ])
     await message.answer("Сколько взрослых пассажиров (от 12 лет)?", reply_markup=kb)
     await state.set_state(FlightSearch.adults)
@@ -844,14 +903,13 @@ async def adults_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
+    await message.answer("Используйте кнопки навигации внизу.")
 
 
 async def ask_has_children(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👶 Да",           callback_data="hc_yes"),
-         InlineKeyboardButton(text="✅ Нет",           callback_data="hc_no")],
-        [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
+        [InlineKeyboardButton(text="👶 Да", callback_data="hc_yes"),
+         InlineKeyboardButton(text="✅ Нет", callback_data="hc_no")],
     ])
     await message.answer("С вами летят дети?", reply_markup=kb)
     await state.set_state(FlightSearch.has_children)
@@ -876,7 +934,7 @@ async def has_children_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
+    await message.answer("Используйте кнопки навигации внизу.")
 
 
 async def ask_children(message: Message, state: FSMContext):
@@ -884,10 +942,8 @@ async def ask_children(message: Message, state: FSMContext):
     adults = data["adults"]
     max_ch = 9 - adults
     nums = list(range(0, max_ch + 1))
-    # Разбиваем по 5 кнопок в ряд
     rows = [[InlineKeyboardButton(text=str(n), callback_data=f"ch_{n}") for n in nums[i:i+5]]
             for i in range(0, len(nums), 5)]
-    rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer(
         "Сколько детей (от 2 до 11 лет)?\nЕсли у вас младенцы, укажете дальше.",
@@ -921,7 +977,7 @@ async def children_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
+    await message.answer("Используйте кнопки навигации внизу.")
 
 
 async def ask_infants(message: Message, state: FSMContext):
@@ -932,7 +988,6 @@ async def ask_infants(message: Message, state: FSMContext):
     nums = list(range(0, max_inf + 1))
     rows = [[InlineKeyboardButton(text=str(n), callback_data=f"inf_{n}") for n in nums[i:i+5]]
             for i in range(0, len(nums), 5)]
-    rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer("Сколько младенцев? (младше 2 лет без места)", reply_markup=kb)
     await state.set_state(FlightSearch.infants)
@@ -958,7 +1013,7 @@ async def infants_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Выберите действие:", reply_markup=MAIN_MENU_KB)
+    await message.answer("Используйте кнопки навигации внизу.")
 
 
 # ════════════════════════════════════════════════════════════════

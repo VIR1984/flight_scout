@@ -1,27 +1,39 @@
 # handlers/flight_constants.py
 """
 Общие константы для обработчиков полётов.
-Вынесены сюда чтобы:
-  - не дублировать между start.py и quick_search.py
-  - избежать циклических импортов
 """
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton,
+)
 
-# ── Клавиатуры ────────────────────────────────────────────────────────────────
+# ── Нижняя панель навигации (ReplyKeyboard, persistent) ───────────────────────
+#
+# Отправляется один раз при /start и остаётся у пользователя навсегда.
+# Работает как таб-бар мобильного приложения — доступна на любом шаге.
+#
+NAV_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="✈️ Поиск"),    KeyboardButton(text="🔥 Горячие")],
+        [KeyboardButton(text="📋 Подписки"), KeyboardButton(text="❓ Помощь")],
+    ],
+    resize_keyboard=True,   # компактная, не занимает пол-экрана
+    is_persistent=True,     # не скрывается после нажатия (Telegram 6.9+)
+)
 
+# ── Inline-кнопка отмены внутри FSM-шагов ────────────────────────────────────
+#
+# Показывается под каждым вопросом визарда как страховка —
+# но поскольку NAV_KB всегда видна, пользователь может просто нажать
+# любую кнопку навигации и тоже выйти.
+#
 CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
-])
-
-MAIN_MENU_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="✈️ Найти билеты",       callback_data="start_search")],
-    [InlineKeyboardButton(text="🔥 Горячие предложения", callback_data="hot_deals_menu")],
+    [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
 ])
 
 # ── Аэропорты ─────────────────────────────────────────────────────────────────
 
-# Города с несколькими аэропортами: metro-IATA → [(iata_аэропорта, "Название (IATA)")]
 MULTI_AIRPORT_CITIES: dict = {
     "MOW": [
         ("SVO", "Шереметьево (SVO)"),
@@ -66,14 +78,12 @@ MULTI_AIRPORT_CITIES: dict = {
     ],
 }
 
-# Обратный индекс: IATA аэропорта → metro-IATA
 AIRPORT_TO_METRO: dict = {
     ap: metro
     for metro, aps in MULTI_AIRPORT_CITIES.items()
     for ap, _ in aps
 }
 
-# Читаемые названия аэропортов (для отображения в результатах)
 AIRPORT_NAMES: dict = {
     "SVO": "Шереметьево", "DME": "Домодедово", "VKO": "Внуково",  "ZIA": "Жуковский",
     "LED": "Пулково",     "AER": "Адлер",       "KZN": "Казань",   "OVB": "Новосибирск",
@@ -85,14 +95,12 @@ AIRPORT_NAMES: dict = {
     "IST": "Стамбул",     "AYT": "Анталья",     "CDG": "Шарль-де-Голль",
 }
 
-# Аэропорты с доступным трансфером через GetTransfer
 SUPPORTED_TRANSFER_AIRPORTS: set = {
     "BKK", "HKT", "CNX", "USM", "DAD", "SGN", "CXR", "REP", "PNH",
     "DPS", "MLE", "KIX", "CTS", "DXB", "AUH", "DOH", "AYT", "ADB",
     "BJV", "DLM", "PMI", "IBZ", "AGP", "RHO", "HER", "CFU", "JMK",
 }
 
-# Авиакомпании: IATA-код → русское название
 AIRLINE_NAMES: dict = {
     "SU": "Аэрофлот",
     "S7": "S7 Airlines",
