@@ -682,7 +682,11 @@ async def process_airport_pick(callback: CallbackQuery, state: FSMContext):
     )
     await state.update_data(origin_iata=ap_iata, origin_airports=[ap_iata], origin_airport_label=ap_label)
     await callback.answer()
-    await callback.message.answer(ap_label)  # дублируем выбор пользователя в чат
+    # Фиксируем выбор в тексте сообщения, убираем кнопки
+    await callback.message.edit_text(
+        f"Аэропорт вылета: <b>{ap_label}</b>",
+        parse_mode="HTML",
+    )
     await _after_airport_pick(callback, state)
 
 
@@ -697,7 +701,11 @@ async def process_airport_any(callback: CallbackQuery, state: FSMContext):
         origin_airport_label="Любой аэропорт",
     )
     await callback.answer()
-    await callback.message.answer("Любой аэропорт")  # дублируем выбор пользователя в чат
+    # Фиксируем выбор в тексте сообщения, убираем кнопки
+    await callback.message.edit_text(
+        "Аэропорт вылета: <b>Любой</b>",
+        parse_mode="HTML",
+    )
     await _after_airport_pick(callback, state)
 
 
@@ -707,7 +715,8 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
         await state.update_data(_edit_mode=False)
         await show_summary(callback.message, state)
         return
-    await callback.message.edit_text(
+    # Следующий вопрос — новым сообщением (не edit_text)
+    await callback.message.answer(
         "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
