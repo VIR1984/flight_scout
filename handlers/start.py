@@ -195,10 +195,27 @@ def _flight_type_text_to_code(text: str) -> str:
 def build_choices_summary(data: dict) -> str:
     lines = []
     n = 1
-    ap_label = data.get("origin_airport_label", "")
-    route = f"{data.get('origin_name', '')} → {data.get('dest_name', '')}"
-    if ap_label:
-        route += f"  ({ap_label})"
+
+    # Формируем маршрут: Город (IATA_аэропорта) → Город (IATA)
+    origin_name = data.get("origin_name", "")
+    dest_name   = data.get("dest_name", "")
+    origin_iata = data.get("origin_iata", "")
+    dest_iata   = data.get("dest_iata", "")
+    ap_label    = data.get("origin_airport_label", "")
+
+    # Откуда: если выбран конкретный аэропорт — показываем его IATA,
+    # иначе — IATA города (MOW, LED и т.д.)
+    if origin_name and origin_name != "Везде":
+        origin_part = f"{origin_name} ({origin_iata})" if origin_iata else origin_name
+    else:
+        origin_part = origin_name or ""
+
+    if dest_name and dest_name != "Везде":
+        dest_part = f"{dest_name} ({dest_iata})" if dest_iata else dest_name
+    else:
+        dest_part = dest_name or ""
+
+    route = f"{origin_part} → {dest_part}"
     lines.append(f"{n}. Маршрут: {route}"); n += 1
 
     depart_date = data.get("depart_date", "")
@@ -681,12 +698,7 @@ async def process_airport_pick(callback: CallbackQuery, state: FSMContext):
         ap_iata,
     )
     await state.update_data(origin_iata=ap_iata, origin_airports=[ap_iata], origin_airport_label=ap_label)
-    await callback.answer()
-    # Фиксируем выбор в тексте сообщения, убираем кнопки
-    await callback.message.edit_text(
-        f"Аэропорт вылета: <b>{ap_label}</b>",
-        parse_mode="HTML",
-    )
+    await callback.answer(f"✈️ {ap_label}")
     await _after_airport_pick(callback, state)
 
 
@@ -700,12 +712,7 @@ async def process_airport_any(callback: CallbackQuery, state: FSMContext):
         origin_airports=all_iatas,
         origin_airport_label="Любой аэропорт",
     )
-    await callback.answer()
-    # Фиксируем выбор в тексте сообщения, убираем кнопки
-    await callback.message.edit_text(
-        "Аэропорт вылета: <b>Любой</b>",
-        parse_mode="HTML",
-    )
+    await callback.answer("🔀 Буду искать по всем аэропортам")
     await _after_airport_pick(callback, state)
 
 
@@ -715,8 +722,7 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
         await state.update_data(_edit_mode=False)
         await show_summary(callback.message, state)
         return
-    # Следующий вопрос — новым сообщением (не edit_text)
-    await callback.message.answer(
+    await callback.message.edit_text(
         "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
@@ -1287,9 +1293,9 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
     dest_airport   = AIRPORT_NAMES.get(dest_iata, dest_iata)
 
-    if transfers == 0:   transfer_text = "✈️ Прямой рейс"
-    elif transfers == 1: transfer_text = "✈️ 1 пересадка"
-    else:                transfer_text = f"✈️ {transfers} пересадки"
+    if transfers == 0:   transfer_text = "Прямой рейс"
+    elif transfers == 1: transfer_text = "1 пересадка"
+    else:                transfer_text = f"{transfers} пересадки"
 
     price_per_pax = int(float(price)) if price != "?" else 0
     passengers_code = data.get("passenger_code", "1")
@@ -1301,30 +1307,42 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     text = "✅ <b>Самый дешёвый вариант</b>\n"
     if price != "?":
-        text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_pax} ₽"
+        text += f"\nЦена за 1 пассажира: {price_per_pax} ₽"
         if num_adults > 1:
-            text += f"\n🧮 <b>Примерно за {num_adults} взрослых:</b> ~{estimated_total} ₽"
+            text += f"\nПримерно за {num_adults} взрослых: ~{estimated_total} ₽"
     else:
-        text += f"\n💰 <b>Цена:</b> уточните на Aviasales"
+        text += f"\nЦена: уточните на Aviasales"
 
     if data.get("children", 0) > 0 or data.get("infants", 0) > 0:
         text += "\n<i>(стоимость для детей/младенцев может рассчитываться по-другому)</i>"
 
+    # Формируем строку рейса: Москва (Шереметьево (SVO)) → Сочи (Адлер (AER))
+    # Если название аэропорта совпадает с городом — показываем просто город (IATA)
+    def _route_part(city: str, airport: str, iata: str) -> str:
+        if airport and airport.lower() != city.lower():
+            return f"{city} ({airport} ({iata}))"
+        return f"{city} ({iata})"
+
+    route_str = (
+        f"{_route_part(origin_name, origin_airport, origin_iata)}"
+        f" → "
+        f"{_route_part(dest_name, dest_airport, dest_iata)}"
+    )
+
     text += (
-        f"\n\n🛫 <b>Рейс:</b> {origin_name} → {dest_name}"
-        f"\n📍 {origin_airport} ({origin_iata}) → {dest_airport} ({dest_iata})"
-        f"\n📅 <b>Туда:</b> {display_depart}"
+        f"\n\n<b>Рейс:</b> {route_str}"
+        f"\nТуда: {display_depart}"
     )
     if data.get("need_return") and display_return:
-        text += f"\n↩️ <b>Обратно:</b> {display_return}"
-    text += f"\n⏱️ <b>Продолжительность:</b> {duration}\n{transfer_text}"
+        text += f"\nОбратно: {display_return}"
+    text += f"\nПродолжительность: {duration}\n{transfer_text}"
 
     airline       = top_flight.get("airline", "")
     flight_number = top_flight.get("flight_number", "")
     if airline or flight_number:
         airline_display = AIRLINE_NAMES.get(airline, airline)
         flight_display  = f"{airline_display} {flight_number}".strip() if flight_number else airline_display
-        text += f"\n✈️ <b>Авиакомпания:</b> {flight_display}"
+        text += f"\nАвиакомпания: {flight_display}"
 
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if booking_link:
