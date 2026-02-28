@@ -1381,6 +1381,15 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     if booking_link:
         kb_buttons.append([InlineKeyboardButton(text=f"✈️ Посмотреть детали за {price} ₽", url=booking_link)])
     kb_buttons.append([InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)])
+
+    # Кнопка «Информация о рейсе» — только если есть номер рейса из API
+    if airline and flight_number:
+        depart_date_raw = data.get("depart_date", "")
+        kb_buttons.append([InlineKeyboardButton(
+            text="📊 Информация о рейсе",
+            callback_data=f"track_flight_direct:{airline}:{flight_number}:{depart_date_raw}"
+        )])
+
     kb_buttons.append([InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")])
     kb_buttons.append([InlineKeyboardButton(text="✏️ Изменить данные", callback_data=f"edit_from_results_{cache_id}")])
 

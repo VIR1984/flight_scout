@@ -154,6 +154,47 @@ class RedisClient:
         await self.client.expire(key, 86400 * 35)
         return True
 
+    async def save_flight_track_subscription(
+        self,
+        user_id: int,
+        airline: str,
+        flight_number: str,
+        depart_date: str,   # формат ДД.ММ
+    ) -> str:
+        """
+        Сохранить подписку на уведомления об изменении статуса рейса.
+        Возвращает sub_id.
+        Хранится 7 дней (рейс уже точно прошёл).
+        """
+        if not self.client:
+            return ""
+        import uuid
+        sub_id = str(uuid.uuid4())[:8]
+        key = f"{self.prefix}flight_track:{user_id}:{sub_id}"
+        data = {
+            "airline":       airline,
+            "flight_number": flight_number,
+            "depart_date":   depart_date,
+            "user_id":       str(user_id),
+            "sub_id":        sub_id,
+        }
+        await self.client.hset(key, mapping=data)
+        await self.client.expire(key, 86400 * 7)
+        return sub_id
+
+    async def get_flight_track_subscriptions(self, user_id: int) -> list[dict]:
+        """Получить все активные подписки на отслеживание рейсов пользователя."""
+        if not self.client:
+            return []
+        pattern = f"{self.prefix}flight_track:{user_id}:*"
+        keys = await self.client.keys(pattern)
+        result = []
+        for key in keys:
+            data = await self.client.hgetall(key)
+            if data:
+                result.append({k.decode(): v.decode() for k, v in data.items()})
+        return result
+
     # ===== Горячие предложения / Дайджест =====
 
     async def save_hot_sub(self, user_id: int, sub: dict) -> str:
