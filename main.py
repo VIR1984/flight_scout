@@ -12,6 +12,7 @@ from handlers.start import router as start_router
 from handlers.flystack_track import router as flystack_router
 from handlers.everywhere_search import router as everywhere_router
 from handlers.hot_deals import router as hot_deals_router
+from handlers.multi_search import router as multi_search_router
 
 # Импорт утилит и сервисов
 from utils.logger import logger
@@ -61,6 +62,9 @@ async def main():
     # потому что start_router раньше перехватывал hot_deals_menu
     dp.include_router(hot_deals_router)
     logger.info("✅ Роутер: hot_deals_router")
+
+    dp.include_router(multi_search_router)
+    logger.info("✅ Роутер: multi_search_router")
 
     dp.include_router(start_router)
     logger.info("✅ Роутер: start_router")

@@ -318,12 +318,29 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "✈️ Поиск")
 async def nav_search(message: Message, state: FSMContext):
-    """Нижняя панель → Поиск."""
+    """Нижняя панель → Поиск: выбор типа маршрута."""
     current = await state.get_state()
     if current and not current.startswith("FlyStackTrack"):
         await state.clear()
     cancel_inactivity(message.chat.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✈️ Простой маршрут", callback_data="search_simple")],
+        [InlineKeyboardButton(text="🗺 Составной маршрут", callback_data="search_multi")],
+    ])
     await message.answer(
+        "Выберите тип поиска:\n\n"
+        "<b>Простой маршрут</b> — в одну или обе стороны.\n"
+        "<b>Составной маршрут</b> — несколько перелётов по разным городам.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data == "search_simple")
+async def handle_search_simple(callback: CallbackQuery, state: FSMContext):
+    """Простой поиск — старый флоу."""
+    cancel_inactivity(callback.message.chat.id)
+    await callback.message.edit_text(
         "Начнём поиск билетов 👌\n\n"
         "<b>Напишите маршрут:</b> Город отправления — Город прибытия\n\n"
         "<i>Пример: Москва — Сочи</i>\n\n"
@@ -332,7 +349,17 @@ async def nav_search(message: Message, state: FSMContext):
         reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.route)
-    schedule_inactivity(message.chat.id, message.from_user.id)
+    schedule_inactivity(callback.message.chat.id, callback.from_user.id)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "search_multi")
+async def handle_search_multi(callback: CallbackQuery, state: FSMContext):
+    """Составной поиск — переходим в multi_search FSM."""
+    from handlers.multi_search import start_multi_search
+    cancel_inactivity(callback.message.chat.id)
+    await callback.answer()
+    await start_multi_search(callback.message, state)
 
 
 @router.message(F.text == "🔥 Горячие")
@@ -1398,7 +1425,7 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     if airline and flight_number:
         depart_date_raw = data.get("depart_date", "")
         kb_buttons.append([InlineKeyboardButton(
-            text="📊 Информация о рейсе",
+            text="📊 Информация о рейсе (раздел в разработке)",
             callback_data=f"track_flight_direct:{airline}:{flight_number}:{depart_date_raw}"
         )])
 
