@@ -134,13 +134,14 @@ class HotDealsSender:
                 if not price:
                     continue
 
-                # Улучшение 3: обновляем EMA и проверяем снижение
+                # Сначала читаем старый baseline, потом обновляем EMA
+                baseline = await redis_client.get_baseline_price(origin, dest)
                 await redis_client.update_baseline_price(origin, dest, price)
                 if max_price and price > max_price:
                     continue
-                baseline = await redis_client.get_baseline_price(origin, dest)
+                # Фильтр по DROP_THRESHOLD применяем только если baseline уже накоплен
                 if baseline is not None and (baseline - price) / baseline < DROP_THRESHOLD:
-                    logger.debug(f"[HotDeals] {origin}→{dest}: снижение < {DROP_THRESHOLD:.0%}")
+                    logger.debug(f"[HotDeals] {origin}→{dest}: снижение < {DROP_THRESHOLD:.0%} (baseline={int(baseline)}₽, now={int(price)}₽)")
                     continue
 
                 candidates.append((price, dest, cheapest, baseline))

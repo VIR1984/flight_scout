@@ -1294,8 +1294,20 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     price        = top_flight.get("value") or top_flight.get("price") or "?"
     origin_iata  = top_flight["origin"]
     dest_iata    = top_flight.get("destination") or data["dest_iata"]
-    origin_name  = IATA_TO_CITY.get(origin_iata, origin_iata)
-    dest_name    = IATA_TO_CITY.get(dest_iata, dest_iata)
+
+    # origin_name — название города (не аэропорта).
+    # Если top_flight вернул аэропорт (DME), ищем его город через metro (MOW → Москва).
+    # Приоритет: data["origin_name"] → metro города → IATA_TO_CITY → сам IATA.
+    def _city_name_for(iata: str, fallback_name: str) -> str:
+        if fallback_name and fallback_name != "Везде":
+            return fallback_name
+        metro = _get_metro(iata)
+        if metro:
+            return IATA_TO_CITY.get(metro, IATA_TO_CITY.get(iata, iata))
+        return IATA_TO_CITY.get(iata, iata)
+
+    origin_name  = _city_name_for(origin_iata, data.get("origin_name", ""))
+    dest_name    = _city_name_for(dest_iata,   data.get("dest_name",   ""))
     duration     = _format_duration(top_flight.get("duration", 0))
     transfers    = top_flight.get("transfers", 0)
     origin_airport = AIRPORT_NAMES.get(origin_iata, origin_iata)
