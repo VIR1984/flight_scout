@@ -83,6 +83,8 @@ class RedisClient:
         threshold: int = 0
     ) -> str:
         """Сохранить отслеживание цены. Возвращает ключ"""
+        if not self.client:
+            return ""
         key = f"{self.prefix}watch:{user_id}:{origin}:{dest}:{depart_date}"
         if return_date:
             key += f":{return_date}"
@@ -125,11 +127,13 @@ class RedisClient:
         if not self.client:
             return []
         pattern = f"{self.prefix}watch:*"
-        cursor = "0"
+        cursor = 0
         keys = []
-        while cursor != 0:
+        while True:
             cursor, batch = await self.client.scan(cursor=cursor, match=pattern, count=100)
             keys.extend(batch)
+            if cursor == 0:
+                break
         return keys
 
     # ===== FlyStack usage tracking =====
@@ -192,7 +196,7 @@ class RedisClient:
         for key in keys:
             data = await self.client.hgetall(key)
             if data:
-                result.append({k.decode(): v.decode() for k, v in data.items()})
+                result.append(dict(data))  # decode_responses=True — строки уже декодированы
         return result
 
     # ===== Горячие предложения / Дайджест =====

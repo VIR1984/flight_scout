@@ -48,10 +48,10 @@ async def convert_to_partner_link(clean_link: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "https://api.travelpayouts.com/links/v1/create",  # ← ПРАВИЛЬНЫЙ ENDPOINT
+                "https://api.travelpayouts.com/links/v1/create",
                 headers={"X-Access-Token": api_token},
                 json=payload,
-                timeout=10
+                timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()

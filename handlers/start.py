@@ -1404,6 +1404,17 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         success = await process_everywhere_search(callback, data, all_flights, "origin_everywhere")
         if success:
             await state.clear()
+        else:
+            await callback.message.edit_text(
+                f"😔 <b>Ничего не найдено</b>\n\nПо направлению <b>Везде → {data.get('dest_name', '')}</b> "
+                f"на <b>{data.get('depart_date', '')}</b> рейсов не нашлось.\n\n"
+                "Попробуйте другую дату или направление.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Новый поиск", callback_data="start_search")],
+                    [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+                ]),
+            )
         return
 
     if not is_origin_everywhere and is_dest_everywhere:
@@ -1418,6 +1429,17 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         success = await process_everywhere_search(callback, data, all_flights, "destination_everywhere")
         if success:
             await state.clear()
+        else:
+            await callback.message.edit_text(
+                f"😔 <b>Ничего не найдено</b>\n\nИз <b>{data.get('origin_name', '')}</b> "
+                f"на <b>{data.get('depart_date', '')}</b> рейсов не нашлось.\n\n"
+                "Попробуйте другую дату или направление.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Новый поиск", callback_data="start_search")],
+                    [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+                ]),
+            )
         return
 
     # ── Обычный поиск ──────────────────────────────────────────
