@@ -4,7 +4,6 @@
 Формат ссылки Aviasales: https://www.aviasales.ru/?params=MOW0503IST1103LON211
 """
 
-import re
 from aiogram import Router, F
 from aiogram.types import (
     Message,
@@ -47,7 +46,10 @@ class MultiSearch(StatesGroup):
     segment_origin = State()   # Ввод города вылета текущего сегмента
     segment_dest   = State()   # Ввод города прибытия
     segment_date   = State()   # Ввод даты
-    passengers     = State()   # Кол-во пассажиров
+    adults         = State()   # Кол-во взрослых
+    has_children   = State()   # Есть ли дети?
+    children       = State()   # Кол-во детей
+    infants        = State()   # Кол-во младенцев
     confirm        = State()   # Подтверждение перед поиском
 
 
@@ -74,16 +76,10 @@ def _validate_date(date_str: str) -> bool:
 
 
 def _build_multi_link(segments: list[dict], pax_code: str) -> str:
-    """
-    Формирует ссылку вида:
-    https://www.aviasales.ru/?params=MOW0503IST1103LON211
-    """
+    """Формирует ?params= ссылку для Aviasales."""
     params = ""
     for seg in segments:
-        orig = seg["origin_iata"]
-        dest = seg["dest_iata"]
-        date = format_avia_link_date(seg["date"])
-        params += f"{orig}{date}{dest}"
+        params += f"{seg['origin_iata']}{format_avia_link_date(seg['date'])}{seg['dest_iata']}"
     params += pax_code
     return f"https://www.aviasales.ru/?params={params}"
 
@@ -98,15 +94,29 @@ def _segments_summary(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _make_cancel_kb(add_segment_btn: bool = False, seg_count: int = 0) -> InlineKeyboardMarkup:
-    rows = []
-    if add_segment_btn and seg_count >= 2:
-        rows.append([InlineKeyboardButton(
-            text="✅ Готово, перейти к пассажирам",
-            callback_data="ms_done_segments"
-        )])
-    rows.append([InlineKeyboardButton(text="✖ Отменить", callback_data="main_menu")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def _build_pax_code(adults: int, children: int = 0, infants: int = 0) -> str:
+    """Строит код пассажиров: '1', '21', '211' и т.д."""
+    adults = max(1, adults)
+    total  = adults + children + infants
+    if total > 9:
+        remaining = 9 - adults
+        children  = min(children, remaining)
+        infants   = max(0, min(remaining - children, adults))
+    code = str(adults)
+    if children > 0:
+        code += str(children)
+    if infants > 0:
+        code += str(infants)
+    return code
+
+
+def _build_pax_desc(adults: int, children: int = 0, infants: int = 0) -> str:
+    desc = f"{adults} взр."
+    if children:
+        desc += f", {children} дет."
+    if infants:
+        desc += f", {infants} мл."
+    return desc
 
 
 # ════════════════════════════════════════════════════════════════
@@ -116,7 +126,7 @@ def _make_cancel_kb(add_segment_btn: bool = False, seg_count: int = 0) -> Inline
 async def start_multi_search(message: Message, state: FSMContext):
     """Точка входа — вызывается из start.py."""
     await state.clear()
-    await state.update_data(segments=[], pax_code="1")
+    await state.update_data(segments=[])
     await state.set_state(MultiSearch.segment_origin)
     schedule_inactivity(message.chat.id, message.from_user.id)
     await message.answer(
@@ -154,18 +164,7 @@ async def ms_origin(message: Message, state: FSMContext):
             )
         return
 
-    data = await state.get_data()
-    segments = data.get("segments", [])
-
-    # Если это не первый сегмент — логично подсказать предыдущий пункт назначения
-    if segments and segments[-1]["dest_iata"] == iata:
-        pass  # OK, логично — продолжение маршрута
-
-    # Временно сохраняем origin для текущего сегмента
-    await state.update_data(
-        _cur_origin_iata=iata,
-        _cur_origin_name=name,
-    )
+    await state.update_data(_cur_origin_iata=iata, _cur_origin_name=name)
     await state.set_state(MultiSearch.segment_dest)
     schedule_inactivity(message.chat.id, message.from_user.id)
     await message.answer(
@@ -183,7 +182,6 @@ async def ms_origin(message: Message, state: FSMContext):
 async def ms_dest(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     text = (message.text or "").strip()
-
     data = await state.get_data()
     cur_origin_iata = data.get("_cur_origin_iata", "")
 
@@ -247,11 +245,9 @@ async def ms_date(message: Message, state: FSMContext):
         try:
             prev_d, prev_m = map(int, prev_date.split('.'))
             cur_d, cur_m   = map(int, date_text.split('.'))
-            prev_num = prev_m * 100 + prev_d
-            cur_num  = cur_m  * 100 + cur_d
-            if cur_num < prev_num:
+            if cur_m * 100 + cur_d < prev_m * 100 + prev_d:
                 await message.answer(
-                    f"❌ Дата перелёта не может быть раньше предыдущего ({prev_date}).\n"
+                    f"❌ Дата не может быть раньше предыдущего перелёта ({prev_date}).\n"
                     "Введите корректную дату.",
                     reply_markup=CANCEL_KB,
                 )
@@ -272,20 +268,16 @@ async def ms_date(message: Message, state: FSMContext):
     seg_count = len(segments)
     schedule_inactivity(message.chat.id, message.from_user.id)
 
-    # Показываем текущие сегменты
     summary_text = "✅ <b>Текущий маршрут:</b>\n\n" + _segments_summary(segments)
 
     if seg_count >= MAX_SEGMENTS:
-        # Достигнут лимит — переходим к пассажирам
-        await state.set_state(MultiSearch.passengers)
         await message.answer(
             summary_text + "\n\n📌 Достигнут максимум 6 перелётов.",
             parse_mode="HTML",
         )
-        await _ask_passengers(message, state)
+        await _ask_adults(message, state)
         return
 
-    # Кнопки: добавить ещё / завершить
     rows = []
     if seg_count >= 2:
         rows.append([InlineKeyboardButton(
@@ -299,9 +291,13 @@ async def ms_date(message: Message, state: FSMContext):
     rows.append([InlineKeyboardButton(text="✖ Отменить", callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
-    await state.set_state(MultiSearch.segment_origin)  # ждём следующий сегмент
+    await state.set_state(MultiSearch.segment_origin)
     await message.answer(
-        summary_text + f"\n\n{'Добавьте следующий перелёт или завершите маршрут.' if seg_count >= 2 else 'Добавьте следующий перелёт:'}",
+        summary_text + (
+            "\n\nДобавьте следующий перелёт или завершите маршрут."
+            if seg_count >= 2 else
+            "\n\nДобавьте следующий перелёт:"
+        ),
         parse_mode="HTML",
         reply_markup=kb,
     )
@@ -317,7 +313,6 @@ async def ms_add_segment(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     segments = data.get("segments", [])
 
-    # Предзаполняем origin = предыдущий destination
     if segments:
         last = segments[-1]
         await state.update_data(
@@ -340,56 +335,173 @@ async def ms_add_segment(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(MultiSearch.segment_origin, F.data == "ms_done_segments")
-async def ms_done_segments_from_origin(callback: CallbackQuery, state: FSMContext):
-    await _finish_segments(callback, state)
-
-
-async def _finish_segments(callback: CallbackQuery, state: FSMContext):
+async def ms_done_segments(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     data = await state.get_data()
-    segments = data.get("segments", [])
-    if len(segments) < 2:
+    if len(data.get("segments", [])) < 2:
         await callback.answer("Нужно хотя бы 2 перелёта!", show_alert=True)
         return
-    await state.set_state(MultiSearch.passengers)
     await callback.answer()
-    await _ask_passengers(callback.message, state)
+    await _ask_adults(callback.message, state)
 
 
 # ════════════════════════════════════════════════════════════════
-# Пассажиры
+# Пассажиры: взрослые
 # ════════════════════════════════════════════════════════════════
 
-async def _ask_passengers(message: Message, state: FSMContext):
+async def _ask_adults(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=str(i), callback_data=f"ms_pax_{i}") for i in range(1, 5)],
-        [InlineKeyboardButton(text=str(i), callback_data=f"ms_pax_{i}") for i in range(5, 10)],
+        [InlineKeyboardButton(text=str(i), callback_data=f"ms_adults_{i}") for i in range(1, 5)],
+        [InlineKeyboardButton(text=str(i), callback_data=f"ms_adults_{i}") for i in range(5, 10)],
     ])
-    await message.answer("Сколько пассажиров?", reply_markup=kb)
+    await message.answer("Сколько взрослых пассажиров (от 12 лет)?", reply_markup=kb)
+    await state.set_state(MultiSearch.adults)
 
 
-@router.callback_query(MultiSearch.passengers, F.data.regexp(r"^ms_pax_[1-9]$"))
-async def ms_pax(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(MultiSearch.adults, F.data.regexp(r"^ms_adults_[1-9]$"))
+async def ms_adults(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
-    count = int(callback.data.split("_")[2])
-    await state.update_data(pax_code=str(count))
+    adults = int(callback.data.split("_")[-1])
+    await state.update_data(adults=adults)
+    await callback.answer()
+
+    if adults == 9:
+        await state.update_data(
+            children=0, infants=0,
+            pax_code="9",
+            pax_desc="9 взр.",
+        )
+        await _show_multi_summary(callback.message, state)
+    else:
+        await _ask_has_children(callback.message, state)
+
+
+# ════════════════════════════════════════════════════════════════
+# Пассажиры: есть ли дети?
+# ════════════════════════════════════════════════════════════════
+
+async def _ask_has_children(message: Message, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👶 Да", callback_data="ms_hc_yes"),
+         InlineKeyboardButton(text="✅ Нет", callback_data="ms_hc_no")],
+    ])
+    await message.answer("С вами летят дети?", reply_markup=kb)
+    await state.set_state(MultiSearch.has_children)
+
+
+@router.callback_query(MultiSearch.has_children, F.data.in_({"ms_hc_yes", "ms_hc_no"}))
+async def ms_has_children(callback: CallbackQuery, state: FSMContext):
+    cancel_inactivity(callback.message.chat.id)
+    await callback.answer()
+
+    if callback.data == "ms_hc_yes":
+        await _ask_children(callback.message, state)
+    else:
+        data = await state.get_data()
+        adults = data["adults"]
+        await state.update_data(
+            children=0, infants=0,
+            pax_code=str(adults),
+            pax_desc=f"{adults} взр.",
+        )
+        await _show_multi_summary(callback.message, state)
+
+
+# ════════════════════════════════════════════════════════════════
+# Пассажиры: кол-во детей (2–11 лет)
+# ════════════════════════════════════════════════════════════════
+
+async def _ask_children(message: Message, state: FSMContext):
+    data   = await state.get_data()
+    adults = data["adults"]
+    max_ch = 9 - adults
+    nums   = list(range(0, max_ch + 1))
+    rows   = [[InlineKeyboardButton(text=str(n), callback_data=f"ms_ch_{n}") for n in nums[i:i+5]]
+              for i in range(0, len(nums), 5)]
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    await message.answer(
+        "Сколько детей (от 2 до 11 лет)?\nЕсли у вас младенцы, укажете дальше.",
+        reply_markup=kb,
+    )
+    await state.set_state(MultiSearch.children)
+
+
+@router.callback_query(MultiSearch.children, F.data.regexp(r"^ms_ch_\d+$"))
+async def ms_children(callback: CallbackQuery, state: FSMContext):
+    cancel_inactivity(callback.message.chat.id)
+    data     = await state.get_data()
+    adults   = data["adults"]
+    children = int(callback.data.split("_")[-1])
+
+    if children < 0 or children > 9 - adults:
+        await callback.answer()
+        return
+
+    await state.update_data(children=children)
+    await callback.answer()
+
+    if 9 - adults - children == 0:
+        pax_code = _build_pax_code(adults, children, 0)
+        pax_desc = _build_pax_desc(adults, children, 0)
+        await state.update_data(infants=0, pax_code=pax_code, pax_desc=pax_desc)
+        await _show_multi_summary(callback.message, state)
+    else:
+        await _ask_infants(callback.message, state)
+
+
+# ════════════════════════════════════════════════════════════════
+# Пассажиры: младенцы (до 2 лет, без места)
+# ════════════════════════════════════════════════════════════════
+
+async def _ask_infants(message: Message, state: FSMContext):
+    data     = await state.get_data()
+    adults   = data["adults"]
+    children = data.get("children", 0)
+    max_inf  = min(adults, 9 - adults - children)
+    nums     = list(range(0, max_inf + 1))
+    rows     = [[InlineKeyboardButton(text=str(n), callback_data=f"ms_inf_{n}") for n in nums[i:i+5]]
+                for i in range(0, len(nums), 5)]
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    await message.answer("Сколько младенцев? (младше 2 лет, без места)", reply_markup=kb)
+    await state.set_state(MultiSearch.infants)
+
+
+@router.callback_query(MultiSearch.infants, F.data.regexp(r"^ms_inf_\d+$"))
+async def ms_infants(callback: CallbackQuery, state: FSMContext):
+    cancel_inactivity(callback.message.chat.id)
+    data     = await state.get_data()
+    adults   = data["adults"]
+    children = data.get("children", 0)
+    infants  = int(callback.data.split("_")[-1])
+
+    if infants < 0 or infants > min(adults, 9 - adults - children):
+        await callback.answer()
+        return
+
+    pax_code = _build_pax_code(adults, children, infants)
+    pax_desc = _build_pax_desc(adults, children, infants)
+    await state.update_data(infants=infants, pax_code=pax_code, pax_desc=pax_desc)
     await callback.answer()
     await _show_multi_summary(callback.message, state)
 
 
+# ════════════════════════════════════════════════════════════════
+# Экран подтверждения
+# ════════════════════════════════════════════════════════════════
+
 async def _show_multi_summary(message: Message, state: FSMContext):
-    data = await state.get_data()
+    data     = await state.get_data()
     segments = data.get("segments", [])
-    pax_code = data.get("pax_code", "1")
+    pax_desc = data.get("pax_desc", "1 взр.")
 
     text = (
         "📋 <b>Проверьте маршрут:</b>\n\n"
         + _segments_summary(segments)
-        + f"\n\nПассажиры: {pax_code}"
+        + f"\n\nПассажиры: {pax_desc}"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Найти билеты", callback_data="ms_confirm")],
-        [InlineKeyboardButton(text="✏️ Изменить кол-во пасс.", callback_data="ms_edit_pax")],
+        [InlineKeyboardButton(text="✏️ Изменить пассажиров", callback_data="ms_edit_pax")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
@@ -398,9 +510,9 @@ async def _show_multi_summary(message: Message, state: FSMContext):
 
 @router.callback_query(MultiSearch.confirm, F.data == "ms_edit_pax")
 async def ms_edit_pax(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(MultiSearch.passengers)
+    cancel_inactivity(callback.message.chat.id)
     await callback.answer()
-    await _ask_passengers(callback.message, state)
+    await _ask_adults(callback.message, state)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -412,17 +524,12 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     mark_fsm_inactive(callback.message.chat.id)
 
-    data = await state.get_data()
-    segments: list = data.get("segments", [])
-    pax_code: str  = data.get("pax_code", "1")
+    data     = await state.get_data()
+    segments = data.get("segments", [])
+    pax_code = data.get("pax_code", "1")
+    pax_desc = data.get("pax_desc", "1 взр.")
 
-    await callback.message.edit_text(
-        "⏳ <b>Ищу билеты по вашему маршруту...</b>",
-        parse_mode="HTML"
-    )
-    await state.clear()
-
-    # Разбираем пассажиров
+    # Разбираем pax_code → adults / children / infants для API
     try:
         adults   = int(pax_code[0])
         children = int(pax_code[1]) if len(pax_code) > 1 else 0
@@ -430,7 +537,13 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         adults, children, infants = 1, 0, 0
 
-    # Готовим сегменты для API (даты в формате YYYY-MM-DD)
+    await callback.message.edit_text(
+        "⏳ <b>Ищу билеты по вашему маршруту...</b>",
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+    # Сегменты для API (даты в YYYY-MM-DD)
     api_segments = [
         {
             "origin":      seg["origin_iata"],
@@ -440,7 +553,7 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
         for seg in segments
     ]
 
-    # Шаг 1: реальный запрос к API для получения booking URL
+    # Шаг 1: реальный запрос к v1/flight_search → URL из лучшего предложения
     api_url = await search_flights_multi(
         segments=api_segments,
         adults=adults,
@@ -451,22 +564,21 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
     if api_url:
         # Шаг 2: обновляем код пассажиров в ссылке из API
         booking_url = update_passengers_in_link(api_url, pax_code)
-        logger.info(f"[MultiSearch] API URL получен: {booking_url[:80]}...")
+        logger.info(f"[MultiSearch] API URL: {booking_url[:80]}...")
     else:
-        # Fallback: формируем ?params= URL напрямую
+        # Fallback: ?params= ссылка напрямую
         booking_url = _build_multi_link(segments, pax_code)
         logger.info(f"[MultiSearch] Fallback URL: {booking_url[:80]}...")
 
-    # Шаг 3: генерируем короткую партнёрскую ссылку (как в стандартном поиске)
+    # Шаг 3: короткая партнёрская ссылка — как в стандартном поиске
     partner_link = await convert_to_partner_link(booking_url)
-
-    logger.info(f"[MultiSearch] user={callback.from_user.id} partner_link={partner_link[:60]}...")
+    logger.info(f"[MultiSearch] user={callback.from_user.id} partner={partner_link[:60]}...")
 
     route_preview = _segments_summary(segments)
     text = (
         "✅ <b>Составной маршрут готов!</b>\n\n"
         f"{route_preview}\n\n"
-        f"Пассажиры: {pax_code}\n\n"
+        f"Пассажиры: {pax_desc}\n\n"
         "<i>Нажмите кнопку ниже — Aviasales покажет все варианты по вашему маршруту.</i>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
