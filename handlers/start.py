@@ -30,7 +30,7 @@ from services.flight_search import (
     format_passenger_desc,
 )
 from services.transfer_search import search_transfers, generate_transfer_link
-from utils.cities_loader import get_iata, get_city_name, fuzzy_get_iata, CITY_TO_IATA, IATA_TO_CITY, _normalize_name
+from utils.cities_loader import get_iata, get_city_name, fuzzy_get_iata, CITY_TO_IATA, IATA_TO_CITY, _normalize_name, get_country_cities
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
@@ -587,6 +587,197 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+
+# ════════════════════════════════════════════════════════════════
+# Выбор города из страны
+# ════════════════════════════════════════════════════════════════
+
+async def _ask_country_city(
+    message: Message,
+    state: FSMContext,
+    country_name: str,
+    cities: list,
+    role: str,  # "origin" или "dest"
+):
+    """Показывает 4 популярных города страны + кнопку 'Другой город'."""
+    await state.update_data(_country_role=role, _country_name=country_name)
+    await state.set_state(FlightSearch.choose_country_city)
+
+    prompt = "вылета" if role == "origin" else "назначения"
+    text = (
+        f"🌍 Популярные города {country_name} для {prompt}:\n\n"
+        f"Выберите один из вариантов или введите свой город."
+    )
+
+    buttons = []
+    for city in cities:
+        buttons.append([InlineKeyboardButton(
+            text=city["name"],
+            callback_data=f"cc_{role}_{city['iata']}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="✏️ Ввести свой город",
+        callback_data=f"cc_{role}_custom",
+    )])
+    buttons.append([InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")])
+
+    await message.answer(text, parse_mode="HTML",
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@router.callback_query(FlightSearch.choose_country_city, F.data.startswith("cc_"))
+async def process_country_city_pick(callback: CallbackQuery, state: FSMContext):
+    """Пользователь нажал на один из городов страны."""
+    parts = callback.data.split("_", 2)  # cc_{role}_{iata|custom}
+    role  = parts[1]  # "origin" или "dest"
+    value = parts[2]  # IATA или "custom"
+
+    if value == "custom":
+        # Просим ввести город вручную
+        prompt = "отправления" if role == "origin" else "назначения"
+        await callback.message.edit_text(
+            f"Введите город {prompt}:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
+            ])
+        )
+        await state.update_data(_country_custom_role=role)
+        await state.set_state(FlightSearch.choose_country_city)
+        await callback.answer()
+        return
+
+    # Город выбран — запоминаем и идём дальше
+    city_name = get_city_name(value) or value
+    await callback.answer()
+    # Фиксируем выбор в тексте сообщения
+    await callback.message.edit_text(
+        f"{'Город вылета' if role == 'origin' else 'Город назначения'}: <b>{city_name}</b>",
+        parse_mode="HTML",
+    )
+
+    data = await state.get_data()
+
+    if role == "origin":
+        await state.update_data(
+            origin=city_name, origin_iata=value, origin_name=city_name,
+            _country_role=None, _country_custom_role=None,
+        )
+        # Если dest ещё не задан — просим маршрут заново
+        if not data.get("dest_iata"):
+            await callback.message.answer(
+                f"Отлично! Теперь введите <b>город назначения</b>:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
+                ])
+            )
+            await state.set_state(FlightSearch.choose_country_city)
+            await state.update_data(_country_custom_role="dest")
+        else:
+            await _finalize_route(callback.message, state)
+    else:  # dest
+        await state.update_data(
+            dest=city_name, dest_iata=value, dest_name=city_name,
+            _country_role=None, _country_custom_role=None,
+        )
+        await _finalize_route(callback.message, state)
+
+
+@router.message(FlightSearch.choose_country_city)
+async def process_country_city_text(message: Message, state: FSMContext):
+    """Пользователь написал свой город вместо нажатия кнопки."""
+    data  = await state.get_data()
+    role  = data.get("_country_custom_role") or data.get("_country_role", "dest")
+    city  = message.text.strip()
+
+    iata = get_iata(city) or CITY_TO_IATA.get(_normalize_name(city))
+    if not iata:
+        # Fuzzy
+        fuzzy_iata, fuzzy_name = fuzzy_get_iata(city)
+        if fuzzy_iata:
+            await message.answer(
+                f"❓ Не нашёл «{city}» — вы имели в виду <b>{fuzzy_name}</b>?\n"
+                f"Напишите название ещё раз.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
+                ])
+            )
+        else:
+            await message.answer(
+                f"❌ Город «{city}» не найден. Проверьте написание и попробуйте ещё раз.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
+                ])
+            )
+        return
+
+    city_name = get_city_name(iata) or city.capitalize()
+
+    if role == "origin":
+        await state.update_data(
+            origin=city_name, origin_iata=iata, origin_name=city_name,
+            _country_role=None, _country_custom_role=None,
+        )
+        if not data.get("dest_iata"):
+            await message.answer(
+                f"✅ Город вылета: <b>{city_name}</b>\n\nТеперь введите <b>город назначения</b>:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
+                ])
+            )
+            await state.update_data(_country_custom_role="dest")
+        else:
+            await _finalize_route(message, state)
+    else:
+        await state.update_data(
+            dest=city_name, dest_iata=iata, dest_name=city_name,
+            _country_role=None, _country_custom_role=None,
+        )
+        await _finalize_route(message, state)
+
+
+async def _finalize_route(target, state: FSMContext):
+    """После выбора обоих городов — проверки и переход к следующему шагу."""
+    data = await state.get_data()
+    orig_iata   = data.get("origin_iata")
+    dest_iata   = data.get("dest_iata")
+    origin_name = data.get("origin_name", "")
+    dest_name   = data.get("dest_name", "")
+
+    msg = target if isinstance(target, Message) else target
+
+    if orig_iata and dest_iata and orig_iata == dest_iata:
+        await msg.answer(
+            "❌ Город вылета и прибытия не могут совпадать. Выберите разные города.",
+            reply_markup=CANCEL_KB,
+        )
+        await state.set_state(FlightSearch.route)
+        return
+
+    await state.set_state(FlightSearch.route)
+
+    if orig_iata and _has_multi_airports(orig_iata):
+        metro = _get_metro(orig_iata) or orig_iata
+        await state.update_data(origin_iata=metro)
+        await state.set_state(FlightSearch.choose_airport)
+        kb = _airport_keyboard(metro)
+        await msg.answer(
+            f"Вы выбрали: <b>{origin_name}</b>\n\nИз {origin_name} летят из нескольких аэропортов — выберите нужный:",
+            parse_mode="HTML", reply_markup=kb,
+        )
+    else:
+        await state.set_state(FlightSearch.depart_date)
+        await msg.answer(
+            "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
+            parse_mode="HTML", reply_markup=CANCEL_KB,
+        )
+        from utils.inactivity import schedule_inactivity
+        schedule_inactivity(msg.chat.id, msg.from_user.id if hasattr(msg, 'from_user') else 0)
+
+
 # ════════════════════════════════════════════════════════════════
 # FSM: маршрут
 # ════════════════════════════════════════════════════════════════
@@ -604,6 +795,11 @@ async def process_route(message: Message, state: FSMContext):
     if origin != "везде":
         orig_iata = get_iata(origin) or CITY_TO_IATA.get(_normalize_name(origin))
         if not orig_iata:
+            # Проверяем — не страна ли это?
+            country_cities = get_country_cities(origin)
+            if country_cities:
+                await _ask_country_city(message, state, origin, country_cities, role="origin")
+                return
             # П.2: пробуем нечёткий поиск
             fuzzy_iata, fuzzy_name = fuzzy_get_iata(origin)
             if fuzzy_iata:
@@ -627,7 +823,16 @@ async def process_route(message: Message, state: FSMContext):
     if dest != "везде":
         dest_iata = get_iata(dest) or CITY_TO_IATA.get(_normalize_name(dest))
         if not dest_iata:
-            # П.2: нечёткий поиск
+            # Проверяем — не страна ли это?
+            country_cities = get_country_cities(dest)
+            if country_cities:
+                # Сохраняем уже распознанный origin, чтобы не потерять его
+                await state.update_data(
+                    origin=origin, origin_iata=orig_iata, origin_name=origin_name,
+                )
+                await _ask_country_city(message, state, dest, country_cities, role="dest")
+                return
+            # нечёткий поиск
             fuzzy_iata, fuzzy_name = fuzzy_get_iata(dest)
             if fuzzy_iata:
                 await message.answer(
