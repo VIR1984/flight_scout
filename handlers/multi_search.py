@@ -582,11 +582,14 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
     text = (
         "✅ <b>Составной маршрут готов!</b>\n\n"
         f"{route_preview}\n\n"
-        f"Пассажиры: {pax_desc}\n\n"
-        "<i>Нажмите кнопку ниже — Aviasales покажет все варианты по вашему маршруту.</i>"
+        f"👥 Пассажиры: {pax_desc}\n\n"
+        "─────────────────\n"
+        "👇 <b>Маршрут уже заполнен на Aviasales.</b>\n"
+        "Нажмите кнопку ниже, затем <b>«Найти билеты»</b> — "
+        "и увидите все варианты с ценами."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Посмотреть билеты", url=partner_link)],
+        [InlineKeyboardButton(text="🔍 Открыть поиск на Aviasales", url=partner_link)],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
