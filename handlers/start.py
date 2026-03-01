@@ -670,8 +670,9 @@ async def process_country_city_pick(callback: CallbackQuery, state: FSMContext):
             origin=city_name, origin_iata=value, origin_name=city_name,
             _country_role=None, _country_custom_role=None,
         )
-        # Если dest ещё не задан — просим маршрут заново
-        if not data.get("dest_iata"):
+        # dest_iata=None когда dest="везде" — проверяем именно поле "dest"
+        dest_val = data.get("dest", "")
+        if not data.get("dest_iata") and dest_val != "везде":
             await callback.message.answer(
                 f"Отлично! Теперь введите <b>город назначения</b>:",
                 parse_mode="HTML",
@@ -728,7 +729,8 @@ async def process_country_city_text(message: Message, state: FSMContext):
             origin=city_name, origin_iata=iata, origin_name=city_name,
             _country_role=None, _country_custom_role=None,
         )
-        if not data.get("dest_iata"):
+        dest_val = data.get("dest", "")
+        if not data.get("dest_iata") and dest_val != "везде":
             await message.answer(
                 f"✅ Город вылета: <b>{city_name}</b>\n\nТеперь введите <b>город назначения</b>:",
                 parse_mode="HTML",
@@ -792,6 +794,7 @@ async def _finalize_route(target, state: FSMContext):
 
 @router.message(FlightSearch.route)
 async def process_route(message: Message, state: FSMContext):
+    data_pre = await state.get_data()  # нужен для сохранения dest перед _ask_country_city
     origin, dest = validate_route(message.text)
     if not origin or not dest:
         await message.answer(
@@ -806,6 +809,13 @@ async def process_route(message: Message, state: FSMContext):
             # Проверяем — не страна ли это?
             country_cities = get_country_cities(origin)
             if country_cities:
+                # Сохраняем dest (в т.ч. "везде") в state ДО выхода,
+                # иначе после выбора города страны dest будет потерян
+                await state.update_data(
+                    dest=dest,
+                    dest_iata=None if dest == "везде" else data_pre.get("dest_iata"),
+                    dest_name="Везде" if dest == "везде" else dest,
+                )
                 await _ask_country_city(message, state, origin, country_cities, role="origin")
                 return
             # П.2: пробуем нечёткий поиск
@@ -836,7 +846,9 @@ async def process_route(message: Message, state: FSMContext):
             if country_cities:
                 # Сохраняем уже распознанный origin, чтобы не потерять его
                 await state.update_data(
-                    origin=origin, origin_iata=orig_iata, origin_name=origin_name,
+                    origin=origin,
+                    origin_iata=orig_iata,
+                    origin_name="Везде" if origin == "везде" else origin_name,
                 )
                 await _ask_country_city(message, state, dest, country_cities, role="dest")
                 return
