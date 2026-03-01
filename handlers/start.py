@@ -72,17 +72,18 @@ transfer_context: dict[int, dict] = {}
 # ════════════════════════════════════════════════════════════════
 
 class FlightSearch(StatesGroup):
-    route          = State()
-    choose_airport = State()
-    depart_date    = State()
-    need_return    = State()
-    return_date    = State()
-    flight_type    = State()
-    adults         = State()
-    has_children   = State()
-    children       = State()
-    infants        = State()
-    confirm        = State()
+    route                = State()
+    choose_airport       = State()
+    choose_country_city  = State()  # выбор города когда введена страна
+    depart_date          = State()
+    need_return          = State()
+    return_date          = State()
+    flight_type          = State()
+    adults               = State()
+    has_children         = State()
+    children             = State()
+    infants              = State()
+    confirm              = State()
 
 
 # ════════════════════════════════════════════════════════════════
