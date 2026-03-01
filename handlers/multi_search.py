@@ -14,12 +14,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from services.flight_search import (
-    format_avia_link_date,
-    search_flights_multi,
-    update_passengers_in_link,
-    normalize_date,
-)
+from services.flight_search import format_avia_link_date
 from utils.cities_loader import (
     get_iata,
     get_city_name,
@@ -76,10 +71,39 @@ def _validate_date(date_str: str) -> bool:
 
 
 def _build_multi_link(segments: list[dict], pax_code: str) -> str:
-    """Формирует ?params= ссылку для Aviasales."""
-    params = ""
-    for seg in segments:
-        params += f"{seg['origin_iata']}{format_avia_link_date(seg['date'])}{seg['dest_iata']}"
+    """
+    Формирует ?params= ссылку для Aviasales.
+
+    Формат Aviasales для составного маршрута:
+      {origin1}{date1}{city1}{date2}{city2}...{dateN}{destN}{pax}
+    Город-стык пишется ОДИН раз — он одновременно прилёт и вылет.
+
+    Пример (3 сегмента):
+      MOW → IST (10.03), IST → LON (15.03), LON → DXB (20.03), 2 взр., 1 реб., 1 млад.
+      → MOW1003IST1503LON2003DXB211
+
+    Если сегменты НЕ соединены (origin != предыдущий dest), город вылета
+    добавляется явно перед датой.
+    """
+    if not segments:
+        return f"https://www.aviasales.ru/?params={pax_code}"
+
+    # Первый сегмент: origin + date + dest
+    params = (
+        segments[0]["origin_iata"]
+        + format_avia_link_date(segments[0]["date"])
+        + segments[0]["dest_iata"]
+    )
+
+    # Последующие сегменты
+    for i, seg in enumerate(segments[1:], start=1):
+        prev_dest = segments[i - 1]["dest_iata"]
+        if seg["origin_iata"] != prev_dest:
+            # Несвязанный сегмент — добавляем origin явно
+            params += seg["origin_iata"]
+        # Дата + destination (origin уже есть как предыдущий dest)
+        params += format_avia_link_date(seg["date"]) + seg["dest_iata"]
+
     params += pax_code
     return f"https://www.aviasales.ru/?params={params}"
 
@@ -543,34 +567,14 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
     )
     await state.clear()
 
-    # Сегменты для API (даты в YYYY-MM-DD)
-    api_segments = [
-        {
-            "origin":      seg["origin_iata"],
-            "destination": seg["dest_iata"],
-            "date":        normalize_date(seg["date"]),
-        }
-        for seg in segments
-    ]
+    # Строим ?params= URL со ВСЕМИ сегментами маршрута.
+    # RT API возвращает deep-link на конкретный рейс (только 1 сегмент) —
+    # для составного маршрута он не подходит. Aviasales ?params= — единственный
+    # корректный формат поисковой ссылки с несколькими сегментами.
+    booking_url = _build_multi_link(segments, pax_code)
+    logger.info(f"[MultiSearch] booking_url: {booking_url}")
 
-    # Шаг 1: реальный запрос к v1/flight_search → URL из лучшего предложения
-    api_url = await search_flights_multi(
-        segments=api_segments,
-        adults=adults,
-        children=children,
-        infants=infants,
-    )
-
-    if api_url:
-        # Шаг 2: обновляем код пассажиров в ссылке из API
-        booking_url = update_passengers_in_link(api_url, pax_code)
-        logger.info(f"[MultiSearch] API URL: {booking_url[:80]}...")
-    else:
-        # Fallback: ?params= ссылка напрямую
-        booking_url = _build_multi_link(segments, pax_code)
-        logger.info(f"[MultiSearch] Fallback URL: {booking_url[:80]}...")
-
-    # Шаг 3: короткая партнёрская ссылка — как в стандартном поиске
+    # Короткая партнёрская ссылка — как в стандартном поиске
     partner_link = await convert_to_partner_link(booking_url)
     logger.info(f"[MultiSearch] user={callback.from_user.id} partner={partner_link[:60]}...")
 
