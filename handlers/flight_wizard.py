@@ -26,6 +26,7 @@ from handlers.flight_fsm import (
     _genitive,
 )
 from handlers.country_search import _ask_country_city, _finalize_route
+from services.flight_search import normalize_date
 
 router = Router()
 
