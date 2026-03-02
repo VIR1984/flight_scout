@@ -21,7 +21,7 @@ from utils.cities import GLOBAL_HUBS
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
-from handlers.flight_constants import COUNTRY_NAMES_RU, iso_flag, iata_country_iso, AIRPORT_NAMES as _AIRPORT_NAMES, AIRLINE_NAMES as _AIRLINE_NAMES
+from handlers.flight_constants import COUNTRY_NAMES_RU, iso_flag, iata_country_iso, AIRPORT_NAMES as _AIRPORT_NAMES, AIRLINE_NAMES as _AIRLINE_NAMES, AIRPORT_TO_METRO
 
 # ← ДОБАВЛЕНО: CANCEL_KB для кнопок отмены
 CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
@@ -193,6 +193,10 @@ async def process_everywhere_search(
     origin_iata = cheapest_flight["origin"]
     dest_iata   = cheapest_flight.get("destination")
     origin_name = get_city_name(origin_iata) or IATA_TO_CITY.get(origin_iata, origin_iata)
+    # Если origin_iata — аэропорт (SVO), а не город (MOW), ищем через metro
+    metro_origin = AIRPORT_TO_METRO.get(origin_iata)
+    if metro_origin and metro_origin != origin_iata:
+        origin_name = get_city_name(metro_origin) or IATA_TO_CITY.get(metro_origin, origin_name)
     dest_name   = get_city_name(dest_iata)   or IATA_TO_CITY.get(dest_iata,   dest_iata)
 
     duration_minutes = cheapest_flight.get("duration", 0)

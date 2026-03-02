@@ -57,13 +57,13 @@ def cancel_inactivity(chat_id: int) -> None:
 
 
 def schedule_inactivity(chat_id: int, user_id: int,
-                         delay_1_min: int = 3,
-                         delay_2_min: int = 10) -> None:
+                         delay_1_min: int = 15,
+                         delay_2_min: int = 20) -> None:
     """
     Запустить / перезапустить таймер бездействия.
 
-    delay_1_min  — первое напоминание (продолжить поиск), default 3 мин.
-    delay_2_min  — второе напоминание (вау-цены если актуально), default 10 мин.
+    delay_1_min  — первое напоминание (продолжить поиск), default 15 мин.
+    delay_2_min  — второе напоминание (вау-цены если актуально), default 20 мин.
 
     Вызывать только когда бот ждёт ввода.
     """
