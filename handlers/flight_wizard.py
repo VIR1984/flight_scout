@@ -30,8 +30,27 @@ from handlers.country_search import _ask_country_city, _finalize_route
 router = Router()
 
 # ════════════════════════════════════════════════════════════════
-# FSM: маршрут
+# Перехват кнопок нижней панели во всех состояниях FSM
 # ════════════════════════════════════════════════════════════════
+
+NAV_TEXTS = {"✈️ Поиск", "🔥 Горячие"}
+
+@router.message(FlightSearch.route, F.text.in_(NAV_TEXTS))
+@router.message(FlightSearch.depart_date, F.text.in_(NAV_TEXTS))
+@router.message(FlightSearch.return_date, F.text.in_(NAV_TEXTS))
+@router.message(FlightSearch.confirm, F.text.in_(NAV_TEXTS))
+async def fsm_nav_button(message: Message, state: FSMContext):
+    """Если нажата кнопка навигации во время FSM — сбрасываем и перенаправляем."""
+    await state.clear()
+    cancel_inactivity(message.chat.id)
+    if message.text == "🔥 Горячие":
+        from handlers.start import nav_hot
+        await nav_hot(message, state)
+    else:
+        from handlers.start import nav_search
+        await nav_search(message, state)
+
+
 
 @router.message(FlightSearch.route)
 async def process_route(message: Message, state: FSMContext):
