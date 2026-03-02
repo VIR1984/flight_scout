@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 # Импорт роутеров
 from handlers.start import router as start_router
+from handlers.nav_router import router as nav_router
 from handlers.flight_wizard import router as wizard_router
 from handlers.country_search import router as country_router
 from handlers.search_results import router as results_router
@@ -70,6 +71,9 @@ async def main():
     # ─── 5. Регистрация роутеров ───
     # ВАЖНО: hot_deals_router должен быть ДО start_router,
     # потому что start_router раньше перехватывал hot_deals_menu
+    dp.include_router(nav_router)       # ← ПЕРВЫМ: nav-кнопки всегда сбрасывают FSM
+    logger.info("✅ Роутер: nav_router")
+
     dp.include_router(hot_deals_router)
     logger.info("✅ Роутер: hot_deals_router")
 

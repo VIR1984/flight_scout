@@ -149,7 +149,9 @@ async def nav_hot(message: Message, state: FSMContext):
 
 @router.message(F.text == "📋 Подписки")
 async def nav_subs(message: Message, state: FSMContext):
+    await state.clear()
     cancel_inactivity(message.chat.id)
+    mark_fsm_inactive(message.chat.id)
     user_id = message.from_user.id
     subs = await redis_client.get_hot_subs(user_id)
     if not subs:
@@ -169,6 +171,9 @@ async def nav_subs(message: Message, state: FSMContext):
 
 @router.message(F.text == "❓ Помощь")
 async def nav_help(message: Message, state: FSMContext):
+    await state.clear()
+    cancel_inactivity(message.chat.id)
+    mark_fsm_inactive(message.chat.id)
     await message.answer(
         "❓ <b>Как пользоваться</b>\n\n"
         "✈️ <b>Поиск</b> — простой маршрут туда и/или обратно.\n\n"
@@ -333,12 +338,9 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "💬 Обратная связь")
 async def nav_feedback(message: Message, state: FSMContext):
     """Нажатие кнопки «Обратная связь» на нав-панели."""
-    current = await state.get_state()
-    if current and not current.startswith("FeedbackState"):
-        await message.answer(
-            "⚠️ Сначала завершите или отмените текущий поиск.",
-        )
-        return
+    await state.clear()
+    cancel_inactivity(message.chat.id)
+    mark_fsm_inactive(message.chat.id)
     await state.set_state(FeedbackState.waiting)
     await message.answer(
         "💬 <b>Обратная связь</b>\n\n"
