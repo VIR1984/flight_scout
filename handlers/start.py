@@ -17,8 +17,8 @@ from utils.redis_client import redis_client
 from utils.smart_reminder import schedule_inactivity, cancel_inactivity, mark_fsm_inactive
 from handlers.quick_search import handle_flight_request
 from handlers.flight_constants import CANCEL_KB, NAV_KB
-from handlers.flight_fsm import FlightSearch, _get_metro, _airport_keyboard
-from handlers.flight_wizard import ask_flight_type, ask_adults, show_summary, _genitive
+from handlers.flight_fsm import FlightSearch, _get_metro, _airport_keyboard, _genitive
+from handlers.flight_wizard import ask_flight_type, ask_adults, show_summary
 
 router = Router()
 _SEARCH_SEMAPHORE = asyncio.Semaphore(10)
