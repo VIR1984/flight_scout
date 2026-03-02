@@ -154,7 +154,7 @@ async def start_multi_search(message: Message, state: FSMContext):
     await state.set_state(MultiSearch.segment_origin)
     schedule_inactivity(message.chat.id, message.from_user.id)
     await message.answer(
-        "✈️ <b>Составной маршрут</b>\n\n"
+        "🗺 <b>Составной маршрут — Шаг 1</b>\n\n"
         "Добавьте от 2 до 6 перелётов.\n"
         "Введите <b>город отправления</b> первого перелёта:\n\n"
         "<i>Пример: Москва</i>",
@@ -191,7 +191,10 @@ async def ms_origin(message: Message, state: FSMContext):
     await state.update_data(_cur_origin_iata=iata, _cur_origin_name=name)
     await state.set_state(MultiSearch.segment_dest)
     schedule_inactivity(message.chat.id, message.from_user.id)
+    data_tmp = await state.get_data()
+    seg_num = len(data_tmp.get("segments", [])) + 1
     await message.answer(
+        f"🗺 <b>Перелёт {seg_num} — город прибытия</b>\n\n"
         f"📍 Вылет: <b>{name}</b>\n\n"
         "Введите <b>город прибытия</b>:\n<i>Пример: Стамбул</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,

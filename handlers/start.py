@@ -12,6 +12,7 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
+from aiogram.fsm.state import State, StatesGroup
 
 from utils.redis_client import redis_client
 from utils.smart_reminder import schedule_inactivity, cancel_inactivity, mark_fsm_inactive
@@ -25,8 +26,9 @@ _SEARCH_SEMAPHORE = asyncio.Semaphore(10)
 
 MAIN_MENU_TEXT = (
     "Привет! Я помогу тебе летать выгодно.\n\n"
-    "🛫 <b>Поиск</b> — билеты на любые даты и направления.\n"
-    "🔥 <b>Горячие предложения</b> — уведомления о супер-ценах.\n\n"
+    "✈️ <b>Поиск</b> — простой маршрут туда и обратно.\n"
+    "🗺 <b>Маршрут</b> — составной поиск по нескольким городам.\n"
+    "🔥 <b>Горячие</b> — уведомления о супер-ценах.\n\n"
     "Жми кнопки внизу, чтобы начать"
 )
 
@@ -63,23 +65,35 @@ async def nav_search(message: Message, state: FSMContext):
     if current and not current.startswith("FlyStackTrack"):
         await state.clear()
     cancel_inactivity(message.chat.id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✈️ Простой маршрут", callback_data="search_simple")],
-        [InlineKeyboardButton(text="🗺 Составной маршрут", callback_data="search_multi")],
-    ])
     await message.answer(
-        "Выберите тип поиска:\n\n"
-        "<b>Простой маршрут</b> — в одну или обе стороны.\n"
-        "<b>Составной маршрут</b> — несколько перелётов по разным городам.",
-        parse_mode="HTML", reply_markup=kb,
+        "✈️ <b>Шаг 1/6</b> — Маршрут\n\n"
+        "<b>Напишите маршрут:</b> Город отправления — Город или страну прибытия\n\n"
+        "<i>Примеры:\n"
+        "• Москва — Сочи\n"
+        "• Москва — Таиланд\n"
+        "• Казань — Египет</i>\n\n"
+        "Если ещё не решили откуда или куда — напишите «Везде».",
+        parse_mode="HTML",
     )
+    await state.set_state(FlightSearch.route)
+    schedule_inactivity(message.chat.id, message.from_user.id)
+
+
+@router.message(F.text == "🗺 Маршрут")
+async def nav_multi_search(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current and not current.startswith("FlyStackTrack"):
+        await state.clear()
+    cancel_inactivity(message.chat.id)
+    from handlers.multi_search import start_multi_search
+    await start_multi_search(message, state)
 
 
 @router.callback_query(F.data == "search_simple")
 async def handle_search_simple(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     await callback.message.edit_text(
-        "Начнём поиск билетов 👌\n\n"
+        "✈️ <b>Шаг 1/6</b> — Маршрут\n\n"
         "<b>Напишите маршрут:</b> Город отправления — Город или страну прибытия\n\n"
         "<i>Примеры:\n"
         "• Москва — Сочи\n"
@@ -145,10 +159,12 @@ async def nav_subs(message: Message, state: FSMContext):
 async def nav_help(message: Message, state: FSMContext):
     await message.answer(
         "❓ <b>Как пользоваться</b>\n\n"
-        "✈️ <b>Поиск</b> — маршрут, даты, пассажиры → лучшие цены.\n\n"
+        "✈️ <b>Поиск</b> — простой маршрут туда и/или обратно.\n\n"
+        "🗺 <b>Маршрут</b> — составной поиск: несколько перелётов по разным городам.\n\n"
         "🔥 <b>Горячие</b> — подпишитесь на направления, "
         "и я напишу когда цена упадёт на 10%+.\n\n"
         "📋 <b>Подписки</b> — просмотр и управление активными подписками.\n\n"
+        "💬 <b>Обратная связь</b> — сообщить о баге или предложить улучшение.\n\n"
         "<i>Нажмите «✈️ Поиск» чтобы начать.</i>",
         parse_mode="HTML",
     )
@@ -296,6 +312,65 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     schedule_inactivity(callback.message.chat.id, callback.from_user.id)
     await callback.answer()
 
+
+
+# ════════════════════════════════════════════════════════════════
+# Обратная связь
+# ════════════════════════════════════════════════════════════════
+
+FEEDBACK_CHAT_ID = None  # Замените на ваш chat_id или @username канала
+
+@router.message(F.text == "💬 Обратная связь")
+async def nav_feedback(message: Message, state: FSMContext):
+    cancel_inactivity(message.chat.id)
+    current = await state.get_state()
+    if current:
+        await state.clear()
+    await state.set_state(FeedbackState.waiting)
+    await message.answer(
+        "💬 <b>Обратная связь</b>\n\n"
+        "Нашли баг или есть идея как улучшить бота?\n"
+        "Напишите сюда — я передам команде 👇",
+        parse_mode="HTML",
+    )
+
+
+class FeedbackState(StatesGroup):
+    waiting = State()
+
+
+@router.message(FeedbackState.waiting)
+async def process_feedback(message: Message, state: FSMContext, bot):
+    await state.clear()
+    user = message.from_user
+    user_info = f"@{user.username}" if user.username else f"id:{user.id}"
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+
+    # Сохраняем в redis для истории
+    feedback_key = f"feedback:{user.id}:{int(message.date.timestamp())}"
+    try:
+        await redis_client.client.set(feedback_key, message.text, ex=60*60*24*90)
+    except Exception:
+        pass
+
+    # Пересылаем владельцу бота если задан FEEDBACK_CHAT_ID
+    if FEEDBACK_CHAT_ID:
+        try:
+            await bot.send_message(
+                FEEDBACK_CHAT_ID,
+                f"💬 <b>Обратная связь</b>\n"
+                f"От: {full_name} ({user_info})\n"
+                f"ID: <code>{user.id}</code>\n\n"
+                f"{message.text}",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    await message.answer(
+        "✅ Спасибо! Ваше сообщение передано команде.\n\n"
+        "Если нашли баг — постараемся исправить быстро 🔧",
+    )
 
 # ════════════════════════════════════════════════════════════════
 # Fallback: текст вне FSM → быстрый поиск
