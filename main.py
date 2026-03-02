@@ -56,6 +56,13 @@ async def main():
     import utils.bot_instance as _bot_instance
     _bot_instance.bot = bot
 
+    # Подключаем хендлер логов в канал (ERROR и выше → в ANALYTICS_CHANNEL_ID)
+    from utils.channel_logger import ChannelLogHandler
+    _ch_handler = ChannelLogHandler(level=logging.ERROR)
+    _ch_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    logging.getLogger().addHandler(_ch_handler)
+    logger.info("✅ ChannelLogHandler подключён")
+
     # ─── 4. Диспетчер ───
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
@@ -103,6 +110,9 @@ async def main():
 
     # ─── 7. Polling ───
     try:
+        # Уведомляем канал о старте бота
+        from utils.channel_logger import log_event
+        asyncio.create_task(log_event("bot_start", detail="Бот запущен и готов к работе"))
         await dp.start_polling(bot)
     finally:
         logger.info("🛑 Остановка бота...")

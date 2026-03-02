@@ -17,6 +17,7 @@ from aiogram.fsm.state import State, StatesGroup
 from utils.redis_client import redis_client
 from utils.smart_reminder import schedule_inactivity, cancel_inactivity, mark_fsm_inactive
 from handlers.quick_search import handle_flight_request
+from utils.channel_logger import log_feedback, log_event, log_error
 from handlers.flight_constants import CANCEL_KB, NAV_KB
 from handlers.flight_fsm import FlightSearch, _get_metro, _airport_keyboard, _genitive
 from handlers.flight_wizard import ask_flight_type, ask_adults, show_summary
@@ -44,6 +45,12 @@ MAIN_MENU_TEXT = (
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(MAIN_MENU_TEXT, parse_mode="HTML", reply_markup=NAV_KB)
+    # Аналитика: новый пользователь
+    u = message.from_user
+    asyncio.create_task(log_event(
+        "new_user", user_id=u.id, username=u.username,
+        detail=f"Имя: {(u.first_name or '') + ' ' + (u.last_name or '')}".strip()
+    ))
 
 
 @router.callback_query(F.data == "main_menu")
@@ -322,14 +329,38 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
 # Обратная связь
 # ════════════════════════════════════════════════════════════════
 
-FEEDBACK_CHAT_ID = None  # Замените на ваш chat_id или @username канала
+@router.message(F.text == "💬 Обратная связь")
+async def nav_feedback(message: Message, state: FSMContext):
+    """Нажатие кнопки «Обратная связь» на нав-панели."""
+    current = await state.get_state()
+    if current and not current.startswith("FeedbackState"):
+        await message.answer(
+            "⚠️ Сначала завершите или отмените текущий поиск.",
+        )
+        return
+    await state.set_state(FeedbackState.waiting)
+    await message.answer(
+        "💬 <b>Обратная связь</b>\n\n"
+        "Напишите ваше сообщение — баг, пожелание или вопрос.\n"
+        "Оно придёт напрямую команде разработки.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✖ Отмена", callback_data="cancel_feedback")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "cancel_feedback")
+async def cancel_feedback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Отменено.")
+    await callback.answer()
 
 
 @router.message(FeedbackState.waiting)
-async def process_feedback(message: Message, state: FSMContext, bot):
+async def process_feedback(message: Message, state: FSMContext):
     await state.clear()
-    user = message.from_user
-    user_info = f"@{user.username}" if user.username else f"id:{user.id}"
+    user      = message.from_user
     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
 
     # Сохраняем в redis для истории
@@ -339,23 +370,15 @@ async def process_feedback(message: Message, state: FSMContext, bot):
     except Exception:
         pass
 
-    # Пересылаем владельцу бота если задан FEEDBACK_CHAT_ID
-    if FEEDBACK_CHAT_ID:
-        try:
-            await bot.send_message(
-                FEEDBACK_CHAT_ID,
-                f"💬 <b>Обратная связь</b>\n"
-                f"От: {full_name} ({user_info})\n"
-                f"ID: <code>{user.id}</code>\n\n"
-                f"{message.text}",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+    # Отправляем в канал аналитики
+    asyncio.create_task(log_feedback(
+        user_id=user.id, username=user.username,
+        full_name=full_name, text=message.text,
+    ))
 
     await message.answer(
         "✅ Спасибо! Ваше сообщение передано команде.\n\n"
-        "Если нашли баг — постараемся исправить быстро 🔧",
+        "Постараемся ответить или исправить как можно быстрее 🔧",
     )
 
 # ════════════════════════════════════════════════════════════════
@@ -364,7 +387,8 @@ async def process_feedback(message: Message, state: FSMContext, bot):
 
 # Тексты кнопок навигационной панели — обрабатываются выше своими хендлерами
 _NAV_BUTTON_TEXTS = {
-    "✈️ Поиск", "🗺 Маршрут", "🔥 Горячие", "📋 Подписки", "❓ Помощь",
+    "✈️ Поиск", "🗺 Маршрут", "🔥 Горячие",
+    "📋 Подписки", "❓ Помощь", "💬 Обратная связь",
 }
 
 @router.message(F.text)
