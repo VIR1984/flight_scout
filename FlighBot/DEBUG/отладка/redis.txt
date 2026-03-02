@@ -1,0 +1,2 @@
+добавить для деплоя
+REDIS_URL=rediss://default:AbHxAAIncDIwMjcwMzNjNjg4OGE0MDRmOTM2NzA3NGRjNjQ2NTMwMHAyNDU1NTM@evolved-martin-45553.upstash.io:6379

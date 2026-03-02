@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scout — Умный поиск авиабилетов</title>
+<link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;500;700;800;900&family=Lora:ital,wght@0,400;1,400;1,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #07090f;
+  --surface:   #0d1118;
+  --s2:        #131820;
+  --s3:        #1a2130;
+  --border:    rgba(255,255,255,0.07);
+  --border2:   rgba(255,255,255,0.12);
+  --accent:    #3d8eff;
+  --accent2:   #6c47ff;
+  --glow:      rgba(61,142,255,0.18);
+  --text:      #e2e8f8;
+  --muted:     #5a6880;
+  --muted2:    #8494b0;
+  --green:     #1fd67a;
+  --red:       #ff4f6d;
+  --yellow:    #f5b731;
+  --orange:    #ff7a3d;
+  --teal:      #0ec8b8;
+  --pink:      #e040fb;
+  --font:      'Cabinet Grotesk', sans-serif;
+  --serif:     'Lora', Georgia, serif;
+  --mono:      'JetBrains Mono', monospace;
+  --hh:        60px;
+  --fh:        52px;
+  --rw:        340px;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size:14px;
+  display:flex;
+  flex-direction:column;
+  min-height:100vh;
+}
+
+/* ─── NOISE TEXTURE ──────────────────────────── */
+body::before {
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  opacity:0.4;
+}
+
+/* ─── HEADER ─────────────────────────────────── */
+header {
+  height: var(--hh);
+  background: rgba(7,9,15,0.92);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  flex-shrink: 0;
+  gap: 0;
+}
+
+.logo {
+  display:flex;align-items:center;gap:10px;
+  font-size:20px;font-weight:900;letter-spacing:-0.5px;
+  text-decoration:none;color:var(--text);
+  margin-right: 32px;
+  flex-shrink:0;
+}
+.logo-mark {
+  width:34px;height:34px;border-radius:10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;
+  box-shadow: 0 4px 16px rgba(61,142,255,0.4);
+}
+.logo span { letter-spacing: -1px; }
+
+.header-nav {
+  display:flex;align-items:center;gap:4px;
+  flex:1;
+}
+.hn-item {
+  padding:6px 14px;border-radius:8px;
+  font-size:13px;font-weight:600;
+  color:var(--muted2);
+  cursor:pointer;
+  border:none;background:none;
+  transition:all .15s;
+  white-space:nowrap;
+}
+.hn-item:hover{color:var(--text);background:var(--s2)}
+.hn-item.active{color:var(--accent);background:rgba(61,142,255,0.1)}
+
+.header-right {
+  display:flex;align-items:center;gap:10px;
+  margin-left:auto;
+  flex-shrink:0;
+}
+
+.hdr-pill {
+  display:flex;align-items:center;gap:6px;
+  padding:5px 12px;border-radius:20px;
+  font-size:12px;font-weight:600;
+  background:var(--s2);
+  border:1px solid var(--border2);
+  color:var(--muted2);
+  cursor:pointer;
+  transition:all .15s;
+}
+.hdr-pill:hover{border-color:var(--accent);color:var(--accent)}
+.hdr-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pdot 2s infinite;box-shadow:0 0 6px var(--green)}
+@keyframes pdot{0%,100%{opacity:1}50%{opacity:.4}}
+
+.btn-signin {
+  padding:7px 18px;border-radius:10px;
+  font-size:13px;font-weight:700;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;border:none;cursor:pointer;
+  box-shadow:0 4px 16px rgba(61,142,255,0.35);
+  transition:all .15s;
+  font-family:var(--font);
+}
+.btn-signin:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(61,142,255,0.45)}
+
+/* ─── MAIN CONTENT ───────────────────────────── */
+.app-body {
+  flex:1;
+  display:flex;
+  overflow:hidden;
+  position:relative;
+  z-index:1;
+}
+
+/* ─── LEFT: CHAT ─────────────────────────────── */
+.chat-col {
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  border-right:1px solid var(--border);
+  min-width:0;
+}
+
+.chat-topbar {
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 22px;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+  background:rgba(7,9,15,0.6);
+  backdrop-filter:blur(12px);
+}
+.ct-left{display:flex;align-items:center;gap:10px}
+.ct-icon{
+  width:36px;height:36px;border-radius:10px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-size:17px;
+}
+.ct-title{font-size:15px;font-weight:800}
+.ct-sub{font-size:11px;color:var(--muted2);margin-top:1px}
+
+.ct-actions{display:flex;gap:8px}
+.ct-btn{
+  padding:6px 14px;border-radius:8px;border:1px solid var(--border2);
+  background:var(--s2);color:var(--muted2);font-size:12px;font-weight:600;
+  cursor:pointer;transition:all .15s;font-family:var(--font);
+}
+.ct-btn:hover{color:var(--text);border-color:var(--border2)}
+.ct-btn.primary{background:var(--accent);color:#fff;border-color:transparent;box-shadow:0 3px 12px rgba(61,142,255,0.35)}
+.ct-btn.primary:hover{background:#5a9eff}
+
+/* Chat messages */
+.chat-messages {
+  flex:1;overflow-y:auto;
+  padding:22px 22px 10px;
+  display:flex;flex-direction:column;gap:16px;
+  scrollbar-width:thin;scrollbar-color:var(--s3) transparent;
+}
+
+.msg{display:flex;gap:10px;animation:mfade .3s ease}
+.msg.user{flex-direction:row-reverse}
+@keyframes mfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.msg-av{
+  width:32px;height:32px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;flex-shrink:0;margin-top:2px;
+}
+.av-bot{background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.av-user{background:linear-gradient(135deg,#ff7a3d,#e040fb);font-weight:800;font-size:12px;color:#fff}
+
+.msg-wrap{max-width:72%;display:flex;flex-direction:column;gap:8px}
+
+.bubble{
+  padding:11px 15px;border-radius:16px;
+  font-size:13.5px;line-height:1.6;
+}
+.bot .bubble{
+  background:var(--s2);border:1px solid var(--border);
+  border-top-left-radius:4px;
+}
+.user .bubble{
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;border-top-right-radius:4px;
+  align-self:flex-end;
+}
+
+.msg-time{font-size:10px;color:var(--muted);padding:0 4px}
+.user .msg-time{text-align:right}
+
+/* Inline buttons */
+.ibtns{display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}
+.ibtn{
+  padding:6px 13px;border-radius:20px;
+  border:1px solid rgba(61,142,255,0.25);
+  background:rgba(61,142,255,0.08);color:var(--accent);
+  font-size:12px;font-weight:600;cursor:pointer;
+  font-family:var(--font);transition:all .15s;
+}
+.ibtn:hover{background:rgba(61,142,255,0.18);border-color:var(--accent)}
+.ibtn.sel{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* Flight result card */
+.fc{
+  background:var(--s3);border:1px solid var(--border);
+  border-radius:14px;padding:14px 16px;cursor:pointer;
+  transition:all .2s;margin-top:4px;
+}
+.fc:hover{border-color:rgba(61,142,255,0.4);transform:translateY(-1px);box-shadow:0 8px 28px rgba(0,0,0,0.3)}
+.fc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px}
+.fc-airline{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted2)}
+.fc-logo{
+  width:26px;height:26px;border-radius:7px;
+  background:var(--s2);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:var(--accent);
+}
+.fc-price{font-size:19px;font-weight:900;color:var(--green)}
+.fc-route{display:flex;align-items:center}
+.fc-pt{text-align:center}
+.fc-t{font-size:21px;font-weight:900;letter-spacing:-1px}
+.fc-iata{font-size:12px;color:var(--muted2);margin-top:1px}
+.fc-city{font-size:10px;color:var(--muted)}
+.fc-mid{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:0 12px}
+.fc-dur{font-size:10px;color:var(--muted)}
+.fc-trk{display:flex;align-items:center;width:100%;gap:0}
+.trk-l{flex:1;height:1px;background:var(--border2)}
+.trk-p{font-size:13px;color:var(--accent)}
+.fc-stops{font-size:10px;padding:2px 7px;border-radius:8px;font-weight:700}
+.stops-d{background:rgba(31,214,122,0.1);color:var(--green)}
+.stops-s{background:rgba(245,183,49,0.1);color:var(--yellow)}
+.fc-bot{display:flex;align-items:center;justify-content:space-between;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)}
+.fc-meta{font-size:11px;color:var(--muted)}
+.btn-book{
+  padding:6px 16px;border-radius:8px;border:none;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;font-size:12px;font-weight:700;cursor:pointer;
+  font-family:var(--font);transition:all .15s;text-decoration:none;
+}
+.btn-book:hover{opacity:.88;transform:translateY(-1px)}
+
+/* Typing */
+.typing-wrap{display:flex;gap:10px;align-items:flex-start}
+.typing-bubble{
+  padding:12px 16px;background:var(--s2);border:1px solid var(--border);
+  border-radius:16px;border-top-left-radius:4px;
+  display:flex;gap:4px;align-items:center;
+}
+.typing-bubble span{
+  width:6px;height:6px;border-radius:50%;background:var(--muted);
+  animation:tb 1.2s infinite;
+}
+.typing-bubble span:nth-child(2){animation-delay:.2s}
+.typing-bubble span:nth-child(3){animation-delay:.4s}
+@keyframes tb{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+
+/* ─── CHAT INPUT ─────────────────────────────── */
+.chat-input-area {
+  flex-shrink:0;
+  padding:12px 18px 14px;
+  border-top:1px solid var(--border);
+  background:rgba(7,9,15,0.8);
+  backdrop-filter:blur(12px);
+}
+
+.chips-row{
+  display:flex;gap:6px;margin-bottom:10px;
+  overflow-x:auto;scrollbar-width:none;
+}
+.chips-row::-webkit-scrollbar{display:none}
+.chip{
+  white-space:nowrap;padding:5px 11px;border-radius:16px;
+  border:1px solid var(--border);background:var(--s2);
+  color:var(--muted2);font-size:11px;font-weight:600;cursor:pointer;
+  font-family:var(--font);transition:all .15s;
+}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+
+.input-row{display:flex;gap:8px;align-items:flex-end}
+.input-box{
+  flex:1;background:var(--s2);border:1px solid var(--border);
+  border-radius:12px;display:flex;align-items:center;
+  padding:4px 6px 4px 14px;transition:border-color .15s;
+}
+.input-box:focus-within{border-color:rgba(61,142,255,0.5);box-shadow:0 0 0 3px rgba(61,142,255,0.08)}
+.input-box textarea{
+  flex:1;background:none;border:none;outline:none;
+  color:var(--text);font-family:var(--font);font-size:13px;
+  resize:none;padding:9px 0;line-height:1.5;max-height:80px;
+}
+.input-box textarea::placeholder{color:var(--muted)}
+.ibox-btn{
+  width:30px;height:30px;border-radius:7px;border:none;
+  background:none;color:var(--muted);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:15px;
+  transition:all .15s;
+}
+.ibox-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.send-btn{
+  width:42px;height:42px;border-radius:11px;border:none;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 16px rgba(61,142,255,0.35);transition:all .15s;
+}
+.send-btn:hover{transform:translateY(-2px);box-shadow:0 6px 22px rgba(61,142,255,0.5)}
+
+/* ─── RIGHT PANEL ────────────────────────────── */
+.right-col {
+  width: var(--rw);
+  flex-shrink:0;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  background:var(--surface);
+}
+
+.rp-scroll{
+  flex:1;overflow-y:auto;
+  padding:14px 14px 0;
+  scrollbar-width:thin;scrollbar-color:var(--s3) transparent;
+  display:flex;flex-direction:column;gap:12px;
+  padding-bottom:14px;
+}
+
+/* ── Widget base ── */
+.widget{
+  border-radius:16px;
+  border:1px solid var(--border);
+  overflow:hidden;
+  background:var(--s2);
+  flex-shrink:0;
+}
+
+.w-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px 10px;
+  border-bottom:1px solid var(--border);
+}
+.w-title{
+  display:flex;align-items:center;gap:7px;
+  font-size:12px;font-weight:800;
+  letter-spacing:.3px;text-transform:uppercase;
+  color:var(--muted2);
+}
+.w-icon{
+  width:24px;height:24px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;font-size:13px;
+}
+.w-link{font-size:11px;color:var(--accent);cursor:pointer;font-weight:600}
+.w-link:hover{text-decoration:underline}
+
+.w-body{padding:12px 14px}
+
+/* ── NEWS widget ── */
+.news-item{
+  display:flex;gap:10px;padding:9px 0;
+  border-bottom:1px solid var(--border);cursor:pointer;
+  transition:all .15s;
+}
+.news-item:last-child{border-bottom:none}
+.news-item:hover .news-title{color:var(--accent)}
+.news-img{
+  width:52px;height:42px;border-radius:8px;flex-shrink:0;
+  object-fit:cover;background:var(--s3);
+  display:flex;align-items:center;justify-content:center;font-size:20px;
+}
+.news-content{}
+.news-cat{font-size:10px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.news-title{font-size:12px;font-weight:700;line-height:1.4;color:var(--text);transition:color .15s}
+.news-time{font-size:10px;color:var(--muted);margin-top:3px}
+
+/* ── TRANSFER widget ── */
+.transfer-search{
+  display:flex;flex-direction:column;gap:8px;
+  padding:12px 14px;
+  border-bottom:1px solid var(--border);
+}
+.t-row{display:flex;gap:6px}
+.t-input{
+  flex:1;background:var(--s3);border:1px solid var(--border);
+  border-radius:9px;padding:7px 11px;color:var(--text);
+  font-family:var(--font);font-size:12px;outline:none;
+  transition:border-color .15s;
+}
+.t-input:focus{border-color:rgba(61,142,255,0.5)}
+.t-input::placeholder{color:var(--muted)}
+.btn-search-tr{
+  padding:7px 14px;border-radius:9px;border:none;
+  background:linear-gradient(135deg,var(--teal),var(--accent2));
+  color:#fff;font-size:12px;font-weight:700;cursor:pointer;
+  font-family:var(--font);transition:all .15s;white-space:nowrap;
+}
+.btn-search-tr:hover{opacity:.88}
+
+.tr-card{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 14px;cursor:pointer;transition:all .15s;
+  border-bottom:1px solid var(--border);
+}
+.tr-card:last-child{border-bottom:none;padding-bottom:12px}
+.tr-card:hover{background:var(--s3)}
+.tr-left{display:flex;align-items:center;gap:8px}
+.tr-emoji{font-size:18px}
+.tr-info{}
+.tr-type{font-size:12px;font-weight:700}
+.tr-meta{font-size:10px;color:var(--muted);margin-top:1px}
+.tr-price{text-align:right}
+.tr-pval{font-size:14px;font-weight:900;color:var(--teal)}
+.tr-book{
+  font-size:10px;color:var(--accent);font-weight:600;margin-top:2px;cursor:pointer;
+}
+.tr-book:hover{text-decoration:underline}
+
+/* ── ESIM (AIRALO) widget ── */
+.esim-banner{
+  margin:12px 14px 0;
+  border-radius:12px;overflow:hidden;
+  background:linear-gradient(135deg, #1a0533, #0d1a33);
+  border:1px solid rgba(108,71,255,0.3);
+  position:relative;padding:14px;
+  cursor:pointer;transition:all .2s;
+}
+.esim-banner:hover{border-color:rgba(108,71,255,0.6);transform:translateY(-1px)}
+.esim-banner::before{
+  content:'';position:absolute;top:-30px;right:-20px;
+  width:100px;height:100px;border-radius:50%;
+  background:radial-gradient(circle,rgba(108,71,255,0.3),transparent);
+}
+.esim-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.esim-logo{display:flex;align-items:center;gap:7px}
+.esim-logo-icon{
+  width:28px;height:28px;border-radius:8px;
+  background:linear-gradient(135deg,#6c47ff,#e040fb);
+  display:flex;align-items:center;justify-content:center;font-size:14px;
+}
+.esim-logo-text{font-size:13px;font-weight:800;color:#fff}
+.esim-badge{
+  background:rgba(224,64,251,0.2);border:1px solid rgba(224,64,251,0.4);
+  color:#e040fb;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;
+  text-transform:uppercase;letter-spacing:.5px;
+}
+.esim-desc{font-size:12px;color:rgba(255,255,255,.7);line-height:1.5;margin-bottom:10px}
+.esim-desc strong{color:#fff}
+
+.esim-countries{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+.esim-country{
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  border-radius:6px;padding:3px 8px;font-size:10px;color:rgba(255,255,255,.8);
+  font-weight:600;
+}
+.btn-esim{
+  width:100%;padding:9px;border-radius:9px;border:none;
+  background:linear-gradient(135deg,#6c47ff,#e040fb);
+  color:#fff;font-size:12px;font-weight:800;cursor:pointer;
+  font-family:var(--font);transition:all .15s;letter-spacing:.3px;
+}
+.btn-esim:hover{opacity:.9;transform:translateY(-1px)}
+
+.esim-plans{padding:0 14px 12px}
+.plan-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 0;border-bottom:1px solid var(--border);
+}
+.plan-row:last-child{border-bottom:none}
+.plan-info{}
+.plan-name{font-size:12px;font-weight:700}
+.plan-meta{font-size:10px;color:var(--muted);margin-top:1px}
+.plan-right{display:flex;align-items:center;gap:8px}
+.plan-price{font-size:13px;font-weight:900;color:var(--pink)}
+.btn-plan{
+  padding:4px 11px;border-radius:7px;border:1px solid rgba(224,64,251,0.35);
+  background:rgba(224,64,251,0.1);color:var(--pink);
+  font-size:11px;font-weight:700;cursor:pointer;font-family:var(--font);
+  transition:all .15s;
+}
+.btn-plan:hover{background:rgba(224,64,251,0.2)}
+
+/* ── FLYSTACK widget ── */
+.fs-search{
+  padding:10px 14px;border-bottom:1px solid var(--border);
+  display:flex;gap:6px;
+}
+.fs-input{
+  flex:1;background:var(--s3);border:1px solid var(--border);
+  border-radius:9px;padding:7px 11px;color:var(--text);
+  font-family:var(--font);font-size:12px;outline:none;
+  transition:border-color .15s;
+}
+.fs-input:focus{border-color:rgba(14,200,184,0.5)}
+.fs-input::placeholder{color:var(--muted)}
+.btn-fs{
+  padding:7px 12px;border-radius:9px;border:none;
+  background:linear-gradient(135deg,var(--teal),#0aa88a);
+  color:#fff;font-size:11px;font-weight:700;cursor:pointer;
+  font-family:var(--font);
+}
+
+.fs-flight{
+  padding:10px 14px;border-bottom:1px solid var(--border);
+  cursor:pointer;transition:background .15s;
+}
+.fs-flight:hover{background:var(--s3)}
+.fs-flight:last-child{border-bottom:none}
+.fs-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
+.fs-num{font-size:13px;font-weight:800;font-family:var(--mono)}
+.fs-status{
+  font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;
+}
+.st-ok{background:rgba(31,214,122,0.12);color:var(--green)}
+.st-del{background:rgba(245,183,49,0.12);color:var(--yellow)}
+.st-can{background:rgba(255,79,109,0.12);color:var(--red)}
+.fs-route{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted2)}
+.fs-sep{color:var(--muted)}
+.fs-bot{display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--muted)}
+
+/* ── PRICE TRACKER widget ── */
+.pt-item{
+  padding:10px 14px;border-bottom:1px solid var(--border);
+}
+.pt-item:last-child{border-bottom:none}
+.pt-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.pt-route{font-size:12px;font-weight:800}
+.pt-price{font-size:15px;font-weight:900;color:var(--green)}
+.pt-bar-wrap{height:4px;background:var(--border);border-radius:2px;margin-bottom:4px;overflow:hidden}
+.pt-bar{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--green),var(--accent))}
+.pt-range{display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}
+.pt-change{font-size:10px;margin-top:4px;font-weight:700}
+.pt-down{color:var(--green)}
+.pt-up{color:var(--red)}
+
+/* ─── FOOTER ─────────────────────────────────── */
+footer {
+  height: var(--fh);
+  background: rgba(7,9,15,0.95);
+  border-top:1px solid var(--border);
+  display:flex;align-items:center;
+  padding:0 24px;
+  flex-shrink:0;
+  gap:0;
+  z-index:100;
+  position:relative;
+}
+
+.footer-left{display:flex;align-items:center;gap:20px}
+.footer-logo{font-size:14px;font-weight:900;color:var(--muted2)}
+.footer-links{display:flex;gap:16px}
+.f-link{font-size:12px;color:var(--muted);cursor:pointer;transition:color .15s}
+.f-link:hover{color:var(--text)}
+
+.footer-center{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  gap:16px;
+}
+.f-partner{
+  display:flex;align-items:center;gap:5px;
+  font-size:11px;color:var(--muted);
+  cursor:pointer;transition:color .15s;
+}
+.f-partner:hover{color:var(--muted2)}
+.f-partner-icon{font-size:13px}
+.f-divider{width:1px;height:16px;background:var(--border)}
+
+.footer-right{
+  display:flex;align-items:center;gap:12px;
+}
+.f-stat{text-align:center}
+.f-stat-val{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent)}
+.f-stat-lab{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px}
+
+/* ─── SCROLLBAR ──────────────────────────────── */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--s3);border-radius:10px}
+
+/* ─── RESPONSIVE ─────────────────────────────── */
+@media(max-width:1100px){.right-col{width:290px}}
+@media(max-width:820px){
+  .right-col{display:none}
+  :root{--rw:0px}
+}
+@media(max-width:580px){
+  .header-nav{display:none}
+  header{padding:0 16px}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ════════════════════════════════════════════════════ -->
+<header>
+  <a class="logo" href="#">
+    <div class="logo-mark">✈</div>
+    <span>Scout</span>
+  </a>
+
+  <nav class="header-nav">
+    <button class="hn-item active">Поиск</button>
+    <button class="hn-item">Горящие 🔥</button>
+    <button class="hn-item">Куда угодно 🌍</button>
+    <button class="hn-item">Мультирейс 🔁</button>
+    <button class="hn-item">Трансферы 🚗</button>
+    <button class="hn-item">eSIM 📱</button>
+  </nav>
+
+  <div class="header-right">
+    <div class="hdr-pill">
+      <span class="dot"></span>
+      Live цены
+    </div>
+    <div class="hdr-pill" onclick="toggleTheme()">🌙 Тёмная</div>
+    <button class="btn-signin">Войти</button>
+  </div>
+</header>
+
+<!-- ═══ BODY ══════════════════════════════════════════════════════ -->
+<div class="app-body">
+
+  <!-- ── CHAT COLUMN ─────────────────────────────── -->
+  <div class="chat-col">
+
+    <div class="chat-topbar">
+      <div class="ct-left">
+        <div class="ct-icon">✈️</div>
+        <div>
+          <div class="ct-title">Scout AI</div>
+          <div class="ct-sub">Поиск авиабилетов · Real-time</div>
+        </div>
+      </div>
+      <div class="ct-actions">
+        <button class="ct-btn" onclick="resetChat()">Очистить</button>
+        <button class="ct-btn primary" onclick="newSearch()">+ Новый поиск</button>
+      </div>
+    </div>
+
+    <div class="chat-messages" id="chatMessages">
+
+      <!-- Приветствие -->
+      <div class="msg bot">
+        <div class="msg-av av-bot">✈</div>
+        <div class="msg-wrap">
+          <div class="bubble">
+            Привет! Я <strong>Scout</strong> — ваш ИИ-помощник по авиабилетам 🚀<br><br>
+            Найду лучшие цены, помогу с трансфером, eSIM и подберу горящие предложения. Откуда летим?
+          </div>
+          <div class="ibtns">
+            <button class="ibtn" onclick="sendQ(this,'✏️ Ввести маршрут')">✏️ Ввести маршрут</button>
+            <button class="ibtn" onclick="sendQ(this,'🌍 Куда угодно')">🌍 Куда угодно</button>
+            <button class="ibtn" onclick="sendQ(this,'🔥 Горящие')">🔥 Горящие</button>
+          </div>
+          <div class="msg-time">14:21</div>
+        </div>
+      </div>
+
+      <!-- User -->
+      <div class="msg user">
+        <div class="msg-wrap">
+          <div class="bubble">Москва → Сочи, 15 апреля</div>
+          <div class="msg-time">14:22</div>
+        </div>
+        <div class="msg-av av-user">А</div>
+      </div>
+
+      <!-- Bot: уточнение -->
+      <div class="msg bot">
+        <div class="msg-av av-bot">✈</div>
+        <div class="msg-wrap">
+          <div class="bubble">✅ Маршрут <strong>Москва → Сочи</strong>, 15 апреля<br>Тип билета:</div>
+          <div class="ibtns">
+            <button class="ibtn sel">Только туда</button>
+            <button class="ibtn" onclick="toggleBtn(this)">Туда-обратно</button>
+          </div>
+          <div class="msg-time">14:22</div>
+        </div>
+      </div>
+
+      <!-- User -->
+      <div class="msg user">
+        <div class="msg-wrap">
+          <div class="bubble">Только туда, 1 взрослый, прямые</div>
+          <div class="msg-time">14:22</div>
+        </div>
+        <div class="msg-av av-user">А</div>
+      </div>
+
+      <!-- Bot: результаты -->
+      <div class="msg bot">
+        <div class="msg-av av-bot">✈</div>
+        <div class="msg-wrap">
+          <div class="bubble">🔍 Нашёл <strong>23 рейса</strong> Москва → Сочи, 15 апреля. Топ варианты:</div>
+
+          <div class="fc">
+            <div class="fc-top">
+              <div class="fc-airline">
+                <div class="fc-logo">СУ</div>
+                Аэрофлот · SU-1801
+              </div>
+              <div class="fc-price">4 200 ₽</div>
+            </div>
+            <div class="fc-route">
+              <div class="fc-pt">
+                <div class="fc-t">06:30</div>
+                <div class="fc-iata">SVO</div>
+                <div class="fc-city">Москва</div>
+              </div>
+              <div class="fc-mid">
+                <div class="fc-dur">2ч 25м</div>
+                <div class="fc-trk"><div class="trk-l"></div><div class="trk-p">✈</div><div class="trk-l"></div></div>
+                <div class="fc-stops stops-d">Прямой</div>
+              </div>
+              <div class="fc-pt">
+                <div class="fc-t">08:55</div>
+                <div class="fc-iata">AER</div>
+                <div class="fc-city">Сочи</div>
+              </div>
+            </div>
+            <div class="fc-bot">
+              <div class="fc-meta">Эконом · Ручная кладь ✓</div>
+              <a class="btn-book" href="#" onclick="return false">Купить →</a>
+            </div>
+          </div>
+
+          <div class="fc">
+            <div class="fc-top">
+              <div class="fc-airline">
+                <div class="fc-logo">S7</div>
+                S7 Airlines · S7-053
+              </div>
+              <div class="fc-price" style="color:var(--yellow)">3 650 ₽</div>
+            </div>
+            <div class="fc-route">
+              <div class="fc-pt">
+                <div class="fc-t">11:10</div>
+                <div class="fc-iata">DME</div>
+                <div class="fc-city">Москва</div>
+              </div>
+              <div class="fc-mid">
+                <div class="fc-dur">2ч 35м</div>
+                <div class="fc-trk"><div class="trk-l"></div><div class="trk-p">✈</div><div class="trk-l"></div></div>
+                <div class="fc-stops stops-d">Прямой</div>
+              </div>
+              <div class="fc-pt">
+                <div class="fc-t">13:45</div>
+                <div class="fc-iata">AER</div>
+                <div class="fc-city">Сочи</div>
+              </div>
+            </div>
+            <div class="fc-bot">
+              <div class="fc-meta">Эконом · Без багажа ✗</div>
+              <a class="btn-book" href="#" onclick="return false">Купить →</a>
+            </div>
+          </div>
+
+          <div class="ibtns">
+            <button class="ibtn" onclick="sendQ(this,'📋 Все 23 рейса')">📋 Все 23 рейса</button>
+            <button class="ibtn" onclick="sendQ(this,'📊 Отследить цену')">📊 Отследить цену</button>
+            <button class="ibtn" onclick="sendQ(this,'🚗 Нужен трансфер')">🚗 Трансфер</button>
+            <button class="ibtn" onclick="sendQ(this,'📱 eSIM для поездки')">📱 eSIM</button>
+          </div>
+          <div class="msg-time">14:23</div>
+        </div>
+      </div>
+
+      <!-- Typing -->
+      <div class="typing-wrap" id="typingInd" style="display:none">
+        <div class="msg-av av-bot" style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;background:linear-gradient(135deg,var(--accent),var(--accent2))">✈</div>
+        <div class="typing-bubble"><span></span><span></span><span></span></div>
+      </div>
+
+    </div><!-- /chat-messages -->
+
+    <!-- INPUT -->
+    <div class="chat-input-area">
+      <div class="chips-row">
+        <button class="chip" onclick="sendQ(null,'🔥 Горящие предложения')">🔥 Горящие</button>
+        <button class="chip" onclick="sendQ(null,'🌍 Куда угодно из Москвы')">🌍 Куда угодно</button>
+        <button class="chip" onclick="sendQ(null,'📊 Отследить маршрут')">📊 Отследить</button>
+        <button class="chip" onclick="sendQ(null,'🚗 Найти трансфер из Сочи')">🚗 Трансфер</button>
+        <button class="chip" onclick="sendQ(null,'📱 Нужен eSIM для Турции')">📱 eSIM</button>
+        <button class="chip" onclick="sendQ(null,'📅 Гибкие даты')">📅 Гибкие даты</button>
+        <button class="chip" onclick="sendQ(null,'SU381 статус рейса')">✈ Статус рейса</button>
+      </div>
+      <div class="input-row">
+        <div class="input-box">
+          <textarea id="msgInput" rows="1"
+            placeholder="Москва — Дубай, апрель, 2 взрослых, прямые рейсы…"
+            onkeydown="onKey(event)" oninput="resize(this)"></textarea>
+          <button class="ibox-btn">📎</button>
+          <button class="ibox-btn">🎤</button>
+        </div>
+        <button class="send-btn" onclick="sendMsg()">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+  </div><!-- /chat-col -->
+
+
+  <!-- ── RIGHT COLUMN ────────────────────────────── -->
+  <div class="right-col">
+    <div class="rp-scroll">
+
+      <!-- ┌─ 1. NEWS ─────────────────────────────────┐ -->
+      <div class="widget">
+        <div class="w-head">
+          <div class="w-title">
+            <div class="w-icon" style="background:rgba(61,142,255,0.15)">📰</div>
+            Авиановости
+          </div>
+          <span class="w-link">Все →</span>
+        </div>
+        <div class="w-body" style="padding:4px 14px">
+          <div class="news-item">
+            <div class="news-img">🛫</div>
+            <div class="news-content">
+              <div class="news-cat">Маршруты</div>
+              <div class="news-title">Аэрофлот открывает новые рейсы в Азию с июня 2026</div>
+              <div class="news-time">2 часа назад</div>
+            </div>
+          </div>
+          <div class="news-item">
+            <div class="news-img">💰</div>
+            <div class="news-content">
+              <div class="news-cat">Цены</div>
+              <div class="news-title">Билеты в Египет подешевели на 35% — лучший момент для бронирования</div>
+              <div class="news-time">5 часов назад</div>
+            </div>
+          </div>
+          <div class="news-item">
+            <div class="news-img">⚡</div>
+            <div class="news-content">
+              <div class="news-cat">Горящее</div>
+              <div class="news-title">Распродажа S7: билеты по России от 1 990 ₽ до конца недели</div>
+              <div class="news-time">1 день назад</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ┌─ 2. TRANSFERS (GetTransfer) ───────────────┐ -->
+      <div class="widget">
+        <div class="w-head">
+          <div class="w-title">
+            <div class="w-icon" style="background:rgba(14,200,184,0.15)">🚗</div>
+            Трансферы
+          </div>
+          <span class="w-link" style="color:var(--teal)">GetTransfer</span>
+        </div>
+
+        <div class="transfer-search">
+          <div class="t-row">
+            <input class="t-input" placeholder="Аэропорт (SVO, AER…)" id="trAirport" value="AER"/>
+            <input class="t-input" placeholder="Дата" id="trDate" type="date" style="max-width:130px"/>
+          </div>
+          <button class="btn-search-tr" onclick="searchTransfer()">Найти трансфер</button>
+        </div>
+
+        <div id="trResults">
+          <div class="tr-card">
+            <div class="tr-left">
+              <div class="tr-emoji">🚗</div>
+              <div class="tr-info">
+                <div class="tr-type">Эконом · до 4 чел.</div>
+                <div class="tr-meta">Сочи-Адлер → центр · ~35 мин</div>
+              </div>
+            </div>
+            <div class="tr-price">
+              <div class="tr-pval">1 200 ₽</div>
+              <div class="tr-book">Забронировать</div>
+            </div>
+          </div>
+          <div class="tr-card">
+            <div class="tr-left">
+              <div class="tr-emoji">🚐</div>
+              <div class="tr-info">
+                <div class="tr-type">Минивэн · до 8 чел.</div>
+                <div class="tr-meta">Сочи-Адлер → Красная Поляна · ~55 мин</div>
+              </div>
+            </div>
+            <div class="tr-price">
+              <div class="tr-pval">2 800 ₽</div>
+              <div class="tr-book">Забронировать</div>
+            </div>
+          </div>
+          <div class="tr-card">
+            <div class="tr-left">
+              <div class="tr-emoji">🚕</div>
+              <div class="tr-info">
+                <div class="tr-type">Бизнес · до 3 чел.</div>
+                <div class="tr-meta">Сочи-Адлер → любой адрес</div>
+              </div>
+            </div>
+            <div class="tr-price">
+              <div class="tr-pval">3 500 ₽</div>
+              <div class="tr-book">Забронировать</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ┌─ 3. eSIM — AIRALO ────────────────────────┐ -->
+      <div class="widget">
+        <div class="w-head">
+          <div class="w-title">
+            <div class="w-icon" style="background:rgba(224,64,251,0.15)">📱</div>
+            eSIM для путешествий
+          </div>
+          <span class="w-link" style="color:var(--pink)">Airalo</span>
+        </div>
+
+        <div class="esim-banner" onclick="openAiralo()">
+          <div class="esim-top">
+            <div class="esim-logo">
+              <div class="esim-logo-icon">📡</div>
+              <div class="esim-logo-text">Airalo eSIM</div>
+            </div>
+            <div class="esim-badge">Партнёр</div>
+          </div>
+          <div class="esim-desc">
+            Интернет в <strong>190+ странах</strong> без роуминга.<br>
+            Подключайте eSIM прямо с телефона — мгновенно.
+          </div>
+          <div class="esim-countries">
+            <span class="esim-country">🇹🇷 Турция</span>
+            <span class="esim-country">🇦🇪 Дубай</span>
+            <span class="esim-country">🇹🇭 Таиланд</span>
+            <span class="esim-country">🇪🇬 Египет</span>
+            <span class="esim-country">+186</span>
+          </div>
+          <button class="btn-esim">Подключить eSIM →</button>
+        </div>
+
+        <div class="esim-plans">
+          <div class="plan-row">
+            <div class="plan-info">
+              <div class="plan-name">🇹🇷 Турция · 7 дней</div>
+              <div class="plan-meta">1 ГБ · безлимитный звонки</div>
+            </div>
+            <div class="plan-right">
+              <div class="plan-price">$4.50</div>
+              <button class="btn-plan">Купить</button>
+            </div>
+          </div>
+          <div class="plan-row">
+            <div class="plan-info">
+              <div class="plan-name">🌍 Европа · 30 дней</div>
+              <div class="plan-meta">5 ГБ · 35 стран</div>
+            </div>
+            <div class="plan-right">
+              <div class="plan-price">$12.00</div>
+              <button class="btn-plan">Купить</button>
+            </div>
+          </div>
+          <div class="plan-row">
+            <div class="plan-info">
+              <div class="plan-name">🌏 Азия · 15 дней</div>
+              <div class="plan-meta">3 ГБ · 12 стран</div>
+            </div>
+            <div class="plan-right">
+              <div class="plan-price">$7.00</div>
+              <button class="btn-plan">Купить</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ┌─ 4. FLYSTACK — Статусы рейсов ────────────┐ -->
+      <div class="widget">
+        <div class="w-head">
+          <div class="w-title">
+            <div class="w-icon" style="background:rgba(14,200,184,0.12)">📡</div>
+            FlyStack · Рейсы
+          </div>
+          <span class="w-link" style="color:var(--teal)">Трекер</span>
+        </div>
+
+        <div class="fs-search">
+          <input class="fs-input" placeholder="Номер рейса (SU381, S7053…)" id="fsInput"/>
+          <button class="btn-fs" onclick="trackFlight()">Найти</button>
+        </div>
+
+        <div id="fsResults">
+          <div class="fs-flight">
+            <div class="fs-top">
+              <div class="fs-num">SU-1801</div>
+              <div class="fs-status st-ok">По расписанию</div>
+            </div>
+            <div class="fs-route">
+              <span>Москва SVO</span>
+              <span class="fs-sep">→</span>
+              <span>Сочи AER</span>
+            </div>
+            <div class="fs-bot">
+              <span>Вылет: 06:30</span>
+              <span>Прилёт: 08:55</span>
+              <span>Boeing 737</span>
+            </div>
+          </div>
+          <div class="fs-flight">
+            <div class="fs-top">
+              <div class="fs-num">S7-053</div>
+              <div class="fs-status st-del">Задержан +40 мин</div>
+            </div>
+            <div class="fs-route">
+              <span>Москва DME</span>
+              <span class="fs-sep">→</span>
+              <span>Сочи AER</span>
+            </div>
+            <div class="fs-bot">
+              <span>Вылет: 11:50</span>
+              <span>Прилёт: 14:25</span>
+              <span>Airbus A320</span>
+            </div>
+          </div>
+          <div class="fs-flight">
+            <div class="fs-top">
+              <div class="fs-num">DP-412</div>
+              <div class="fs-status st-ok">По расписанию</div>
+            </div>
+            <div class="fs-route">
+              <span>Москва VKO</span>
+              <span class="fs-sep">→</span>
+              <span>Сочи AER</span>
+            </div>
+            <div class="fs-bot">
+              <span>Вылет: 15:20</span>
+              <span>Прилёт: 17:45</span>
+              <span>Boeing 737</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ┌─ 5. PRICE TRACKER ────────────────────────┐ -->
+      <div class="widget">
+        <div class="w-head">
+          <div class="w-title">
+            <div class="w-icon" style="background:rgba(31,214,122,0.12)">📊</div>
+            Мониторинг цен
+          </div>
+          <span class="w-link" style="color:var(--green)">+ Добавить</span>
+        </div>
+        <div class="pt-item">
+          <div class="pt-top">
+            <div class="pt-route">✈ MOW → AER · 15 апр</div>
+            <div class="pt-price">4 200 ₽</div>
+          </div>
+          <div class="pt-bar-wrap"><div class="pt-bar" style="width:42%"></div></div>
+          <div class="pt-range"><span>мин 3 800 ₽</span><span>макс 7 500 ₽</span></div>
+          <div class="pt-change pt-down">▼ Ниже среднего на 18%</div>
+        </div>
+        <div class="pt-item">
+          <div class="pt-top">
+            <div class="pt-route">✈ LED → DXB · 10 мая</div>
+            <div class="pt-price" style="color:var(--yellow)">11 200 ₽</div>
+          </div>
+          <div class="pt-bar-wrap"><div class="pt-bar" style="width:68%;background:linear-gradient(90deg,var(--yellow),var(--orange))"></div></div>
+          <div class="pt-range"><span>мин 9 100 ₽</span><span>макс 15 000 ₽</span></div>
+          <div class="pt-change pt-up">▲ Выше среднего на 8%</div>
+        </div>
+      </div>
+
+    </div><!-- /rp-scroll -->
+  </div><!-- /right-col -->
+
+</div><!-- /app-body -->
+
+
+<!-- ═══ FOOTER ════════════════════════════════════════════════════ -->
+<footer>
+  <div class="footer-left">
+    <div class="footer-logo">✈ Scout</div>
+    <div class="footer-links">
+      <span class="f-link">О сервисе</span>
+      <span class="f-link">Поддержка</span>
+      <span class="f-link">Условия</span>
+      <span class="f-link">API</span>
+    </div>
+  </div>
+
+  <div class="footer-center">
+    <div class="f-partner">
+      <span class="f-partner-icon">✈</span>
+      Aviasales
+    </div>
+    <div class="f-divider"></div>
+    <div class="f-partner">
+      <span class="f-partner-icon">🚗</span>
+      GetTransfer
+    </div>
+    <div class="f-divider"></div>
+    <div class="f-partner">
+      <span class="f-partner-icon">📱</span>
+      Airalo eSIM
+    </div>
+    <div class="f-divider"></div>
+    <div class="f-partner">
+      <span class="f-partner-icon">📡</span>
+      FlyStack
+    </div>
+  </div>
+
+  <div class="footer-right">
+    <div class="f-stat">
+      <div class="f-stat-val">23.4K</div>
+      <div class="f-stat-lab">рейсов сегодня</div>
+    </div>
+    <div class="f-divider"></div>
+    <div class="f-stat">
+      <div class="f-stat-val">1.2K</div>
+      <div class="f-stat-lab">пользователей</div>
+    </div>
+    <div class="f-divider"></div>
+    <div class="f-stat">
+      <div class="f-stat-val" id="liveClock">--:--</div>
+      <div class="f-stat-lab">МСК</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ── Clock ───────────────────────────────────────────
+function updateClock(){
+  const now = new Date();
+  const msk = new Date(now.toLocaleString('en-US', {timeZone:'Europe/Moscow'}));
+  document.getElementById('liveClock').textContent =
+    msk.getHours().toString().padStart(2,'0') + ':' +
+    msk.getMinutes().toString().padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ── Chat helpers ─────────────────────────────────────
+const RESPONSES = {
+  '🔥 Горящие предложения': '🔥 Топ горящих прямо сейчас:\n\n🏖️ MOW→AER от **3 800 ₽** · 22 марта\n🇹🇷 MOW→AYT от **6 900 ₽** · 5 апреля\n🇦🇪 LED→DXB от **11 200 ₽** · 10 апреля\n\nПодписаться на уведомления?',
+  '🌍 Куда угодно из Москвы': '🌍 Лучшие направления из Москвы на апрель:\n\n1. Сочи — от **3 800 ₽**\n2. Анталья — от **6 900 ₽**\n3. Дубай — от **11 200 ₽**\n4. Бангкок — от **24 500 ₽**\n\nКуда хотите полететь?',
+  '📊 Отследить маршрут': '🔔 Маршрут **MOW → AER** добавлен в мониторинг цен. Уведомлю, когда цена изменится более чем на 10%.',
+  '🚗 Найти трансфер из Сочи': '🚗 Показываю трансферы из Сочи-Адлер. Проверьте блок **Трансферы** справа — там уже загружены варианты!',
+  '📱 Нужен eSIM для Турции': '📱 Для Турции рекомендую **Airalo eSIM**:\n\n🇹🇷 7 дней · 1 ГБ — $4.50\n🇹🇷 15 дней · 3 ГБ — $8.00\n🇹🇷 30 дней · 5 ГБ — $12.00\n\nПодключить можно прямо в блоке eSIM справа →',
+  '📱 eSIM для поездки': '📱 Рекомендую **Airalo** — лучший сервис eSIM для путешественников. Смотрите блок справа, там уже есть планы для Турции и других направлений!',
+  '🚗 Нужен трансфер': '🚗 Отличный выбор! После прилёта в Сочи-Адлер (AER) доступны трансферы от **1 200 ₽**. Блок трансферов справа обновлён под ваш маршрут.',
+  '📋 Все 23 рейса': '📋 Загружаю полный список рейсов с фильтрами по цене, времени вылета и авиакомпании...',
+  '📊 Отследить цену': '🔔 Добавил **MOW → AER, 15 апреля** в мониторинг. Текущая цена — **4 200 ₽**. Уведомлю при изменении!',
+  'SU381 статус рейса': '📡 Запрашиваю статус рейса **SU-381** через FlyStack...\n\n✅ **По расписанию**\nМосква SVO → Дубай DXB\nВылет: 10:30 · Прилёт: 14:45\nBoeing 777 · Гейт B12',
+  '📅 Гибкие даты': '📅 Показываю календарь цен на апрель–май:\n\n🟢 15 апр — **3 650 ₽** (дешевле всего)\n🟡 16 апр — 4 200 ₽\n🟡 14 апр — 4 500 ₽\n🔴 12–13 апр — 6 800 ₽ (выходные)\n\nЛучший день — **15 апреля**!',
+}
+
+let msgCount = 5;
+
+function now() {
+  return new Date().toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+}
+
+function addMsg(role, text, btns, flights) {
+  const c = document.getElementById('chatMessages');
+  const typing = document.getElementById('typingInd');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  const isBot = role === 'bot';
+
+  // Render markdown bold
+  const html = text.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
+
+  div.innerHTML = isBot
+    ? `<div class="msg-av av-bot">✈</div>
+       <div class="msg-wrap">
+         <div class="bubble">${html}</div>
+         ${btns ? `<div class="ibtns">${btns.map(b=>`<button class="ibtn" onclick="sendQ(this,'${b}')">${b}</button>`).join('')}</div>` : ''}
+         <div class="msg-time">${now()}</div>
+       </div>`
+    : `<div class="msg-wrap">
+         <div class="bubble">${html}</div>
+         <div class="msg-time">${now()}</div>
+       </div>
+       <div class="msg-av av-user">А</div>`;
+
+  c.insertBefore(div, typing);
+  scrollBottom();
+}
+
+function sendQ(btn, text) {
+  if(btn) {
+    btn.closest('.ibtns')?.querySelectorAll('.ibtn').forEach(b=>b.classList.remove('sel'));
+    btn.classList.add('sel');
+  }
+  addMsg('user', text);
+  showTyping();
+  const resp = RESPONSES[text] || `Понял! Уточните детали: откуда и куда летим, какие даты?`;
+  setTimeout(()=>{
+    hideTyping();
+    addMsg('bot', resp, null, null);
+  }, 1100 + Math.random()*600);
+}
+
+function sendMsg() {
+  const inp = document.getElementById('msgInput');
+  const t = inp.value.trim();
+  if(!t) return;
+  inp.value = '';
+  inp.style.height = 'auto';
+  addMsg('user', t);
+  showTyping();
+  const resp = RESPONSES[t] || `Ищу рейсы по запросу «${t}»... Уточните маршрут в формате **Откуда → Куда** и дату.`;
+  setTimeout(()=>{
+    hideTyping();
+    addMsg('bot', resp, ['✏️ Ввести маршрут','🔥 Горящие предложения'], null);
+  }, 1300);
+}
+
+function onKey(e) {
+  if(e.key==='Enter' && !e.shiftKey){e.preventDefault();sendMsg()}
+}
+function resize(el) {
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,80)+'px';
+}
+function showTyping(){document.getElementById('typingInd').style.display='flex';scrollBottom()}
+function hideTyping(){document.getElementById('typingInd').style.display='none'}
+function scrollBottom(){
+  const c=document.getElementById('chatMessages');
+  setTimeout(()=>c.scrollTop=c.scrollHeight,50);
+}
+function toggleBtn(btn){
+  btn.closest('.ibtns').querySelectorAll('.ibtn').forEach(b=>b.classList.remove('sel'));
+  btn.classList.add('sel');
+}
+function resetChat(){
+  const c=document.getElementById('chatMessages');
+  const typing=document.getElementById('typingInd');
+  while(c.firstChild && c.firstChild!==typing) c.removeChild(c.firstChild);
+  addMsg('bot','Начнём заново! Откуда летим?',['✏️ Ввести маршрут','🌍 Куда угодно','🔥 Горящие']);
+}
+function newSearch(){
+  addMsg('bot','Новый поиск! Введите маршрут (например, **Москва → Дубай, апрель**):', null);
+}
+
+// ── Transfer search ──────────────────────────────────
+function searchTransfer(){
+  const airport = document.getElementById('trAirport').value || 'AER';
+  const res = document.getElementById('trResults');
+  res.innerHTML = `<div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">⏳ Ищу трансферы из ${airport}...</div>`;
+  setTimeout(()=>{
+    res.innerHTML = `
+      <div class="tr-card"><div class="tr-left"><div class="tr-emoji">🚗</div><div class="tr-info"><div class="tr-type">Эконом · до 4 чел.</div><div class="tr-meta">${airport} → Центр · ~35 мин</div></div></div><div class="tr-price"><div class="tr-pval">1 200 ₽</div><div class="tr-book">Забронировать</div></div></div>
+      <div class="tr-card"><div class="tr-left"><div class="tr-emoji">🚐</div><div class="tr-info"><div class="tr-type">Минивэн · до 8 чел.</div><div class="tr-meta">${airport} → Отель · ~55 мин</div></div></div><div class="tr-price"><div class="tr-pval">2 800 ₽</div><div class="tr-book">Забронировать</div></div></div>
+    `;
+  }, 900);
+}
+
+// ── FlyStack search ──────────────────────────────────
+function trackFlight(){
+  const num = document.getElementById('fsInput').value.trim().toUpperCase() || 'SU381';
+  const res = document.getElementById('fsResults');
+  res.innerHTML = `<div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">📡 Запрашиваю FlyStack...</div>`;
+  setTimeout(()=>{
+    res.innerHTML = `
+      <div class="fs-flight">
+        <div class="fs-top"><div class="fs-num">${num}</div><div class="fs-status st-ok">По расписанию</div></div>
+        <div class="fs-route"><span>Москва SVO</span><span class="fs-sep">→</span><span>Сочи AER</span></div>
+        <div class="fs-bot"><span>Вылет: 10:30</span><span>Прилёт: 12:55</span><span>Boeing 737</span></div>
+      </div>`;
+  }, 1000);
+}
+
+// ── Airalo ───────────────────────────────────────────
+function openAiralo(){
+  window.open('https://www.airalo.com', '_blank');
+}
+</script>
+</body>
+</html>

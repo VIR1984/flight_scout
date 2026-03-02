@@ -1,0 +1,22 @@
+flighbot/
+│
+├── .env                     # Переменные окружения (например, токен бота)
+├── main.py                 # Точка входа в приложение
+├── test_search.py          # Тесты для модуля поиска
+│
+├── data/
+│   ├── cities.csv          # Города в формате CSV (возможно, из Excel-файла)
+│   └── iata_manual.json    # Ручной справочник IATA-кодов
+│
+├── handlers/               # Обработчики команд Telegram-бота
+│   ├── __init__.py
+│   └── start.py            # Обработка команды /start
+│
+├── services/               # Бизнес-логика: поиск рейсов и т.п.
+│   ├── __init__.py
+│   └── flight_search.py    # Поиск авиабилетов
+│
+└── utils/                  # Вспомогательные утилиты
+    ├── __init__.py
+    ├── cities.py           # Словарь CITY_TO_IATA + GLOBAL_HUBS
+    └── logger.py           # Настройка логирования

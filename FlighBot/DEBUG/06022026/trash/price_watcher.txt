@@ -1,0 +1,153 @@
+# services/price_watcher.py — НАЧАЛО ФАЙЛА
+import asyncio
+import json
+import time
+from datetime import datetime  # ← Для нормализации дат
+from typing import Dict, Optional
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from services.flight_search import search_flights, generate_booking_link, normalize_date
+from utils.redis_client import redis_client
+from utils.logger import logger  # ← ИСПРАВЛЕНО: добавлено имя 'logger'
+
+class PriceWatcher:
+    """Фоновый сервис для отслеживания падения цен"""
+    
+    def __init__(self, bot: Bot):
+        self.bot = bot
+        self.running = False
+        self.check_interval = 21600  # 6 часов
+    
+    async def start(self):
+        """Запустить периодическую проверку"""
+        self.running = True
+        logger.info("🔄 Запуск наблюдателя за ценами...")
+        
+        while self.running:
+            try:
+                await self.check_all_watches()
+            except Exception as e:
+                logger.error(f"❌ Ошибка при проверке цен: {e}")
+            
+            await asyncio.sleep(self.check_interval)
+    
+    async def stop(self):
+        """Остановить наблюдателя"""
+        self.running = False
+        logger.info("⏹️ Наблюдатель за ценами остановлен")
+    
+    async def check_all_watches(self):
+        """Проверить все активные отслеживания"""
+        watch_keys = await redis_client.get_all_watch_keys()
+        
+        if not watch_keys:
+            logger.info("🔍 Нет активных отслеживаний")
+            return
+        
+        logger.info(f"🔍 Проверка {len(watch_keys)} отслеживаний...")
+        
+        # Проверяем по частям, чтобы не нагружать API
+        chunk_size = 5
+        for i in range(0, len(watch_keys), chunk_size):
+            chunk = watch_keys[i:i + chunk_size]
+            
+            for key in chunk:
+                try:
+                    watch_data = json.loads(await redis_client.client.get(key))
+                    await self.check_single_watch(watch_data, key)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка при проверке {key}: {e}")
+            
+            # Пауза между чанками
+            if i + chunk_size < len(watch_keys):
+                await asyncio.sleep(5)
+    
+    async def check_single_watch(self, watch: Dict, key: str):
+        """Проверить одно отслеживание"""
+        current_price = watch["current_price"]
+        user_id = watch["user_id"]
+        threshold = watch.get("threshold", 5)  # ← ПОРОГ ИЗ ДАННЫХ (по умолчанию 5%)
+        
+        # Ищем актуальные цены
+        flights = await search_flights(
+            origin=watch["origin"],
+            dest=watch["dest"],
+            depart_date=normalize_date(watch["depart_date"]),
+            return_date=normalize_date(watch["return_date"]) if watch["return_date"] else None
+        )
+        if not flights:
+            return
+        
+        # Находим минимальную цену
+        new_min_flight = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+        new_price = new_min_flight.get("value") or new_min_flight.get("price") or current_price
+        
+        # Проверяем снижение с учётом порога
+        price_drop = current_price - new_price
+        percent_drop = (price_drop / current_price) * 100 if current_price > 0 else 0
+        
+        # ← ИЗМЕНЁННОЕ УСЛОВИЕ
+        if price_drop > 0 and percent_drop >= threshold:
+            logger.info(
+                f"📉 Цена упала для пользователя {user_id}: "
+                f"{current_price} ₽ → {new_price} ₽ (-{price_drop} ₽, -{percent_drop:.1f}%)"
+            )
+            
+            # Генерируем партнерскую ссылку
+            booking_link = generate_booking_link(
+                flight=new_min_flight,
+                origin=watch["origin"],
+                dest=watch["dest"],
+                depart_date=watch["depart_date"],
+                passengers_code=watch.get("passengers", "1"),
+                return_date=watch["return_date"]
+            )
+            
+            # Формируем сообщение
+            origin_name = watch["origin"]
+            dest_name = watch["dest"]
+            
+            message = (
+                f"🎉 <b>Цена упала!</b>\n\n"
+                f"📍 Маршрут: {origin_name} → {dest_name}\n"
+                f"📅 Вылет: {watch['depart_date']}\n"
+            )
+            
+            if watch["return_date"]:
+                message += f"📅 Возврат: {watch['return_date']}\n"
+            
+            message += (
+                f"\n💰 <b>Старая цена:</b> {current_price} ₽\n"
+                f"💰 <b>Новая цена:</b> {new_price} ₽\n"
+                f"💸 <b>Экономия:</b> {price_drop} ₽ ({percent_drop:.1f}%)\n\n"
+                f"🚀 <b>Бронируйте быстро, пока цена не выросла!</b>"
+            )
+            
+            # Клавиатура
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"✈️ Забронировать за {new_price} ₽", url=booking_link)],
+                [InlineKeyboardButton(text="❌ Больше не следить", 
+                                     callback_data=f"unwatch_{key}")]
+            ])
+            
+            # Отправляем уведомление
+            try:
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+                
+                # Обновляем сохраненную цену
+                watch["current_price"] = new_price
+                await redis_client.client.setex(
+                    key, 
+                    86400 * 30, 
+                    json.dumps(watch, ensure_ascii=False)
+                )
+                
+                logger.info(f"✅ Уведомление отправлено пользователю {user_id}")
+                
+            except Exception as e:
+                logger.error(f"❌ Не удалось отправить уведомление пользователю {user_id}: {e}")

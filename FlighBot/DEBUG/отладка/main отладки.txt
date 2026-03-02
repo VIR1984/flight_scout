@@ -1,0 +1,55 @@
+import asyncio
+import os
+import logging
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from dotenv import load_dotenv
+
+# Загрузка переменных окружения из .env
+load_dotenv()
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Импорты после загрузки env
+from handlers.start import router as start_router
+from services.price_watcher import PriceWatcher
+
+async def main():
+    """Основная функция запуска бота."""
+    token = os.getenv("TOKEN")
+    if not token:
+        raise ValueError("❌ TOKEN не найден в .env файле")
+
+    # Инициализация бота
+    bot = Bot(token=token)
+    storage = MemoryStorage()  # Для простоты используем MemoryStorage
+    dp = Dispatcher(storage=storage)
+
+    # Подключение Redis
+    from utils.redis_client import redis_client
+    await redis_client.connect()
+
+    # Регистрация роутеров
+    dp.include_router(start_router)
+
+    # Инициализация и запуск PriceWatcher
+    price_watcher = PriceWatcher()
+    watcher_task = asyncio.create_task(price_watcher.start(bot))
+
+    logger.info("🚀 Бот запущен в режиме polling...")
+
+    try:
+        # Запуск polling
+        await dp.start_polling(bot)
+    finally:
+        # Остановка наблюдателя
+        price_watcher.stop()
+        watcher_task.cancel()
+        # Закрытие соединения с Redis
+        await redis_client.close()
+        logger.info("🛑 Бот остановлен.")
+
+if __name__ == "__main__":
+    asyncio.run(main())
