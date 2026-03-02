@@ -362,12 +362,22 @@ async def process_feedback(message: Message, state: FSMContext, bot):
 # Fallback: текст вне FSM → быстрый поиск
 # ════════════════════════════════════════════════════════════════
 
+# Тексты кнопок навигационной панели — обрабатываются выше своими хендлерами
+_NAV_BUTTON_TEXTS = {
+    "✈️ Поиск", "🗺 Маршрут", "🔥 Горячие", "📋 Подписки", "❓ Помощь",
+}
+
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
+    text = message.text or ""
     # Команды не трогаем — у них свои хендлеры
-    if message.text and message.text.startswith("/"):
+    if text.startswith("/"):
+        return
+    # Кнопки навигации не трогаем — у них свои хендлеры выше
+    if text in _NAV_BUTTON_TEXTS:
         return
     current = await state.get_state()
     if current:
         return
-    await handle_flight_request(message, state)
+    # handle_flight_request принимает только message (без state)
+    await handle_flight_request(message)
