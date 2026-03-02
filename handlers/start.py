@@ -5,6 +5,7 @@
 Вся бизнес-логика поиска — в flight_wizard и search_results.
 """
 import asyncio
+import os
 
 from aiogram import Router, F
 from aiogram.types import (
@@ -380,6 +381,187 @@ async def process_feedback(message: Message, state: FSMContext):
         "✅ Спасибо! Ваше сообщение передано команде.\n\n"
         "Постараемся ответить или исправить как можно быстрее 🔧",
     )
+
+# ════════════════════════════════════════════════════════════════
+# Секретные команды аналитики (только для ADMIN_USER_ID)
+# ════════════════════════════════════════════════════════════════
+
+def _is_admin(user_id: int) -> bool:
+    admin_id = os.getenv("ADMIN_USER_ID", "")
+    return bool(admin_id) and str(user_id) == admin_id
+
+
+def _dec(v) -> str:
+    """Декодирует bytes из Redis в строку."""
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
+def _bar(count: int, max_count: int, width: int = 8) -> str:
+    """Мини-бар из символов для визуализации."""
+    if not max_count:
+        return ""
+    filled = round(width * count / max_count)
+    return "█" * filled + "░" * (width - filled)
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """Полная аналитика — отправляет в канал и показывает в чат."""
+    if not _is_admin(message.from_user.id):
+        return
+    await message.answer("\u23f3 \u0421\u043e\u0431\u0438\u0440\u0430\u044e \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043a\u0443...")
+    try:
+        an = await redis_client.get_analytics()
+        msgs = _build_stats_messages(an)
+        from utils.channel_logger import log_stats
+        # Отправляем каждый блок в канал отдельным постом
+        for block_title, block_text in msgs:
+            flat = {block_title: block_text}
+            await log_stats(flat)
+        # Краткий ответ в чат
+        summary = (
+            "\U0001f4ca <b>\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043a\u0430 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0430 \u0432 \u043a\u0430\u043d\u0430\u043b</b>\n\n"
+            f"\U0001f465 \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439: <b>{an.get('total_users', 0)}</b>\n"
+            f"\U0001f50d \u041f\u043e\u0438\u0441\u043a\u043e\u0432: <b>{an.get('total_searches', 0)}</b>\n"
+            f"\U0001f514 \u041f\u043e\u0434\u043f\u0438\u0441\u043e\u043a: <b>{an.get('active_subscriptions', 0)}</b>"
+        )
+        await message.answer(summary, parse_mode="HTML")
+    except Exception as exc:
+        from utils.channel_logger import log_error
+        await log_error("/stats", exc)
+        await message.answer(f"\u274c {exc}")
+
+
+def _build_stats_messages(an: dict) -> list[tuple[str, str]]:
+    """Строит список (заголовок, текст) блоков статистики."""
+    blocks = []
+
+    # ── Блок 1: Общая сводка ────────────────────────────────────
+    searches = an.get("total_searches", 0)
+    no_res   = an.get("total_no_results", 0)
+    sr_rate  = f"{round((searches - no_res) / searches * 100)}%" if searches else "—"
+    day_data = an.get("searches_by_day", {})
+    avg_day  = round(sum(day_data.values()) / len(day_data)) if day_data else 0
+    b1 = (
+        f"\U0001f465 \u0412\u0441\u0435\u0433\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439: <b>{an.get('total_users', 0)}</b>\n"
+        f"\U0001f50d \u041f\u043e\u0438\u0441\u043a\u043e\u0432 \u0432\u0441\u0435\u0433\u043e: <b>{searches}</b>\n"
+        f"\u2705 \u041d\u0430\u0448\u043b\u0438 \u0440\u0435\u0439\u0441\u044b: <b>{sr_rate}</b>\n"
+        f"\U0001f4c5 \u0421\u0440\u0435\u0434\u043d\u0435 \u0432 \u0434\u0435\u043d\u044c: <b>{avg_day}</b>\n"
+        f"\U0001f514 \u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u043f\u043e\u0434\u043f\u0438\u0441\u043e\u043a: <b>{an.get('active_subscriptions', 0)}</b>\n"
+        f"\U0001f4c9 \u041e\u0442\u0441\u043b\u0435\u0436\u0438\u0432\u0430\u043d\u0438\u0439 \u0446\u0435\u043d: <b>{an.get('price_watches', 0)}</b>"
+    )
+    blocks.append(("\U0001f4ca \u041e\u0431\u0449\u0430\u044f \u0441\u0432\u043e\u0434\u043a\u0430", b1))
+
+    # ── Блок 2: Топ направления ──────────────────────────────────
+    top_dest = an.get("top_destinations", [])
+    if top_dest:
+        max_d = top_dest[0][1] if top_dest else 1
+        lines = []
+        for i, (name, cnt) in enumerate(top_dest[:10], 1):
+            lines.append(f"{i}. {name}  {_bar(cnt, max_d)}  <b>{cnt}</b>")
+        blocks.append(("\U0001f3af \u0422\u043e\u043f-10 \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0439", "\n".join(lines)))
+
+    # ── Блок 3: Топ города вылета ────────────────────────────────
+    top_orig = an.get("top_origins", [])
+    if top_orig:
+        max_o = top_orig[0][1] if top_orig else 1
+        lines = []
+        for i, (name, cnt) in enumerate(top_orig[:5], 1):
+            lines.append(f"{i}. {name}  {_bar(cnt, max_o)}  <b>{cnt}</b>")
+        blocks.append(("\U0001f6eb \u0413\u043e\u0440\u043e\u0434\u0430 \u0432\u044b\u043b\u0435\u0442\u0430", "\n".join(lines)))
+
+    # ── Блок 4: Ценовые сегменты ─────────────────────────────────
+    price_b = an.get("price_buckets", [])
+    if price_b:
+        # Сортируем по нижней границе диапазона
+        def _sort_key(item):
+            try:
+                return int(item[0].split("-")[0])
+            except Exception:
+                return 999999
+        sorted_pb = sorted(price_b, key=_sort_key)
+        max_p = max(c for _, c in sorted_pb) if sorted_pb else 1
+        lines = []
+        for bucket, cnt in sorted_pb:
+            lo, hi = bucket.split("-") if "-" in bucket else (bucket, "")
+            label = f"{int(lo)//1000}–{int(hi)//1000}к ₽" if lo.isdigit() and hi.isdigit() else bucket
+            lines.append(f"{label}  {_bar(cnt, max_p)}  <b>{cnt}</b>")
+        blocks.append(("\U0001f4b0 \u0426\u0435\u043d\u043e\u0432\u044b\u0435 \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u044b", "\n".join(lines)))
+
+    # ── Блок 5: Поведение пользователей ─────────────────────────
+    def _hmap(d: dict) -> dict:
+        return {_dec(k): _dec(v) for k, v in d.items()}
+
+    trip  = _hmap(an.get("trip_type", {}))
+    pax   = _hmap(an.get("passengers", {}))
+    stops = _hmap(an.get("transfers", {}))
+    ftype = _hmap(an.get("flight_types", {}))
+
+    total_tt = sum(int(v) for v in trip.values()) or 1
+    total_px = sum(int(v) for v in pax.values()) or 1
+    total_st = sum(int(v) for v in stops.values()) or 1
+
+    b5 = ""
+    if trip:
+        ow = int(trip.get("oneway", 0))
+        rt = int(trip.get("roundtrip", 0))
+        b5 += f"\u2708\ufe0f \u0422\u043e\u043b\u044c\u043a\u043e \u0442\u0443\u0434\u0430: <b>{ow}</b> ({round(ow/total_tt*100)}%)  |  \U0001f501 \u0422\u0443\u0434\u0430-\u043e\u0431\u0440\u0430\u0442\u043d\u043e: <b>{rt}</b> ({round(rt/total_tt*100)}%)\n"
+    if stops:
+        direct = int(stops.get("direct", 0))
+        one    = int(stops.get("1_stop", 0))
+        two    = int(stops.get("2plus_stops", 0))
+        b5 += f"\u2192 \u041f\u0440\u044f\u043c\u044b\u0435: <b>{direct}</b>  |  1 \u043f\u0435\u0440\u0435\u0441: <b>{one}</b>  |  2+: <b>{two}</b>\n"
+    if pax:
+        sorted_pax = sorted(pax.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 99)
+        pax_str = "  ".join(f"{k} \u043f\u0430\u0441: <b>{v}</b>" for k, v in sorted_pax)
+        b5 += f"\U0001f465 {pax_str}\n"
+    if ftype:
+        ft_str = "  ".join(f"{k}: <b>{v}</b>" for k, v in ftype.items())
+        b5 += f"\U0001f6e9 {ft_str}"
+
+    if b5:
+        blocks.append(("\U0001f9e0 \u041f\u043e\u0432\u0435\u0434\u0435\u043d\u0438\u0435", b5.strip()))
+
+    # ── Блок 6: Активность по дням ───────────────────────────────
+    if day_data:
+        max_day = max(day_data.values()) or 1
+        lines = []
+        for day, cnt in sorted(day_data.items()):
+            short = day[5:]  # MM-DD
+            lines.append(f"{short}  {_bar(cnt, max_day)}  <b>{cnt}</b>")
+        blocks.append(("\U0001f4c6 \u0410\u043a\u0442\u0438\u0432\u043d\u043e\u0441\u0442\u044c (\u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 7 \u0434\u043d\u0435\u0439)", "\n".join(lines)))
+
+    # ── Блок 7: Маршруты без результатов ────────────────────────
+    no_results = an.get("top_no_results", [])
+    if no_results:
+        lines = [f"{r}: {c}" for r, c in no_results]
+        blocks.append(("\U0001f6ab \u041c\u0430\u0440\u0448\u0440\u0443\u0442\u044b \u0431\u0435\u0437 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432", "\n".join(lines)))
+
+    return blocks
+
+
+@router.message(Command("feedback_log"))
+async def cmd_feedback_log(message: Message):
+    """Показывает последние 5 отзывов из Redis."""
+    if not _is_admin(message.from_user.id):
+        return
+    try:
+        keys = await redis_client.client.keys("*feedback:*")
+        if not keys:
+            await message.answer("\u041d\u0435\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0445 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.")
+            return
+        keys = sorted(keys, reverse=True)[:5]
+        lines = ["\U0001f4ac <b>\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 \u043e\u0442\u0437\u044b\u0432\u044b:</b>\n"]
+        for key in keys:
+            val = await redis_client.client.get(key)
+            if val:
+                k_str = key.decode() if isinstance(key, bytes) else key
+                v_str = val.decode() if isinstance(val, bytes) else val
+                lines.append(f"<code>{k_str}</code>\n{v_str}\n")
+        await message.answer("\n".join(lines), parse_mode="HTML")
+    except Exception as exc:
+        await message.answer(f"\u274c {exc}")
+
 
 # ════════════════════════════════════════════════════════════════
 # Fallback: текст вне FSM → быстрый поиск

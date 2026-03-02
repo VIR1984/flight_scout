@@ -433,6 +433,12 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
 async def _show_no_flights(callback: CallbackQuery, data: dict,
                             origins: list, destinations: list, pax_code: str):
+    # \u0422\u0440\u0435\u043a\u0430\u0435\u043c \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u044b \u0431\u0435\u0437 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432
+    for orig in origins:
+        for dest in destinations:
+            asyncio.create_task(redis_client.track_no_results(
+                orig, dest, data.get("depart_date", "")
+            ))
     """Показать экран 'билеты не найдены' со ссылкой на Aviasales."""
     origin_iata = origins[0] if origins else data.get("origin_iata", "MOW")
     d1 = format_avia_link_date(data["depart_date"])

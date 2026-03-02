@@ -329,5 +329,154 @@ class RedisClient:
         await self.client.set(f"{self.prefix}route_cd:{sub_id}:{dest}", "1", ex=cooldown)
 
 
+    # ════════════════════════════════════════════════════════════════
+    # Analytics
+    # ════════════════════════════════════════════════════════════════
+
+    async def track_search(
+        self,
+        user_id: int,
+        origin_iata: str,
+        origin_name: str,
+        dest_iata: str,
+        dest_name: str,
+        depart_date: str,
+        return_date: str | None,
+        price: int,
+        passengers_code: str,
+        flight_type: str,
+        transfers: int,
+        found_count: int,
+    ) -> None:
+        """Записывает одну запись поиска для аналитики."""
+        if not self.client:
+            return
+        p = self.prefix
+        ts = int(time.time())
+        route = f"{origin_iata}-{dest_iata}"
+
+        # Счётчики маршрутов (sorted set: route → count)
+        await self.client.zincrby(f"{p}analytics:routes", 1, route)
+
+        # Счётчики городов назначения
+        await self.client.zincrby(f"{p}analytics:dest_cities", 1, dest_name or dest_iata)
+
+        # Счётчики городов вылета
+        await self.client.zincrby(f"{p}analytics:origin_cities", 1, origin_name or origin_iata)
+
+        # Диапазоны цен (sorted set: price bucket → count)
+        bucket = f"{(price // 5000) * 5000}-{(price // 5000 + 1) * 5000}" if price else "unknown"
+        await self.client.zincrby(f"{p}analytics:price_buckets", 1, bucket)
+
+        # Тип рейса
+        await self.client.hincrby(f"{p}analytics:flight_types", flight_type or "all", 1)
+
+        # Пересадки
+        stops_key = "direct" if transfers == 0 else ("1_stop" if transfers == 1 else "2plus_stops")
+        await self.client.hincrby(f"{p}analytics:transfers", stops_key, 1)
+
+        # Количество пассажиров
+        try:
+            pax = int(passengers_code[0]) if passengers_code else 1
+        except (ValueError, IndexError):
+            pax = 1
+        await self.client.hincrby(f"{p}analytics:passengers", str(pax), 1)
+
+        # Обратный билет vs только туда
+        rt_key = "roundtrip" if return_date else "oneway"
+        await self.client.hincrby(f"{p}analytics:trip_type", rt_key, 1)
+
+        # Общий счётчик поисков
+        await self.client.incr(f"{p}analytics:total_searches")
+
+        # Уникальные пользователи выполнившие поиск
+        await self.client.sadd(f"{p}analytics:searching_users", str(user_id))
+
+        # Временная метка последнего поиска
+        await self.client.set(f"{p}analytics:last_search_at", ts)
+
+        # Поиски по дням (YYYY-MM-DD → count, живут 90 дней)
+        from datetime import datetime, timezone
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        await self.client.hincrby(f"{p}analytics:searches_by_day", day, 1)
+
+        # Цены по маршруту для понимания диапазона (list, последние 50)
+        if price:
+            price_key = f"{p}analytics:prices:{route}"
+            await self.client.lpush(price_key, price)
+            await self.client.ltrim(price_key, 0, 49)
+            await self.client.expire(price_key, 86400 * 30)
+
+    async def track_no_results(self, origin_iata: str, dest_iata: str, depart_date: str) -> None:
+        """Маршруты по которым ничего не нашлось — тоже интересно."""
+        if not self.client:
+            return
+        p = self.prefix
+        route = f"{origin_iata}-{dest_iata}"
+        await self.client.zincrby(f"{p}analytics:no_results", 1, route)
+        await self.client.incr(f"{p}analytics:total_no_results")
+
+    async def get_analytics(self) -> dict:
+        """Собирает всю аналитику для /stats."""
+        if not self.client:
+            return {}
+        p = self.prefix
+        result = {}
+
+        # Общие счётчики
+        result["total_searches"]   = int(await self.client.get(f"{p}analytics:total_searches") or 0)
+        result["total_no_results"] = int(await self.client.get(f"{p}analytics:total_no_results") or 0)
+        result["searching_users"]  = await self.client.scard(f"{p}analytics:searching_users")
+        result["total_users"]      = await self.client.scard(f"{p}first_time_users")
+
+        # Топ маршруты
+        top_routes = await self.client.zrevrange(f"{p}analytics:routes", 0, 9, withscores=True)
+        result["top_routes"] = [(r.decode() if isinstance(r, bytes) else r, int(s)) for r, s in top_routes]
+
+        # Топ направления
+        top_dest = await self.client.zrevrange(f"{p}analytics:dest_cities", 0, 9, withscores=True)
+        result["top_destinations"] = [(d.decode() if isinstance(d, bytes) else d, int(s)) for d, s in top_dest]
+
+        # Топ города вылета
+        top_orig = await self.client.zrevrange(f"{p}analytics:origin_cities", 0, 4, withscores=True)
+        result["top_origins"] = [(o.decode() if isinstance(o, bytes) else o, int(s)) for o, s in top_orig]
+
+        # Цены по сегментам
+        price_buckets = await self.client.zrevrange(f"{p}analytics:price_buckets", 0, -1, withscores=True)
+        result["price_buckets"] = [(b.decode() if isinstance(b, bytes) else b, int(s)) for b, s in price_buckets]
+
+        # Тип рейса
+        result["flight_types"]  = await self.client.hgetall(f"{p}analytics:flight_types")
+        result["transfers"]     = await self.client.hgetall(f"{p}analytics:transfers")
+        result["passengers"]    = await self.client.hgetall(f"{p}analytics:passengers")
+        result["trip_type"]     = await self.client.hgetall(f"{p}analytics:trip_type")
+
+        # Маршруты без результатов
+        no_res = await self.client.zrevrange(f"{p}analytics:no_results", 0, 4, withscores=True)
+        result["top_no_results"] = [(r.decode() if isinstance(r, bytes) else r, int(s)) for r, s in no_res]
+
+        # Поиски по дням (последние 7)
+        searches_by_day = await self.client.hgetall(f"{p}analytics:searches_by_day")
+        if searches_by_day:
+            decoded = {(k.decode() if isinstance(k, bytes) else k): int(v)
+                       for k, v in searches_by_day.items()}
+            result["searches_by_day"] = dict(sorted(decoded.items())[-7:])
+
+        # Активные подписки
+        try:
+            all_subs = await self.get_all_hot_subs()
+            result["active_subscriptions"] = len(all_subs)
+        except Exception:
+            result["active_subscriptions"] = "—"
+
+        # Отслеживания цен
+        try:
+            watches = await self.get_all_watch_keys()
+            result["price_watches"] = len(watches)
+        except Exception:
+            result["price_watches"] = "—"
+
+        return result
+
 # Singleton
 redis_client = RedisClient()
