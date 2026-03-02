@@ -78,12 +78,11 @@ async def handle_search_simple(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     await callback.message.edit_text(
         "Начнём поиск билетов 👌\n\n"
-        "<b>Напишите маршрут:</b> Город отправления — Город прибытия\n\n"
+        "<b>Напишите маршрут:</b> Город отправления — Город или страну прибытия\n\n"
         "<i>Примеры:\n"
         "• Москва — Сочи\n"
         "• Москва — Таиланд\n"
         "• Казань — Египет</i>\n\n"
-        "💡 Не знаете точный город? Просто напишите страну — я предложу популярные варианты.\n\n"
         "Если ещё не решили откуда или куда — напишите «Везде».",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )

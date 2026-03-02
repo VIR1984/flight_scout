@@ -28,9 +28,7 @@ NAV_KB = ReplyKeyboardMarkup(
 # но поскольку NAV_KB всегда видна, пользователь может просто нажать
 # любую кнопку навигации и тоже выйти.
 #
-CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
-])
+CANCEL_KB = None  # кнопка "Отменить поиск" убрана
 
 # ── Аэропорты ─────────────────────────────────────────────────────────────────
 

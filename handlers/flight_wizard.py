@@ -20,6 +20,7 @@ from handlers.flight_fsm import (
     FlightSearch, validate_route, validate_date,
     _get_metro, _has_multi_airports, _airport_keyboard,
     build_choices_summary, build_passenger_code, _flight_type_text_to_code,
+    _genitive,
 )
 from handlers.country_search import _ask_country_city, _finalize_route
 
