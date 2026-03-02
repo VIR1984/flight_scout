@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 
 # Импорт роутеров
 from handlers.start import router as start_router
+from handlers.flight_wizard import router as wizard_router
+from handlers.country_search import router as country_router
+from handlers.search_results import router as results_router
 from handlers.flystack_track import router as flystack_router
 from handlers.everywhere_search import router as everywhere_router
 from handlers.hot_deals import router as hot_deals_router
@@ -65,6 +68,18 @@ async def main():
 
     dp.include_router(multi_search_router)
     logger.info("✅ Роутер: multi_search_router")
+
+    # Новые роутеры ПЕРЕД start_router — важен порядок!
+    # country_router и wizard_router должны перехватывать FSM-состояния
+    # раньше чем start_router с его handle_any_message (F.text fallback)
+    dp.include_router(country_router)
+    logger.info("✅ Роутер: country_router")
+
+    dp.include_router(wizard_router)
+    logger.info("✅ Роутер: wizard_router")
+
+    dp.include_router(results_router)
+    logger.info("✅ Роутер: results_router")
 
     dp.include_router(start_router)
     logger.info("✅ Роутер: start_router")
