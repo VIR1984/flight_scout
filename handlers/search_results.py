@@ -6,6 +6,7 @@ retry_with_transfers, edit_from_results, _show_no_flights.
 """
 import json
 import asyncio
+import os
 from uuid import uuid4
 
 from aiogram import Router, F
@@ -37,6 +38,7 @@ from handlers.flight_fsm import (
     FlightSearch, _format_datetime, _format_duration, build_choices_summary,
 )
 from handlers.flight_wizard import show_summary
+from handlers.start import _SEARCH_SEMAPHORE
 
 router = Router()
 

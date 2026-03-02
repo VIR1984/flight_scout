@@ -3,6 +3,8 @@
 FSM-шаги пошагового поиска: маршрут → аэропорт → даты →
 тип рейса → пассажиры → сводка → редактирование.
 """
+import asyncio
+
 from aiogram import Router, F
 from aiogram.types import (
     Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
@@ -14,6 +16,7 @@ from utils.cities_loader import (
     CITY_TO_IATA, IATA_TO_CITY, _normalize_name, get_country_cities,
 )
 from utils.smart_reminder import schedule_inactivity, cancel_inactivity
+from utils.logger import logger
 from handlers.flight_constants import CANCEL_KB, MULTI_AIRPORT_CITIES, AIRPORT_NAMES
 from handlers.everywhere_search import format_user_date, build_passenger_desc
 from handlers.flight_fsm import (
