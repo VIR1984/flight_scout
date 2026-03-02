@@ -53,17 +53,17 @@ async def _ask_country_city(
     )
 
     buttons = []
-    for i, city in enumerate(cities, 1):
+    for city in cities:
         buttons.append([InlineKeyboardButton(
-            text=f"{i}. {city['name']}",
+            text=city['name'],
             callback_data=f"cc_{role}_{city['iata']}",
         )])
     buttons.append([InlineKeyboardButton(
-        text=f"{len(cities) + 1}. ✏️ Ввести свой город",
+        text="✏️ Ввести свой город",
         callback_data=f"cc_{role}_custom",
     )])
     buttons.append([InlineKeyboardButton(
-        text=f"{len(cities) + 2}. 🔍 Любой город в {country_name}",
+        text=f"🔍 Любой город в {country_name}",
         callback_data=f"cc_{role}_any",
     )])
     buttons.append([InlineKeyboardButton(
