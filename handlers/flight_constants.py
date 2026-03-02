@@ -15,11 +15,12 @@ from aiogram.types import (
 #
 NAV_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✈️ Поиск"),    KeyboardButton(text="🔥 Горячие")],
-        [KeyboardButton(text="📋 Подписки"), KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="✈️ Поиск"),       KeyboardButton(text="🗺 Маршрут")],
+        [KeyboardButton(text="🔥 Горячие"),      KeyboardButton(text="📋 Подписки")],
+        [KeyboardButton(text="💬 Обратная связь"), KeyboardButton(text="❓ Помощь")],
     ],
-    resize_keyboard=True,   # компактная, не занимает пол-экрана
-    is_persistent=True,     # не скрывается после нажатия (Telegram 6.9+)
+    resize_keyboard=True,
+    is_persistent=True,
 )
 
 # ── Inline-кнопка отмены внутри FSM-шагов ────────────────────────────────────

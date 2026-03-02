@@ -24,6 +24,10 @@ from handlers.flight_wizard import ask_flight_type, ask_adults, show_summary
 router = Router()
 _SEARCH_SEMAPHORE = asyncio.Semaphore(10)
 
+
+class FeedbackState(StatesGroup):
+    waiting = State()
+
 MAIN_MENU_TEXT = (
     "Привет! Я помогу тебе летать выгодно.\n\n"
     "✈️ <b>Поиск</b> — простой маршрут туда и обратно.\n"
@@ -319,24 +323,6 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
 # ════════════════════════════════════════════════════════════════
 
 FEEDBACK_CHAT_ID = None  # Замените на ваш chat_id или @username канала
-
-@router.message(F.text == "💬 Обратная связь")
-async def nav_feedback(message: Message, state: FSMContext):
-    cancel_inactivity(message.chat.id)
-    current = await state.get_state()
-    if current:
-        await state.clear()
-    await state.set_state(FeedbackState.waiting)
-    await message.answer(
-        "💬 <b>Обратная связь</b>\n\n"
-        "Нашли баг или есть идея как улучшить бота?\n"
-        "Напишите сюда — я передам команде 👇",
-        parse_mode="HTML",
-    )
-
-
-class FeedbackState(StatesGroup):
-    waiting = State()
 
 
 @router.message(FeedbackState.waiting)
