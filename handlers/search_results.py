@@ -36,6 +36,7 @@ from handlers.flight_fsm import (
     FlightSearch, _format_datetime, _format_duration, build_choices_summary,
 )
 from handlers.flight_wizard import show_summary
+from handlers.start import _SEARCH_SEMAPHORE
 
 router = Router()
 
