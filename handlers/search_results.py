@@ -21,11 +21,11 @@ from services.flight_search import (
     find_cheapest_flight_on_exact_date, update_passengers_in_link, format_passenger_desc,
 )
 from services.transfer_search import search_transfers, generate_transfer_link
-from utils.cities_loader import get_city_name
+from utils.cities_loader import get_city_name, IATA_TO_CITY
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
-from utils.smart_reminder import cancel_inactivity, mark_fsm_inactive, remind_after_search
+from utils.smart_reminder import cancel_inactivity, mark_fsm_inactive, remind_after_search, schedule_inactivity
 from handlers.flight_constants import (
     CANCEL_KB, MULTI_AIRPORT_CITIES, AIRPORT_NAMES,
     SUPPORTED_TRANSFER_AIRPORTS, AIRLINE_NAMES,
@@ -35,7 +35,7 @@ from handlers.everywhere_search import (
     process_everywhere_search, format_user_date, build_passenger_desc,
 )
 from handlers.flight_fsm import (
-    FlightSearch, _format_datetime, _format_duration, build_choices_summary,
+    FlightSearch, _format_datetime, _format_duration, build_choices_summary, _get_metro,
 )
 from handlers.flight_wizard import show_summary
 from handlers.start import _SEARCH_SEMAPHORE

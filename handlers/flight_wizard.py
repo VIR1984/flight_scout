@@ -15,7 +15,7 @@ from utils.cities_loader import (
     get_iata, get_city_name, fuzzy_get_iata,
     CITY_TO_IATA, IATA_TO_CITY, _normalize_name, get_country_cities,
 )
-from utils.smart_reminder import schedule_inactivity, cancel_inactivity
+from utils.smart_reminder import schedule_inactivity, cancel_inactivity, mark_fsm_inactive
 from utils.logger import logger
 from handlers.flight_constants import CANCEL_KB, MULTI_AIRPORT_CITIES, AIRPORT_NAMES
 from handlers.everywhere_search import format_user_date, build_passenger_desc
