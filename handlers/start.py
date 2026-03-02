@@ -302,6 +302,9 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text)
 async def handle_any_message(message: Message, state: FSMContext):
+    # Команды не трогаем — у них свои хендлеры
+    if message.text and message.text.startswith("/"):
+        return
     current = await state.get_state()
     if current:
         return

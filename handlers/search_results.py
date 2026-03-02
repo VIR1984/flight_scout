@@ -766,31 +766,3 @@ async def handle_show_transfer(callback: CallbackQuery):
 
 
 # ════════════════════════════════════════════════════════════════
-# Любой текст вне FSM → тихий ручной поиск
-# ════════════════════════════════════════════════════════════════
-
-@router.message(F.text)
-async def handle_any_message(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    text = message.text or ""
-
-    if text.startswith("/"):
-        return
-
-    # Чужие FSM — не трогаем
-    if current_state and (
-        current_state.startswith("FlyStackTrack")
-        or current_state.startswith("HotDealsSub")
-    ):
-        return
-
-    # Внутри FlightSearch — предупреждаем
-    if current_state and current_state.startswith("FlightSearch"):
-        logger.warning(f"⚠️ [Start] Состояние {current_state}: '{text[:30]}'")
-        await message.answer(
-            "Пожалуйста, завершите текущий поиск или отмените его через кнопку ↩️ В начало",
-            reply_markup=CANCEL_KB,
-        )
-        return
-
-    # Вне FSM — пробуем тихий ручной поиск
