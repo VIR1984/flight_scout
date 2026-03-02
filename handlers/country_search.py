@@ -176,9 +176,6 @@ async def _ask_country_city(
     prepositional = names[1] if names else country_name.capitalize()
     dative        = names[2] if names else country_name.capitalize()  # "по всему/всей ___"
 
-    # Погода в столице (параллельно с рендером, таймаут 4с)
-    weather = await _fetch_weather(iso) if iso else ""
-
     await state.update_data(
         _country_role=role,
         _country_name=display_name,
@@ -187,22 +184,14 @@ async def _ask_country_city(
     )
     await state.set_state(FlightSearch.choose_country_city)
 
-    prompt       = "вылета" if role == "origin" else "назначения"
-    weather_line = f"\n🌡️ Сейчас в столице: <b>{weather}</b>" if weather else ""
+    prompt = "вылета" if role == "origin" else "назначения"
     text = (
-        f"🌍 <b>{display_name}</b> — популярные города {prompt}:{weather_line}\n\n"
-        "Выберите город или найдите самый дешёвый билет по всей стране."
+        
+        "Выбери город или найди самый дешёвый билет по всей стране."
     )
-
-    # Исключаем из списка город отправления (если роль — dest)
-    # чтобы не предлагать пользователю лететь откуда он уже летит
-    data_state = await state.get_data()
-    exclude_iata = data_state.get("origin_iata") if role == "dest" else data_state.get("dest_iata")
 
     buttons = []
     for city in cities:
-        if city["iata"] == exclude_iata:
-            continue  # пропускаем дубликат
         buttons.append([InlineKeyboardButton(
             text=city["name"],
             callback_data=f"cc_{role}_{city['iata']}",
@@ -390,42 +379,11 @@ async def _finalize_route(target, state: FSMContext):
     msg = target if isinstance(target, Message) else target
 
     if orig_iata and dest_iata and orig_iata == dest_iata:
-        # Пробуем предложить другие города из той же страны
-        country_iatas = data.get("_country_dest_iatas") or data.get("_country_iatas", [])
-        alt_cities = [
-            {"iata": iata, "name": get_city_name(iata) or iata}
-            for iata in country_iatas
-            if iata != orig_iata and get_city_name(iata)
-        ][:4]
-
-        if alt_cities:
-            country_name = data.get("_country_name", "этой стране")
-            buttons = []
-            for city in alt_cities:
-                buttons.append([InlineKeyboardButton(
-                    text=city["name"],
-                    callback_data=f"cc_dest_{city['iata']}",
-                )])
-            buttons.append([InlineKeyboardButton(
-                text="✏️ Ввести свой город",
-                callback_data="cc_dest_custom",
-            )])
-            await state.set_state(FlightSearch.choose_country_city)
-            await state.update_data(_country_role="dest", _country_custom_role=None)
-            await msg.answer(
-                f"❌ Нельзя лететь из <b>{dest_name}</b> в <b>{dest_name}</b>.\n\n"
-                f"Выберите другой город назначения в {country_name}:",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-            )
-        else:
-            await msg.answer(
-                f"❌ Город вылета и прибытия не могут совпадать.\n"
-                f"Введите другой город назначения:",
-                reply_markup=None,
-            )
-            await state.set_state(FlightSearch.choose_country_city)
-            await state.update_data(_country_role="dest", _country_custom_role="dest")
+        await msg.answer(
+            "❌ Город вылета и прибытия не могут совпадать. Выберите разные города.",
+            reply_markup=CANCEL_KB,
+        )
+        await state.set_state(FlightSearch.route)
         return
 
     await state.set_state(FlightSearch.route)
