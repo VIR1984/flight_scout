@@ -4,9 +4,14 @@
 Гарантирует что нажатие любой кнопки нав-панели всегда сбросит
 любое FSM-состояние и вызовет правильный хендлер, независимо от
 того в каком состоянии находится пользователь.
+
+ТАКЖЕ перехватывает команды (/start, /stats и т.д.) при активном
+FSM-состоянии — без этого они попадают в FSM-хендлеры роутеров
+которые стоят раньше start_router в main.py.
 """
 from aiogram import Router, F
 from aiogram.types import Message
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 
 from utils.smart_reminder import cancel_inactivity, mark_fsm_inactive
@@ -22,6 +27,45 @@ async def _reset_state(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
 
+
+# ════════════════════════════════════════════════════════════════
+# Команды — перехватываем при ЛЮБОМ состоянии FSM
+# Без этого /start при активном FlightSearch.route попадает в
+# process_route → "Неверный формат маршрута"
+# ════════════════════════════════════════════════════════════════
+
+@router.message(CommandStart())
+async def nav_cmd_start(message: Message, state: FSMContext):
+    """Всегда сбрасываем FSM и запускаем /start."""
+    await _reset_state(message, state)
+    from handlers.start import cmd_start as _handler
+    await _handler(message, state)
+
+
+@router.message(Command("stats"))
+async def nav_cmd_stats(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import cmd_stats as _handler
+    await _handler(message)
+
+
+@router.message(Command("sendstats"))
+async def nav_cmd_sendstats(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import cmd_sendstats as _handler
+    await _handler(message)
+
+
+@router.message(Command("feedback_log"))
+async def nav_cmd_feedback_log(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import cmd_feedback_log as _handler
+    await _handler(message)
+
+
+# ════════════════════════════════════════════════════════════════
+# Кнопки навигационной панели
+# ════════════════════════════════════════════════════════════════
 
 @router.message(F.text == "✈️ Поиск")
 async def nav_search(message: Message, state: FSMContext):
