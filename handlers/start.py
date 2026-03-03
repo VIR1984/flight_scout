@@ -404,7 +404,7 @@ async def process_feedback(message: Message, state: FSMContext):
 # ════════════════════════════════════════════════════════════════
 
 def _is_admin(user_id: int) -> bool:
-    admin_id = os.getenv("ADMIN_USER_ID", "")
+    admin_id = os.getenv("ADMIN_USER_ID", "").strip()
     return bool(admin_id) and str(user_id) == admin_id
 
 
@@ -561,6 +561,10 @@ def _build_stats_messages(an: dict) -> list[tuple[str, str]]:
 async def cmd_sendstats(message: Message):
     """Немедленная отправка полного отчёта в канал."""
     if not _is_admin(message.from_user.id):
+        admin_id = os.getenv("ADMIN_USER_ID", "").strip()
+        if not admin_id:
+            await message.answer("❌ ADMIN_USER_ID не задан в .env")
+        # Тихо игнорируем для не-админов
         return
     await message.answer("📤 Отправляю отчёт в канал...")
     try:
@@ -568,7 +572,14 @@ async def cmd_sendstats(message: Message):
         await send_now()
         await message.answer("✅ Отчёт отправлен в канал.")
     except Exception as exc:
-        await message.answer(f"❌ Ошибка: {exc}")
+        await message.answer(
+            f"❌ <b>Ошибка отправки:</b>\n<code>{exc}</code>\n\n"
+            "Проверь:\n"
+            "• ANALYTICS_CHANNEL_ID задан в .env\n"
+            "• Бот добавлен в канал как администратор\n"
+            "• Redis доступен",
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "admin_sendstats")

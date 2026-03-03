@@ -57,16 +57,19 @@ async def _send_report():
     from utils.channel_logger import send_daily_report
 
     logger.info("[DailyStats] Собираю аналитику...")
+
+    if not redis_client.client:
+        raise RuntimeError("Redis недоступен — аналитика не собрана")
+
     an = await redis_client.get_analytics()
     if not an:
-        logger.warning("[DailyStats] Аналитика пуста — ничего не отправляю")
-        return
+        raise RuntimeError("get_analytics() вернул пустой результат")
 
     ok = await send_daily_report(an, triggered_by="auto")
-    if ok:
-        logger.info("[DailyStats] ✅ Ежедневный отчёт отправлен в канал")
-    else:
-        logger.warning("[DailyStats] ⚠️ Отчёт не отправлен (канал не настроен?)")
+    if not ok:
+        raise RuntimeError("Отчёт не отправлен — проверь ANALYTICS_CHANNEL_ID и что бот добавлен в канал как администратор")
+
+    logger.info("[DailyStats] ✅ Ежедневный отчёт отправлен в канал")
 
 
 async def send_now():
