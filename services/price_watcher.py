@@ -82,7 +82,8 @@ class PriceWatcher:
                         continue
                     
                     watch_data = json.loads(raw_data)
-                    result = await self.check_single_watch(watch_data, key)
+                    str_key = key.decode() if isinstance(key, bytes) else key
+                    result = await self.check_single_watch(watch_data, str_key)
                     
                     if result == "removed":
                         total_removed += 1
@@ -138,7 +139,7 @@ class PriceWatcher:
             return False
         
         # Рассчитываем изменение с минимальным порогом 50₽ для избежания "дрожания"
-        price_change = current_price - new_price
+        price_change = int(float(current_price)) - int(float(new_price))
         abs_change = abs(price_change)
         should_notify = price_change != 0 and abs_change >= max(50, threshold)
         
@@ -199,7 +200,7 @@ class PriceWatcher:
             if not flights:
                 return None
             min_flight = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-            return min_flight.get("value") or min_flight.get("price") or None
+            raw=min_flight.get("value") or min_flight.get("price"); return int(float(raw)) if raw else None
         except Exception as e:
             logger.error(f"❌ Ошибка при поиске цен {origin}→{dest}: {e}")
             return None
@@ -214,8 +215,8 @@ class PriceWatcher:
     ) -> bool:
         """Отправить уведомление о смене цены. Возвращает True при успехе."""
         try:
-            origin_name = IATA_TO_CITY.get(watch["origin"], watch["origin"])
-            dest_name = IATA_TO_CITY.get(watch["dest"], watch["dest"])
+            origin_name = IATA_TO_CITY.get(watch["origin"],watch["origin"]) if watch.get("origin") else "Везде"
+            dest_name = IATA_TO_CITY.get(watch["dest"],watch["dest"]) if watch.get("dest") else "Везде"
             emoji = "📉" if price_change > 0 else "📈"
             passenger_desc = self._format_passengers(watch.get("passengers", "1"))
             
@@ -248,9 +249,9 @@ class PriceWatcher:
                 flight=dummy_flight,
                 origin=watch["origin"],
                 dest=watch["dest"],
-                depart_date=watch["depart_date"],
+                depart_date=normalize_date(watch["depart_date"]) if watch.get("depart_date") else "",
                 passengers_code=watch.get("passengers", "1"),
-                return_date=watch.get("return_date")
+                return_date=normalize_date(watch["return_date"]) if watch.get("return_date") else None
             )
             
             # === ПРЕОБРАЗУЕМ В ПАРТНЁРСКУЮ ЧЕРЕЗ API ===

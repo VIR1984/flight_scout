@@ -401,14 +401,6 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         kb_buttons.append([InlineKeyboardButton(text=f"✈️ Посмотреть детали за {price} ₽", url=booking_link)])
     kb_buttons.append([InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)])
 
-    # Кнопка «Информация о рейсе» — только если есть номер рейса из API
-    if airline and flight_number:
-        depart_date_raw = data.get("depart_date", "")
-        kb_buttons.append([InlineKeyboardButton(
-            text="📊 Информация о рейсе (раздел в разработке)",
-            callback_data=f"track_flight_direct:{airline}:{flight_number}:{depart_date_raw}"
-        )])
-
     kb_buttons.append([InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")])
     kb_buttons.append([InlineKeyboardButton(text="✏️ Изменить данные", callback_data=f"edit_from_results_{cache_id}")])
 
@@ -586,9 +578,9 @@ async def handle_watch_price(callback: CallbackQuery):
             origin = flights[0]["origin"]
             dest   = data.get("dest_iata") or flights[0].get("destination")
         min_flight  = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-        price       = min_flight.get("value") or min_flight.get("price")
+        price       = int(float(min_flight.get("value") or min_flight.get("price") or 0))
         depart_date = data["original_depart"]
-        return_date = data["original_return"]
+        return_date = data.get("original_return") or data.get("return_date")
     else:
         cache_id = parts[1]
         price    = int(parts[2])
@@ -600,7 +592,7 @@ async def handle_watch_price(callback: CallbackQuery):
         origin      = top["origin"]
         dest        = data.get("dest_iata") or top.get("destination")
         depart_date = data["original_depart"]
-        return_date = data["original_return"]
+        return_date = data.get("original_return") or data.get("return_date")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔔 Любое изменение цены",    callback_data=f"set_threshold:0:{cache_id}:{price}")],
@@ -617,7 +609,7 @@ async def handle_set_threshold(callback: CallbackQuery):
     cancel_inactivity(callback.message.chat.id)
     _, threshold_str, cache_id, price_str = callback.data.split(":", 3)
     threshold = int(threshold_str)
-    price     = int(price_str)
+    price     = int(float(price_str))
 
     data = await redis_client.get_search_cache(cache_id)
     if not data:
@@ -633,14 +625,14 @@ async def handle_set_threshold(callback: CallbackQuery):
         origin=origin if not data.get("origin_everywhere") else None,
         dest=dest     if not data.get("dest_everywhere")   else None,
         depart_date=data["original_depart"],
-        return_date=data["original_return"],
+        return_date=data.get("original_return") or data.get("return_date"),
         current_price=price,
-        passengers=data.get("passenger_code", "1"),
+        passengers=data.get("passenger_code") or data.get("passengers_code", "1"),
         threshold=threshold,
     )
 
-    origin_name = IATA_TO_CITY.get(origin, origin)
-    dest_name   = IATA_TO_CITY.get(dest, dest)
+    origin_name = (IATA_TO_CITY.get(origin, origin) if origin else "Везде")
+    dest_name   = (IATA_TO_CITY.get(dest, dest) if dest else "Везде")
     condition   = {0: "любом изменении", 100: "изменении на сотни ₽", 1000: "изменении на тысячи ₽"}.get(threshold, "изменении цены")
 
     response = (
