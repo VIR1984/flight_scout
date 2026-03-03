@@ -45,7 +45,22 @@ MAIN_MENU_TEXT = (
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(MAIN_MENU_TEXT, parse_mode="HTML", reply_markup=NAV_KB)
+    # Для админа добавляем кнопку статистики прямо на главный экран
+    if _is_admin(message.from_user.id):
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Отправить статистику в канал", callback_data="admin_sendstats")]
+        ])
+        await message.answer(MAIN_MENU_TEXT, parse_mode="HTML", reply_markup=NAV_KB)
+        await message.answer(
+            "🔐 <b>Панель администратора</b>\n"
+            "Команды: /mystats — быстрая статистика\n"
+            "/sendstats — отправить полный отчёт в канал",
+            parse_mode="HTML",
+            reply_markup=admin_kb,
+        )
+    else:
+        await message.answer(MAIN_MENU_TEXT, parse_mode="HTML", reply_markup=NAV_KB)
     # Аналитика: новый пользователь
     u = message.from_user
     asyncio.create_task(log_event(
@@ -540,6 +555,46 @@ def _build_stats_messages(an: dict) -> list[tuple[str, str]]:
         blocks.append(("\U0001f6ab \u041c\u0430\u0440\u0448\u0440\u0443\u0442\u044b \u0431\u0435\u0437 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432", "\n".join(lines)))
 
     return blocks
+
+
+@router.message(Command("sendstats"))
+async def cmd_sendstats(message: Message):
+    """Немедленная отправка полного отчёта в канал."""
+    if not _is_admin(message.from_user.id):
+        return
+    await message.answer("📤 Отправляю отчёт в канал...")
+    try:
+        from utils.daily_stats import send_now
+        await send_now()
+        await message.answer("✅ Отчёт отправлен в канал.")
+    except Exception as exc:
+        await message.answer(f"❌ Ошибка: {exc}")
+
+
+@router.callback_query(F.data == "admin_sendstats")
+async def cb_admin_sendstats(callback: CallbackQuery):
+    """Кнопка «Отправить статистику» на главном экране."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await callback.answer("Отправляю...")
+    await callback.message.edit_text(
+        "📤 <b>Отправляю отчёт в канал...</b>",
+        parse_mode="HTML",
+    )
+    try:
+        from utils.daily_stats import send_now
+        await send_now()
+        await callback.message.edit_text(
+            "✅ <b>Отчёт отправлен в канал.</b>\n\n"
+            "Команды: /mystats — быстрая статистика\n/sendstats — повторить отправку",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📊 Отправить ещё раз", callback_data="admin_sendstats")]
+            ])
+        )
+    except Exception as exc:
+        await callback.message.edit_text(f"❌ Ошибка: {exc}")
 
 
 @router.message(Command("feedback_log"))

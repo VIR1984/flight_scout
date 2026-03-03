@@ -114,14 +114,152 @@ async def log_error(context: str, exc: Exception | None = None, extra: str = "")
 
 async def log_stats(stats: dict):
     """
-    Сводная статистика.
-    stats — произвольный dict с числовыми показателями.
-    Пример: {"users": 100, "searches_today": 45, "subscriptions": 12}
+    Сводная статистика (простой формат — для обратной совместимости).
     """
     lines = [f"📊 <b>Статистика</b>  |  {_now()}\n"]
     for key, val in stats.items():
         lines.append(f"  • {key}: <b>{val}</b>")
     await _send("\n".join(lines))
+
+
+async def send_daily_report(an: dict, triggered_by: str = "auto") -> bool:
+    """
+    Красивый ежедневный отчёт в канал.
+    an — словарь из redis_client.get_analytics()
+    triggered_by — 'auto' (планировщик) или 'admin' (ручной запрос)
+    Отправляет несколько сообщений — по блокам.
+    """
+
+    def bar(count: int, max_count: int, width: int = 10) -> str:
+        if not max_count:
+            return "░" * width
+        filled = round(width * count / max_count)
+        return "█" * filled + "░" * (width - filled)
+
+    label = "🕘 Ежедневный отчёт" if triggered_by == "auto" else "📤 Отчёт по запросу"
+    header = (
+        f"{'─' * 30}\n"
+        f"{label}\n"
+        f"📅 {_now()}\n"
+        f"{'─' * 30}"
+    )
+    await _send(header)
+
+    # ── Блок 1: Ключевые метрики ─────────────────────────────────
+    searches  = an.get("total_searches", 0)
+    no_res    = an.get("total_no_results", 0)
+    users     = an.get("total_users", 0)
+    s_users   = an.get("searching_users", 0)
+    subs      = an.get("active_subscriptions", 0)
+    watches   = an.get("price_watches", 0)
+    sr_rate   = f"{round((searches - no_res) / searches * 100)}%" if searches else "—"
+
+    day_data  = an.get("searches_by_day", {})
+    today_cnt = 0
+    if day_data:
+        from datetime import datetime, timezone
+        today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_cnt = day_data.get(today_key, 0)
+
+    b1 = (
+        "👥 <b>Пользователи</b>\n"
+        f"  Всего зарегистрировано:  <b>{users}</b>\n"
+        f"  Выполняли поиск:         <b>{s_users}</b>\n"
+        f"  Конверсия в поиск:       <b>{'—' if not users else str(round(s_users/users*100)) + '%'}</b>\n\n"
+        "🔍 <b>Поиски</b>\n"
+        f"  Всего поисков:           <b>{searches}</b>\n"
+        f"  Сегодня:                 <b>{today_cnt}</b>\n"
+        f"  Нашли рейсы:             <b>{sr_rate}</b>\n\n"
+        "🔔 <b>Подписки и слежение</b>\n"
+        f"  Активных подписок:       <b>{subs}</b>\n"
+        f"  Отслеживают цены:        <b>{watches}</b>"
+    )
+    await _send(b1)
+
+    # ── Блок 2: Топ-10 направлений ───────────────────────────────
+    top_dest = an.get("top_destinations", [])
+    if top_dest:
+        max_d = top_dest[0][1] if top_dest else 1
+        lines_d = ["🎯 <b>Топ-10 направлений</b>\n"]
+        for i, (name, cnt) in enumerate(top_dest[:10], 1):
+            lines_d.append(f"  {i:>2}. {name:<18} {bar(cnt, max_d, 8)}  {cnt}")
+        await _send("\n".join(lines_d))
+
+    # ── Блок 3: Города вылета ────────────────────────────────────
+    top_orig = an.get("top_origins", [])
+    if top_orig:
+        max_o = top_orig[0][1] if top_orig else 1
+        lines_o = ["🛫 <b>Топ города вылета</b>\n"]
+        for i, (name, cnt) in enumerate(top_orig[:5], 1):
+            lines_o.append(f"  {i}. {name:<18} {bar(cnt, max_o, 8)}  {cnt}")
+        await _send("\n".join(lines_o))
+
+    # ── Блок 4: Поведение пользователей ─────────────────────────
+    def _dec(v) -> str:
+        return v.decode() if isinstance(v, bytes) else str(v)
+
+    trip  = {_dec(k): _dec(v) for k, v in an.get("trip_type", {}).items()}
+    pax   = {_dec(k): _dec(v) for k, v in an.get("passengers", {}).items()}
+    stops = {_dec(k): _dec(v) for k, v in an.get("transfers", {}).items()}
+
+    b4 = "🧠 <b>Поведение</b>\n"
+    if trip:
+        ow = int(trip.get("oneway", 0))
+        rt = int(trip.get("roundtrip", 0))
+        total = ow + rt or 1
+        b4 += f"  ✈️ Только туда:     <b>{ow}</b>  ({round(ow/total*100)}%)\n"
+        b4 += f"  🔄 Туда-обратно:    <b>{rt}</b>  ({round(rt/total*100)}%)\n"
+    if stops:
+        direct = int(stops.get("direct", 0))
+        one    = int(stops.get("1_stop", 0))
+        two    = int(stops.get("2plus_stops", 0))
+        b4 += f"  ➡️ Прямые рейсы:   <b>{direct}</b>\n"
+        b4 += f"  🔁 С пересадкой:   <b>{one + two}</b>\n"
+    if pax:
+        sorted_pax = sorted(pax.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 99)
+        pax_str = "  ".join(f"{k} пас: <b>{v}</b>" for k, v in sorted_pax)
+        b4 += f"  👥 {pax_str}\n"
+    if b4.strip() != "🧠 <b>Поведение</b>":
+        await _send(b4.strip())
+
+    # ── Блок 5: Ценовые сегменты ─────────────────────────────────
+    price_b = an.get("price_buckets", [])
+    if price_b:
+        def _sort_key(item):
+            try: return int(item[0].split("-")[0])
+            except: return 999999
+        sorted_pb = sorted(price_b, key=_sort_key)
+        max_p = max(c for _, c in sorted_pb) if sorted_pb else 1
+        lines_p = ["💰 <b>Ценовые сегменты</b>\n"]
+        for bucket, cnt in sorted_pb:
+            parts = bucket.split("-")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                label = f"{int(parts[0])//1000}–{int(parts[1])//1000}к ₽"
+            else:
+                label = bucket
+            lines_p.append(f"  {label:<12} {bar(cnt, max_p, 8)}  {cnt}")
+        await _send("\n".join(lines_p))
+
+    # ── Блок 6: График активности по дням ───────────────────────
+    if day_data:
+        max_day = max(day_data.values()) or 1
+        lines_cal = ["📅 <b>Активность за 7 дней</b>\n"]
+        for day, cnt in sorted(day_data.items())[-7:]:
+            short = day[5:]  # MM-DD
+            lines_cal.append(f"  {short}  {bar(cnt, max_day, 10)}  <b>{cnt}</b>")
+        await _send("\n".join(lines_cal))
+
+    # ── Блок 7: Проблемные маршруты ──────────────────────────────
+    no_results = an.get("top_no_results", [])
+    if no_results:
+        lines_nr = ["🚫 <b>Маршруты без рейсов</b>\n"]
+        for route, cnt in no_results[:5]:
+            lines_nr.append(f"  {route}   —   {cnt} раз")
+        await _send("\n".join(lines_nr))
+
+    # ── Итог ─────────────────────────────────────────────────────
+    await _send("✅ <b>Отчёт завершён</b>")
+    return True
 
 
 # ── Вспомогательное ───────────────────────────────────────────────────────────

@@ -108,6 +108,10 @@ async def main():
 
     hot_deals_sender = HotDealsSender(bot)
     hot_deals_task = asyncio.create_task(hot_deals_sender.start())
+
+    from utils import daily_stats as _daily_stats
+    asyncio.create_task(_daily_stats.start())
+    logger.info("✅ Сервис: daily_stats (ежедневный отчёт в канал)")
     logger.info("✅ HotDealsSender запущен")
 
     logger.info("🚀 Бот запущен! Ожидаю сообщения...")
