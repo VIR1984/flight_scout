@@ -545,24 +545,45 @@ def _build_stats_messages(an: dict) -> list[tuple[str, str]]:
 @router.message(Command("sendstats"))
 async def cmd_sendstats(message: Message):
     """Немедленная отправка полного отчёта в канал."""
-    if not _is_admin(message.from_user.id):
-        admin_id = os.getenv("ADMIN_USER_ID", "").strip()
-        if not admin_id:
-            await message.answer("❌ ADMIN_USER_ID не задан в .env")
-        # Тихо игнорируем для не-админов
+    admin_id = os.getenv("ADMIN_USER_ID", "").strip()
+
+    # Диагностика: сообщаем что именно не так
+    if not admin_id:
+        await message.answer(
+            "❌ <b>ADMIN_USER_ID не задан</b>\n\n"
+            "Добавьте переменную окружения <code>ADMIN_USER_ID</code> = ваш Telegram ID.\n"
+            "Узнать свой ID можно у @userinfobot",
+            parse_mode="HTML",
+        )
         return
-    await message.answer("📤 Отправляю отчёт в канал...")
+
+    if not _is_admin(message.from_user.id):
+        await message.answer("🚫 Нет доступа к этой команде.")
+        return
+
+    # Прогресс — сразу даём реакцию
+    progress = await message.answer("⏳ <b>Собираю статистику...</b>", parse_mode="HTML")
     try:
         from utils.daily_stats import send_now
         await send_now()
-        await message.answer("✅ Отчёт отправлен в канал.")
+        await progress.edit_text(
+            "✅ <b>Отчёт отправлен в канал!</b>\n\n"
+            "Проверьте канал аналитики.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📊 Отправить ещё раз", callback_data="admin_sendstats")],
+            ])
+        )
     except Exception as exc:
-        await message.answer(
-            f"❌ <b>Ошибка отправки:</b>\n<code>{exc}</code>\n\n"
-            "Проверь:\n"
-            "• ANALYTICS_CHANNEL_ID задан в .env\n"
-            "• Бот добавлен в канал как администратор\n"
-            "• Redis доступен",
+        logger.error(f"[sendstats] Ошибка: {exc}", exc_info=True)
+        channel_id = os.getenv("ANALYTICS_CHANNEL_ID", "").strip()
+        await progress.edit_text(
+            f"❌ <b>Ошибка отправки отчёта</b>\n\n"
+            f"<code>{exc}</code>\n\n"
+            f"<b>Проверьте:</b>\n"
+            f"{'✅' if channel_id else '❌'} ANALYTICS_CHANNEL_ID {'= ' + channel_id if channel_id else 'не задан'}\n"
+            f"• Бот добавлен в канал как администратор\n"
+            f"• Redis доступен",
             parse_mode="HTML",
         )
 
