@@ -205,7 +205,7 @@ async def process_route(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        f"✈️ <b>Шаг 2/6</b> — Дата вылета\n\n"
+        f"✈️ <b> 2/6</b> — Дата вылета\n\n"
         f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
@@ -260,7 +260,7 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
         return
     # Отправляем новое сообщение с вопросом о дате (не редактируем — выбор остаётся виден)
     await callback.message.answer(
-        f"✈️ <b>Шаг 2/6</b> — Дата вылета\n\n"
+        f"✈️ <b>2/6</b> — Дата вылета\n\n"
         f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
@@ -311,7 +311,7 @@ async def process_depart_date(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="✅ Да, нужен",    callback_data="return_yes"),
          InlineKeyboardButton(text="❌ Нет, спасибо", callback_data="return_no")],
     ])
-    await message.answer("✈️ <b>Шаг 3/6</b> — Обратный билет\n\nНужен ли обратный билет?",
+    await message.answer("✈️ <b>3/6</b> — Обратный билет\n\nНужен ли обратный билет?",
                          parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.need_return)
 
@@ -327,7 +327,7 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
     await state.update_data(need_return=need_return)
     if need_return:
         await callback.message.edit_text(
-            f"✈️ <b>Шаг 3/6</b> — Дата возврата\n\n"
+            f"✈️ <b>3/6</b> — Дата возврата\n\n"
             f"Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB,
@@ -392,7 +392,7 @@ async def ask_flight_type(message: Message, state: FSMContext):
          InlineKeyboardButton(text="🔀 С пересадкой", callback_data="ft_transfer")],
         [InlineKeyboardButton(text="🔍 Все варианты", callback_data="ft_all")],
     ])
-    await message.answer("✈️ <b>Шаг 4/6</b> — Тип рейса\n\nКакие рейсы показывать?",
+    await message.answer("✈️ <b>4/6</b> — Тип рейса\n\nКакие рейсы показывать?",
                          parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.flight_type)
 
@@ -429,7 +429,7 @@ async def ask_adults(message: Message, state: FSMContext):
         [InlineKeyboardButton(text=str(i), callback_data=f"adults_{i}") for i in range(5, 9)],
         [InlineKeyboardButton(text="9",    callback_data="adults_9")],
     ])
-    await message.answer("✈️ <b>Шаг 5/6</b> — Пассажиры\n\nСколько взрослых пассажиров (от 12 лет)?",
+    await message.answer("✈️ <b>5/6</b> — Пассажиры\n\nСколько взрослых пассажиров (от 12 лет)?",
                          parse_mode="HTML", reply_markup=kb)
     await state.set_state(FlightSearch.adults)
 

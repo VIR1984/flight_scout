@@ -93,7 +93,7 @@ async def nav_search(message: Message, state: FSMContext):
         await state.clear()
     cancel_inactivity(message.chat.id)
     await message.answer(
-        "✈️ <b>Шаг 1 из 6 — Маршрут</b>\n\n"
+        "✈️ <b> 1/6 — Маршрут</b>\n\n"
         "Напиши маршрут: <b>Откуда — Куда</b>\n\n"
         "<i>Примеры: Москва — Сочи, Москва — Таиланд\n"
         "Если не знаешь куда — напиши, Город - Везде (или наоборот)</i>",
@@ -117,7 +117,7 @@ async def nav_multi_search(message: Message, state: FSMContext):
 async def handle_search_simple(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     await callback.message.edit_text(
-        "✈️ <b>Шаг 1 из 6 — Маршрут</b>\n\n"
+        "✈️ <b>1/6 — Маршрут</b>\n\n"
         "Напиши маршрут: <b>Откуда — Куда</b>\n\n"
         "<i>Примеры: Москва — Сочи, Москва — Таиланд\n"
         "Если не знаешь куда — напиши «Везде»</i>",
