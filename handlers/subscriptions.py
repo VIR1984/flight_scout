@@ -78,31 +78,28 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     hot_only      = hot_count - digest_count
     watch_count   = len(price_watches)
 
-    def _cnt(n: int) -> str:
-        return f" ({n})" if n else ""
-
     text = (
         "📋 <b>Мои подписки</b>\n\n"
         "Управляй всеми уведомлениями в одном месте.\n\n"
-        f"🔥 <b>Горячие предложения{_cnt(hot_only)}</b>\n"
+        "🔥 <b>Горячие предложения</b>\n"
         "Напишу, когда появится рейс дешевле твоего бюджета.\n\n"
-        f"📰 <b>Дайджест{_cnt(digest_count)}</b>\n"
+        "📰 <b>Дайджест</b>\n"
         "Ежедневная или еженедельная подборка лучших цен.\n\n"
-        f"📉 <b>Слежение за ценой{_cnt(watch_count)}</b>\n"
+        "📉 <b>Слежение за ценой</b>\n"
         "Слежу за конкретным рейсом и сообщу о снижении цены."
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"🔥 Горячие предложения{_cnt(hot_only)}",
+            text="🔥 Горячие предложения",
             callback_data="subs_section_hot"
         )],
         [InlineKeyboardButton(
-            text=f"📰 Дайджест{_cnt(digest_count)}",
+            text="📰 Дайджест",
             callback_data="subs_section_digest"
         )],
         [InlineKeyboardButton(
-            text=f"📉 Слежение за ценой{_cnt(watch_count)}",
+            text="📉 Слежение за ценой",
             callback_data="subs_section_watches"
         )],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
@@ -298,32 +295,3 @@ async def cb_section_watches(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
     await callback.answer()
-
-
-# ════════════════════════════════════════════════════════════════
-# Создание подписок (быстрые переходы в FSM)
-# ════════════════════════════════════════════════════════════════
-
-@router.callback_query(F.data == "hd_type_hot")
-async def cb_start_hot(callback: CallbackQuery, state: FSMContext):
-    """Запускает FSM для создания горячей подписки."""
-    await state.update_data(sub_type="hot")
-    # Делегируем в hot_deals — вызовем hd_step2_category напрямую через callback_data
-    from handlers.hot_deals import hd_step2_category
-    # Подменяем data чтобы пройти hd_step1
-    callback.data = "hd_type_hot"
-    # hot_deals уже обрабатывает hd_type_hot — просто редиректим
-    await callback.answer()
-    # Запускаем шаг выбора типа из hot_deals
-    from handlers.hot_deals import hd_step1_sub_type
-    await hd_step1_sub_type(callback, state)
-
-
-@router.callback_query(F.data == "hd_type_digest")
-async def cb_start_digest(callback: CallbackQuery, state: FSMContext):
-    """Запускает FSM для создания дайджест-подписки."""
-    await state.update_data(sub_type="digest")
-    callback.data = "hd_type_digest"
-    await callback.answer()
-    from handlers.hot_deals import hd_step1_sub_type
-    await hd_step1_sub_type(callback, state)
