@@ -617,14 +617,17 @@ async def handle_set_threshold(callback: CallbackQuery):
         await callback.answer("Данные устарели", show_alert=True)
         return
 
+    is_origin_everywhere = data.get("origin_everywhere", False)
+    is_dest_everywhere   = data.get("dest_everywhere",   False)
+
     top    = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
-    origin = top["origin"]
-    dest   = data.get("dest_iata") or top.get("destination")
+    origin = None if is_origin_everywhere else (top.get("origin") or data.get("origin_iata", ""))
+    dest   = None if is_dest_everywhere   else (data.get("dest_iata") or top.get("destination", ""))
 
     await redis_client.save_price_watch(
         user_id=callback.from_user.id,
-        origin=origin if not data.get("origin_everywhere") else None,
-        dest=dest     if not data.get("dest_everywhere")   else None,
+        origin=origin,
+        dest=dest,
         depart_date=data["original_depart"],
         return_date=data.get("original_return") or data.get("return_date"),
         current_price=price,
@@ -632,8 +635,8 @@ async def handle_set_threshold(callback: CallbackQuery):
         threshold=threshold,
     )
 
-    origin_name = (IATA_TO_CITY.get(origin, origin) if origin else "Везде")
-    dest_name   = (IATA_TO_CITY.get(dest, dest) if dest else "Везде")
+    origin_name = "Везде" if is_origin_everywhere else (IATA_TO_CITY.get(origin, origin) if origin else "—")
+    dest_name   = "Везде" if is_dest_everywhere   else (IATA_TO_CITY.get(dest, dest)     if dest   else "—")
     condition   = {0: "любом изменении", 100: "изменении на сотни ₽", 1000: "изменении на тысячи ₽"}.get(threshold, "изменении цены")
 
     response = (

@@ -19,6 +19,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
 
 from services.flight_search import search_flights, generate_booking_link, normalize_date
+from handlers.everywhere_search import search_destination_everywhere, search_origin_everywhere
 from utils.redis_client import redis_client
 from utils.api_limiter import BACKGROUND_SEMAPHORE
 from utils.logger import logger
@@ -125,12 +126,29 @@ class PriceWatcher:
     async def _fetch_route_price(self, route_key: str, watch: dict) -> None:
         async with BACKGROUND_SEMAPHORE:
             try:
-                flights = await search_flights(
-                    origin=watch.get("origin"),
-                    destination=watch.get("dest"),
-                    depart_date=normalize_date(watch.get("depart_date", "")),
-                    return_date=normalize_date(watch["return_date"]) if watch.get("return_date") else None,
-                )
+                origin      = watch.get("origin")
+                dest        = watch.get("dest")
+                depart_date = normalize_date(watch.get("depart_date", ""))
+                return_date = normalize_date(watch["return_date"]) if watch.get("return_date") else None
+
+                # Переиспользуем уже существующие функции везде-поиска
+                if not origin and dest:
+                    # Везде → конкретный город
+                    flights = await search_origin_everywhere(
+                        dest_iata=dest, depart_date=depart_date
+                    )
+                elif origin and not dest:
+                    # Конкретный город → Везде
+                    flights = await search_destination_everywhere(
+                        origin_iata=origin, depart_date=depart_date
+                    )
+                else:
+                    # Конкретный маршрут
+                    flights = await search_flights(
+                        origin=origin, destination=dest,
+                        depart_date=depart_date, return_date=return_date,
+                    )
+
                 if not flights:
                     self._cycle_cache[route_key] = (None, time.time())
                     return
@@ -214,13 +232,31 @@ class PriceWatcher:
                 f"<i>Выгода: {abs(price_change)}\u202f₽</i>"
             )
 
-            link = await convert_to_partner_link(generate_booking_link(
-                flight={"value": new_price, "origin": watch.get("origin"), "destination": watch.get("dest")},
-                origin=watch.get("origin", ""), dest=watch.get("dest", ""),
-                depart_date=normalize_date(watch["depart_date"]) if watch.get("depart_date") else "",
-                passengers_code=watch.get("passengers", "1"),
-                return_date=normalize_date(watch["return_date"]) if watch.get("return_date") else None,
-            ))
+            origin_iata = watch.get("origin") or ""
+            dest_iata   = watch.get("dest") or ""
+            pax_code    = watch.get("passengers", "1")
+            dep_date    = normalize_date(watch["depart_date"]) if watch.get("depart_date") else ""
+            ret_date    = normalize_date(watch["return_date"]) if watch.get("return_date") else None
+
+            if origin_iata and dest_iata:
+                # Конкретный маршрут — прямая ссылка на бронирование
+                raw_link = generate_booking_link(
+                    flight={"value": new_price, "origin": origin_iata, "destination": dest_iata},
+                    origin=origin_iata, dest=dest_iata,
+                    depart_date=dep_date, passengers_code=pax_code, return_date=ret_date,
+                )
+            elif origin_iata:
+                # Город → Везде: карта направлений из города
+                from services.flight_search import format_avia_link_date
+                d1 = format_avia_link_date(dep_date) if dep_date else ""
+                raw_link = f"https://www.aviasales.ru/map?params={origin_iata}{d1}{pax_code}"
+            else:
+                # Везде → город: поиск из всех в этот город
+                raw_link = generate_booking_link(
+                    flight={"value": new_price}, origin="", dest=dest_iata,
+                    depart_date=dep_date, passengers_code=pax_code, return_date=ret_date,
+                )
+            link = await convert_to_partner_link(raw_link)
 
             await self.bot.send_message(
                 chat_id=user_id, text=text, parse_mode="HTML",

@@ -584,7 +584,7 @@ async def show_summary(message, state: FSMContext):
     await state.update_data(passenger_code=passenger_code, passenger_desc=passenger_desc)
     data = await state.get_data()
 
-    summary = "✈️ <b>Подтверждение</b>\n\nПроверьте даты и данные:\n\n" + build_choices_summary(data)
+    summary = "✈️ <b>6/6 - Подтверждение</b>\n\nПроверьте даты и данные:\n\n" + build_choices_summary(data)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
         [InlineKeyboardButton(text="✏️ Маршрут",   callback_data="edit_route"),
