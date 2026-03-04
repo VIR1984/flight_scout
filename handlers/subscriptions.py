@@ -89,17 +89,18 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         "Слежу за конкретным рейсом и сообщу о снижении цены."
     )
 
+    def _cnt(n): return f" ({n})" if n else ""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="🔥 Горячие предложения",
+            text=f"🔥 Горячие предложения{_cnt(hot_only)}",
             callback_data="subs_section_hot"
         )],
         [InlineKeyboardButton(
-            text="📰 Дайджест",
+            text=f"📰 Дайджест{_cnt(digest_count)}",
             callback_data="subs_section_digest"
         )],
         [InlineKeyboardButton(
-            text="📉 Слежение за ценой",
+            text=f"📉 Слежение за ценой{_cnt(watch_count)}",
             callback_data="subs_section_watches"
         )],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
