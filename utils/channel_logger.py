@@ -35,16 +35,20 @@ def _channel_id():
 
 async def _send(text: str, topic: str | None = None) -> bool:
     """Низкоуровневая отправка. topic — для будущих тем/тредов."""
-    bot  = _bot_instance.bot
-    cid  = _channel_id()
-    if not bot or not cid:
-        return False
+    bot = _bot_instance.bot
+    cid = _channel_id()
+    if not bot:
+        raise RuntimeError("bot instance не инициализирован — бот ещё не запущен")
+    if not cid:
+        raise RuntimeError(
+            "ANALYTICS_CHANNEL_ID не задан в переменных окружения"
+        )
     try:
         await bot.send_message(cid, text, parse_mode="HTML", disable_web_page_preview=True)
         return True
     except Exception as exc:
-        logger.warning(f"[channel_logger] Не удалось отправить в канал: {exc}")
-        return False
+        # Пробрасываем наружу — пусть вызывающий код решает что делать
+        raise RuntimeError(f"Telegram не принял сообщение в канал {cid}: {exc}") from exc
 
 
 # ── Публичный API ─────────────────────────────────────────────────────────────
@@ -58,7 +62,10 @@ async def log_feedback(user_id: int, username: str | None, full_name: str, text:
         f"⏰ {_now()}\n\n"
         f"{text}"
     )
-    await _send(msg)
+    try:
+        await _send(msg)
+    except Exception as e:
+        logger.warning(f"[log_feedback] {e}")
 
 
 async def log_event(event: str, user_id: int | None = None,
@@ -86,7 +93,10 @@ async def log_event(event: str, user_id: int | None = None,
     )
     if detail:
         msg += f"\n{detail}"
-    await _send(msg)
+    try:
+        await _send(msg)
+    except Exception as e:
+        logger.warning(f"[log_event] {e}")
 
 
 async def log_error(context: str, exc: Exception | None = None, extra: str = ""):
@@ -109,7 +119,10 @@ async def log_error(context: str, exc: Exception | None = None, extra: str = "")
         # Telegram ограничение 4096 символов
         tb_short = tb[-1200:]
         msg += f"\n\n<pre>{_escape(tb_short)}</pre>"
-    await _send(msg)
+    try:
+        await _send(msg)
+    except Exception as e:
+        logger.warning(f"[log_error] {e}")
 
 
 async def log_stats(stats: dict):
@@ -143,7 +156,12 @@ async def send_daily_report(an: dict, triggered_by: str = "auto") -> bool:
         f"📅 {_now()}\n"
         f"{'─' * 30}"
     )
-    await _send(header)
+    # Первая отправка — если упадёт, сразу узнаем о проблеме
+    try:
+        await _send(header)
+    except Exception as exc:
+        logger.error(f"[send_daily_report] Не удалось отправить в канал: {exc}")
+        raise  # пробрасываем в _send_report → там поймает и залогирует
 
     # ── Блок 1: Ключевые метрики ─────────────────────────────────
     searches  = an.get("total_searches", 0)
