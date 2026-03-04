@@ -27,6 +27,7 @@ from utils.link_converter import convert_to_partner_link
 from utils.logger import logger
 from utils.smart_reminder import cancel_inactivity, schedule_inactivity, mark_fsm_inactive
 from handlers.flight_constants import CANCEL_KB
+from utils.date_hints import hint_depart
 
 router = Router()
 
@@ -242,7 +243,7 @@ async def ms_dest(message: Message, state: FSMContext):
     orig_name = data.get("_cur_origin_name", cur_origin_iata)
     await message.answer(
         f"📍 {orig_name} → <b>{name}</b>\n\n"
-        "Введите <b>дату вылета</b> в формате <code>ДД.ММ</code>:\n<i>Пример: 10.03</i>",
+        f"Введите <b>дату вылета</b> в формате <code>ДД.ММ</code>:\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
 
@@ -258,7 +259,7 @@ async def ms_date(message: Message, state: FSMContext):
 
     if not _validate_date(date_text):
         await message.answer(
-            "❌ Неверный формат даты.\n<i>Пример: 10.03</i>",
+            f"❌ Неверный формат даты.\n<i>Пример: {hint_depart()}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return

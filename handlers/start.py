@@ -96,7 +96,7 @@ async def nav_search(message: Message, state: FSMContext):
         "✈️ <b>Шаг 1 из 6 — Маршрут</b>\n\n"
         "Напиши маршрут: <b>Откуда — Куда</b>\n\n"
         "<i>Примеры: Москва — Сочи, Москва — Таиланд\n"
-        "Если не знаешь куда — напиши «Везде»</i>",
+        "Если не знаешь куда — напиши, Город - Везде (или наоборот)</i>",
         parse_mode="HTML",
     )
     await state.set_state(FlightSearch.route)

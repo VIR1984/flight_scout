@@ -27,6 +27,7 @@ from handlers.flight_fsm import (
 )
 from handlers.country_search import _ask_country_city, _finalize_route
 from services.flight_search import normalize_date
+from utils.date_hints import hint_depart, hint_return
 
 router = Router()
 
@@ -204,8 +205,8 @@ async def process_route(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        "✈️ <b>Шаг 2/6</b> — Дата вылета\n\n"
-        "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
+        f"✈️ <b>Шаг 2/6</b> — Дата вылета\n\n"
+        f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.depart_date)
@@ -259,8 +260,8 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
         return
     # Отправляем новое сообщение с вопросом о дате (не редактируем — выбор остаётся виден)
     await callback.message.answer(
-        "✈️ <b>Шаг 2/6</b> — Дата вылета\n\n"
-        "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
+        f"✈️ <b>Шаг 2/6</b> — Дата вылета\n\n"
+        f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.depart_date)
@@ -275,7 +276,7 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
 async def process_depart_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
-            "❌ Неверный формат даты.\n<i>Пример: 10.03</i>",
+            f"❌ Неверный формат даты.\n<i>Пример: {hint_depart()}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return
@@ -292,7 +293,7 @@ async def process_depart_date(message: Message, state: FSMContext):
             return
         if data.get("need_return"):
             await message.answer(
-                "✏️ Введите новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
+                f"✏️ Введите новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
                 parse_mode="HTML", reply_markup=CANCEL_KB,
             )
             await state.set_state(FlightSearch.return_date)
@@ -326,8 +327,8 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
     await state.update_data(need_return=need_return)
     if need_return:
         await callback.message.edit_text(
-            "✈️ <b>Шаг 3/6</b> — Дата возврата\n\n"
-            "Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: 15.03</i>",
+            f"✈️ <b>Шаг 3/6</b> — Дата возврата\n\n"
+            f"Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB,
         )
@@ -354,7 +355,7 @@ async def need_return_to_menu(message: Message, state: FSMContext):
 async def process_return_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
         await message.answer(
-            "❌ Неверный формат даты.\n<i>Пример: 15.03</i>",
+            f"❌ Неверный формат даты.\n<i>Пример: {hint_return(hint_depart())}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return
@@ -619,7 +620,7 @@ async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: st
         data = await state.get_data()
         hint = "\n(затем введёте дату обратного рейса)" if data.get("need_return") else ""
         await callback.message.edit_text(
-            f"✏️ Введите новую дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 15.03</i>",
+            f"✏️ Введите новую дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: {hint_depart()}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         await state.set_state(FlightSearch.depart_date)

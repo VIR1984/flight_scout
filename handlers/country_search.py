@@ -22,6 +22,7 @@ from handlers.flight_fsm import (
     FlightSearch, _get_metro, _has_multi_airports, _airport_keyboard,
 )
 from utils.logger import logger
+from utils.date_hints import hint_depart
 
 router = Router()
 
@@ -401,7 +402,7 @@ async def _finalize_route(target, state: FSMContext):
     else:
         await state.set_state(FlightSearch.depart_date)
         await msg.answer(
-            "Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: 10.03</i>",
+            f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         from utils.inactivity import schedule_inactivity
