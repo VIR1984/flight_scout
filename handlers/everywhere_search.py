@@ -170,24 +170,27 @@ async def process_everywhere_search(
     is_origin_everywhere = (search_type == "origin_everywhere")
     is_dest_everywhere = (search_type == "destination_everywhere")
     
-    await redis_client.set_search_cache(cache_id, {
-        "flights": all_flights,
-        "dest_iata": data.get("dest_iata"),
-        "is_roundtrip": False,
-        "display_depart": display_depart,
-        "display_return": None,
-        "original_depart": data["depart_date"],
-        "original_return": None,
-        "passenger_desc": data["passenger_desc"],
-        "passengers_code": data["passenger_code"],
-        "origin_everywhere": is_origin_everywhere,
-        "dest_everywhere": is_dest_everywhere,
-        "flight_type": data.get("flight_type", "all")
-    })
-    
-    sorted_flights = sorted(all_flights, key=lambda f: f.get("value") or f.get("price") or 999_999)
+    sorted_flights  = sorted(all_flights, key=lambda f: f.get("value") or f.get("price") or 999_999)
     cheapest_flight = sorted_flights[0]
     rest_flights    = sorted_flights[1:]
+
+    await redis_client.set_search_cache(cache_id, {
+        "flights":          all_flights,
+        "rest_flights":     rest_flights,
+        "dest_iata":        data.get("dest_iata"),
+        "depart_date":      data["depart_date"],
+        "is_roundtrip":     False,
+        "display_depart":   display_depart,
+        "display_return":   None,
+        "original_depart":  data["depart_date"],
+        "original_return":  None,
+        "passenger_desc":   data["passenger_desc"],
+        "passengers_code":  data["passenger_code"],
+        "passenger_code":   data["passenger_code"],
+        "origin_everywhere": is_origin_everywhere,
+        "dest_everywhere":   is_dest_everywhere,
+        "flight_type":       data.get("flight_type", "all"),
+    })
 
     price       = cheapest_flight.get("value") or cheapest_flight.get("price") or "?"
     origin_iata = cheapest_flight["origin"]
@@ -212,8 +215,11 @@ async def process_everywhere_search(
 
     airline       = cheapest_flight.get("airline", "")
     flight_number = cheapest_flight.get("flight_number", "")
-    airline_disp  = _AIRLINE_NAMES.get(airline, airline) if airline else ""
-    flight_str    = f"{airline_disp} {flight_number}".strip() if flight_number else airline_disp
+    # Если код не найден в словаре — не выводим сырой код
+    airline_disp  = _AIRLINE_NAMES.get(airline, "") if airline else ""
+    # Авиакомпания и номер рейса — отдельные строки
+    flight_str    = airline_disp  # только название компании
+    flight_num_str = f"{airline} {flight_number}".strip() if flight_number else ""  # код + номер рейса
 
     passengers_code = data.get("passenger_code", "1")
     try:
@@ -256,6 +262,8 @@ async def process_everywhere_search(
     text += f"\n🔁 <b>Пересадки:</b> {stops_text}"
     if flight_str:
         text += f"\n✈️ <b>Авиакомпания:</b> {flight_str}"
+    if flight_num_str:
+        text += f"\n🔢 <b>Рейс:</b> {flight_num_str}"
     text += f"\n\n💰 <b>Цена за 1 пассажира:</b> {price_int:,} ₽".replace(",", "\u202f")
     if num_adults > 1:
         text += f"\n💳 <b>Итого за {num_adults} взрослых:</b> ~{total_int:,} ₽".replace(",", "\u202f")
@@ -292,10 +300,14 @@ async def process_everywhere_search(
 
     if rest_flights:
         kb_buttons.append([InlineKeyboardButton(
-            text="➕ Ещё 2 варианта подешевле",
+            text="➕ Посмотреть ещё варианты",
             callback_data=f"more_flights_{cache_id}_1",
         )])
 
+    kb_buttons.append([InlineKeyboardButton(
+        text="🔔 Следить за ценой",
+        callback_data=f"watch_all_{cache_id}",
+    )])
     kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
@@ -430,8 +442,8 @@ async def handle_everywhere_search_manual(
             "SU": "Аэрофлот", "S7": "S7 Airlines", "DP": "Победа", "U6": "Уральские авиалинии",
             "FV": "Россия", "UT": "ЮТэйр", "N4": "Нордстар", "IK": "Победа"
         }
-        airline_display = airline_name_map.get(airline, airline)
-        flight_display = f"{airline_display} {flight_number}" if flight_number else airline_display
+        airline_display = airline_name_map.get(airline, "")  # пусто если неизвестен
+        flight_display  = f"{airline} {flight_number}".strip() if flight_number else ""
     
     # Расчет цены
     try:
@@ -455,7 +467,9 @@ async def handle_everywhere_search_manual(
             f"{transfer_text}\n"
         )
         if airline_display:
-            text += f"✈️ {flight_display}\n"
+            text += f"✈️ <b>Авиакомпания:</b> {airline_display}\n"
+        if flight_display:
+            text += f"🔢 <b>Рейс:</b> {flight_display}\n"
         
         if price != "?":
             text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
@@ -481,7 +495,9 @@ async def handle_everywhere_search_manual(
             f"{transfer_text}\n"
         )
         if airline_display:
-            text += f"✈️ {flight_display}\n"
+            text += f"✈️ <b>Авиакомпания:</b> {airline_display}\n"
+        if flight_display:
+            text += f"🔢 <b>Рейс:</b> {flight_display}\n"
         
         if price != "?":
             text += f"\n💰 <b>Цена за 1 пассажира:</b> {price_per_passenger} ₽"
@@ -547,3 +563,106 @@ async def handle_everywhere_search_manual(
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
     return True
+
+# ════════════════════════════════════════════════════════════════
+# Показ дополнительных вариантов (Ещё варианты)
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("more_flights_"))
+async def handle_more_flights(callback: CallbackQuery):
+    """Показывает следующие варианты по цене."""
+    from utils.smart_reminder import cancel_inactivity
+    cancel_inactivity(callback.message.chat.id)
+
+    parts    = callback.data.split("_")   # more_flights_<cache_id>_<page>
+    page     = int(parts[-1])
+    cache_id = "_".join(parts[2:-1])
+
+    cached = await redis_client.get_search_cache(cache_id)
+    if not cached:
+        await callback.answer("Данные устарели — выполните новый поиск", show_alert=True)
+        return
+
+    all_f   = cached.get("flights", [])
+    rest    = cached.get("rest_flights") or sorted(all_f, key=lambda f: f.get("value") or f.get("price") or 999999)[1:]
+    per_page = 3
+    start    = (page - 1) * per_page
+    batch    = rest[start:start + per_page]
+
+    if not batch:
+        await callback.answer("Больше вариантов нет", show_alert=True)
+        return
+
+    passengers_code = cached.get("passengers_code") or cached.get("passenger_code", "1")
+    try:
+        num_adults = int(passengers_code[0])
+    except (IndexError, ValueError):
+        num_adults = 1
+
+    depart_date   = cached.get("depart_date") or cached.get("original_depart", "")
+    display_depart = cached.get("display_depart") or format_user_date(depart_date)
+    text = f"✈️ <b>Ещё варианты</b>\n\n"
+
+    kb_buttons = []
+    for i, flight in enumerate(batch, start + 1):
+        price_val = flight.get("value") or flight.get("price") or 0
+        price_int = int(float(price_val))
+        orig_iata = flight.get("origin", "")
+        dest_iata = flight.get("destination", "")
+        orig_name = get_city_name(orig_iata) or IATA_TO_CITY.get(orig_iata, orig_iata)
+        dest_name = get_city_name(dest_iata) or IATA_TO_CITY.get(dest_iata, dest_iata)
+        airline   = flight.get("airline", "")
+        fnum      = flight.get("flight_number", "")
+        duration  = _format_duration(flight.get("duration", 0))
+        transfers = flight.get("transfers", 0)
+
+        from handlers.flight_constants import AIRLINE_NAMES
+        airline_disp = AIRLINE_NAMES.get(airline, airline)
+        flight_str   = f"{airline_disp} {fnum}".strip() if fnum else airline_disp
+
+        if transfers == 0:   stops_text = "Прямой рейс ✈️"
+        elif transfers == 1: stops_text = "1 пересадка"
+        else:                stops_text = f"{transfers} пересадки"
+
+        total_int = price_int * num_adults
+        text += f"<b>{i}. {orig_name} → {dest_name}</b>\n"
+        text += f"   📅 {display_depart}  ⏱ {duration}  🔁 {stops_text}\n"
+        if flight_str:
+            text += f"   ✈️ {flight_str}\n"
+        text += f"   💰 <b>{price_int:,} ₽</b> / чел.".replace(",", "\u202f")
+        if num_adults > 1:
+            text += f"  (~{total_int:,} ₽ за {num_adults} взрослых)".replace(",", "\u202f")
+        text += "\n\n"
+
+        booking_link = flight.get("link") or flight.get("deep_link")
+        if booking_link:
+            from services.flight_search import update_passengers_in_link
+            booking_link = update_passengers_in_link(booking_link, passengers_code)
+            if not booking_link.startswith(("http://", "https://")):
+                booking_link = f"https://www.aviasales.ru{booking_link}"
+        else:
+            booking_link = generate_booking_link(
+                flight=flight, origin=orig_iata, dest=dest_iata,
+                depart_date=depart_date, passengers_code=passengers_code, return_date=None,
+            )
+            if not booking_link.startswith(("http://", "https://")):
+                booking_link = f"https://www.aviasales.ru{booking_link}"
+        booking_link = await convert_to_partner_link(booking_link)
+
+        kb_buttons.append([InlineKeyboardButton(
+            text=f"✈️ Вариант {i}: {price_int:,} ₽".replace(",", "\u202f"),
+            url=booking_link,
+        )])
+
+    if len(rest) > start + per_page:
+        kb_buttons.append([InlineKeyboardButton(
+            text="➕ Посмотреть ещё варианты",
+            callback_data=f"more_flights_{cache_id}_{page + 1}",
+        )])
+
+    kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+    await callback.message.answer(
+        text, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons),
+    )
+    await callback.answer()

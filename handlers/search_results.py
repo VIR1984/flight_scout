@@ -366,10 +366,11 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     airline       = top_flight.get("airline", "")
     flight_number = top_flight.get("flight_number", "")
-    if airline or flight_number:
-        airline_display = AIRLINE_NAMES.get(airline, airline)
-        flight_display  = f"{airline_display} {flight_number}".strip() if flight_number else airline_display
-        text += f"\n{flight_display}"
+    airline_name  = AIRLINE_NAMES.get(airline, "")  # пустая строка если код неизвестен
+    if airline_name:
+        text += f"\n✈️ <b>Авиакомпания:</b> {airline_name}"
+    if airline and flight_number:
+        text += f"\n🔢 <b>Рейс:</b> {airline} {flight_number}"
 
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if booking_link:
@@ -398,7 +399,7 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     kb_buttons = []
     if booking_link:
-        kb_buttons.append([InlineKeyboardButton(text=f"Посмотреть детали — {price_per_pax} ₽ / чел.", url=booking_link)])
+        kb_buttons.append([InlineKeyboardButton(text=f"🔍 Посмотреть детали  {price_per_pax:,} ₽".replace(",", "\u202f"), url=booking_link)])
     kb_buttons.append([InlineKeyboardButton(text="Все варианты на эти даты", url=fallback_link)])
 
     kb_buttons.append([InlineKeyboardButton(text="Следить за ценой", callback_data=f"watch_all_{cache_id}")])
