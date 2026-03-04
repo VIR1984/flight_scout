@@ -393,6 +393,18 @@ def _is_admin(user_id: int) -> bool:
     return bool(admin_id) and str(user_id) == admin_id
 
 
+@router.message(Command("myid"))
+async def cmd_myid(message: Message):
+    """Показывает Telegram ID пользователя — для настройки ADMIN_USER_ID."""
+    admin_id = os.getenv("ADMIN_USER_ID", "не задан")
+    await message.answer(
+        f"👤 Ваш Telegram ID: <code>{message.from_user.id}</code>\n\n"
+        f"Текущий <code>ADMIN_USER_ID</code> в .env: <code>{admin_id}</code>\n\n"
+        f"{'✅ Совпадает — вы администратор' if str(message.from_user.id) == admin_id else '❌ Не совпадает — установите ADMIN_USER_ID = ' + str(message.from_user.id)}",
+        parse_mode="HTML",
+    )
+
+
 def _dec(v) -> str:
     """Декодирует bytes из Redis в строку."""
     return v.decode() if isinstance(v, bytes) else str(v)
