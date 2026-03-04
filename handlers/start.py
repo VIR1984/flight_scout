@@ -76,9 +76,9 @@ async def handle_main_menu(callback: CallbackQuery, state: FSMContext):
     if state:
         await state.clear()
     try:
-        await callback.message.edit_text("Выберите раздел в нижней панели навигации.")
+        await callback.message.edit_text("Выбери раздел в нижней панели.")
     except Exception:
-        await callback.message.answer("Выберите раздел в нижней панели навигации.")
+        await callback.message.answer("Выбери раздел в нижней панели.")
     await callback.answer()
 
 
@@ -93,13 +93,10 @@ async def nav_search(message: Message, state: FSMContext):
         await state.clear()
     cancel_inactivity(message.chat.id)
     await message.answer(
-        "✈️ <b>Шаг 1/6</b> — Маршрут\n\n"
-        "<b>Напишите маршрут:</b> Город отправления — Город или страну прибытия\n\n"
-        "<i>Примеры:\n"
-        "• Москва — Сочи\n"
-        "• Москва — Таиланд\n"
-        "• Казань — Египет</i>\n\n"
-        "Если ещё не решили откуда или куда — напишите «Везде».",
+        "✈️ <b>Шаг 1 из 6 — Маршрут</b>\n\n"
+        "Напиши маршрут: <b>Откуда — Куда</b>\n\n"
+        "<i>Примеры: Москва — Сочи, Москва — Таиланд\n"
+        "Если не знаешь куда — напиши «Везде»</i>",
         parse_mode="HTML",
     )
     await state.set_state(FlightSearch.route)
@@ -120,13 +117,10 @@ async def nav_multi_search(message: Message, state: FSMContext):
 async def handle_search_simple(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     await callback.message.edit_text(
-        "✈️ <b>Шаг 1/6</b> — Маршрут\n\n"
-        "<b>Напишите маршрут:</b> Город отправления — Город или страну прибытия\n\n"
-        "<i>Примеры:\n"
-        "• Москва — Сочи\n"
-        "• Москва — Таиланд\n"
-        "• Казань — Египет</i>\n\n"
-        "Если ещё не решили откуда или куда — напишите «Везде».",
+        "✈️ <b>Шаг 1 из 6 — Маршрут</b>\n\n"
+        "Напиши маршрут: <b>Откуда — Куда</b>\n\n"
+        "<i>Примеры: Москва — Сочи, Москва — Таиланд\n"
+        "Если не знаешь куда — напиши «Везде»</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.route)
@@ -150,13 +144,12 @@ async def nav_hot(message: Message, state: FSMContext):
     subs = await redis_client.get_hot_subs(user_id)
     text = (
         "🔥 <b>Горячие предложения</b>\n\n"
-        "Укажите направления и бюджет — бот сам следит за ценами "
-        "и пришлёт уведомление, когда появятся выгодные билеты."
+        "Укажи направление и бюджет — напишу, когда появится выгодный рейс."
     )
     buttons = [[InlineKeyboardButton(text="⚙️ Настроить подписку", callback_data="hd_new_sub")]]
     if subs:
         buttons.append([InlineKeyboardButton(
-            text=f"📋 Мои подписки ({len(subs)})", callback_data="hd_my_subs"
+            text=f"Мои подписки ({len(subs)})", callback_data="hd_my_subs"
         )])
     await message.answer(text, parse_mode="HTML",
                          reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
@@ -178,14 +171,19 @@ async def nav_help(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await message.answer(
-        "❓ <b>Как пользоваться</b>\n\n"
-        "✈️ <b>Поиск</b> — простой маршрут туда и/или обратно.\n\n"
-        "🗺 <b>Маршрут</b> — составной поиск: несколько перелётов по разным городам.\n\n"
-        "🔥 <b>Горячие</b> — подпишитесь на направления, "
-        "и я напишу когда цена упадёт на 10%+.\n\n"
-        "📋 <b>Подписки</b> — просмотр и управление активными подписками.\n\n"
-        "💬 <b>Обратная связь</b> — сообщить о баге или предложить улучшение.\n\n"
-        "<i>Нажмите «✈️ Поиск» чтобы начать.</i>",
+        "<b>Справка</b>\n\n"
+        "<b>Поиск</b> — найти билеты по маршруту, датам и числу пассажиров.\n"
+        "<b>Маршрут</b> — составной поиск с несколькими перелётами.\n"
+        "<b>Горячие</b> — получай уведомление, когда появится выгодный рейс.\n"
+        "<b>Подписки</b> — просмотр и управление всеми уведомлениями.\n"
+        "<b>Обратная связь</b> — сообщить об ошибке или предложить улучшение.\n\n"
+        "——————————————\n\n"
+        "<b>Конфиденциальность</b>\n\n"
+        "Бот не хранит персональные данные. При поиске используются только маршрут, "
+        "даты и число пассажиров — исключительно для запроса к Aviasales.\n\n"
+        "Параметры подписок хранятся в зашифрованном виде и автоматически удаляются через 30 дней.\n\n"
+        "Данные банковских карт боту не передаются. Оплата проходит напрямую на сайте Aviasales.\n\n"
+        "<i>Нажми «Поиск», чтобы начать.</i>",
         parse_mode="HTML",
     )
 
@@ -197,11 +195,15 @@ async def nav_help(message: Message, state: FSMContext):
 @router.callback_query(F.data == "help_info")
 async def handle_help(callback: CallbackQuery):
     text = (
-        "❓ <b>Как пользоваться</b>\n\n"
-        "✈️ <b>Поиск билетов</b> — маршрут, даты, пассажиры → лучшие цены.\n\n"
-        "🔥 <b>Горячие предложения</b> — подпишитесь, и я напишу когда цена упадёт на 10%+.\n\n"
-        "📋 <b>Подписки</b> — просмотр и управление.\n\n"
-        "📉 <b>Следить за ценой</b> — уведомление при изменении цены на маршруте."
+        "<b>Справка</b>\n\n"
+        "<b>Поиск</b> — найти билеты по маршруту, датам и числу пассажиров.\n"
+        "<b>Горячие</b> — уведомление, когда появится рейс дешевле бюджета.\n"
+        "<b>Подписки</b> — просмотр и управление всеми уведомлениями.\n"
+        "<b>Следить за ценой</b> — уведомление при изменении цены на конкретном рейсе.\n\n"
+        "——————————————\n\n"
+        "<b>Конфиденциальность</b>\n\n"
+        "Бот не хранит персональные данные. Параметры подписок хранятся в зашифрованном виде и автоматически удаляются через 30 дней. "
+        "Данные банковских карт боту не передаются — оплата происходит на сайте Aviasales."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
@@ -223,13 +225,12 @@ async def handle_my_subscriptions(callback: CallbackQuery, state: FSMContext):
         ])
         try:
             await callback.message.edit_text(
-                "📋 <b>Мои подписки</b>\n\nАктивных подписок нет.\n"
-                "Хотите настроить уведомления о горячих ценах?",
+                "<b>Подписки</b>\n\nАктивных подписок пока нет.",
                 parse_mode="HTML", reply_markup=kb,
             )
         except Exception:
             await callback.message.answer(
-                "📋 <b>Мои подписки</b>\n\nАктивных подписок нет.",
+                "<b>Подписки</b>\n\nАктивных подписок пока нет.",
                 parse_mode="HTML", reply_markup=kb,
             )
         await callback.answer()
@@ -250,10 +251,9 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
 
     if not current or not current.startswith("FlightSearch"):
         hint = (
-            "Начнём поиск 👌\n\n"
-            "<b>Напишите маршрут:</b> Город отправления - Город прибытия\n\n"
-            "<i>Примеры: Москва - Сочи, Москва - Таиланд, Казань - Египет</i>\n\n"
-            "💡 Не знаете точный город? Напишите страну — предложу варианты."
+            "<b>Напиши маршрут: Откуда — Куда</b>\n\n"
+            "<i>Примеры: Москва — Сочи, Москва — Таиланд, Казань — Египет\n"
+            "Не знаешь точный город? Напиши страну — предложу варианты.</i>"
         )
         try:
             await callback.message.edit_text(hint, parse_mode="HTML", reply_markup=CANCEL_KB)
@@ -321,11 +321,9 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
 async def start_flight_search(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     await callback.message.edit_text(
-        "Начнём поиск билетов 👌\n\n"
-        "<b>Напишите маршрут в формате: Город отправления - Город прибытия</b>\n\n"
-        "<i>Примеры: Москва - Сочи, Москва - Таиланд, Казань - Египет</i>\n\n"
-        "💡 Не знаете точный город? Напишите страну — предложу популярные варианты.\n\n"
-        "Если ещё не решили, откуда или куда полетите, напишите слово «Везде».",
+        "<b>Напиши маршрут: Откуда — Куда</b>\n\n"
+        "<i>Примеры: Москва — Сочи, Москва — Таиланд, Казань — Египет\n"
+        "Если не знаешь куда — напиши «Везде»</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.route)
@@ -346,9 +344,9 @@ async def nav_feedback(message: Message, state: FSMContext):
     mark_fsm_inactive(message.chat.id)
     await state.set_state(FeedbackState.waiting)
     await message.answer(
-        "💬 <b>Обратная связь</b>\n\n"
-        "Напишите ваше сообщение — баг, пожелание или вопрос.\n"
-        "Оно придёт напрямую команде разработки.",
+        "<b>Обратная связь</b>\n\n"
+        "Напиши сообщение — баг, пожелание или вопрос.\n"
+        "<i>Оно придёт напрямую команде.</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✖ Отмена", callback_data="cancel_feedback")]
@@ -383,8 +381,7 @@ async def process_feedback(message: Message, state: FSMContext):
     ))
 
     await message.answer(
-        "✅ Спасибо! Ваше сообщение передано команде.\n\n"
-        "Постараемся ответить или исправить как можно быстрее 🔧",
+        "Сообщение передано команде. Постараемся ответить быстрее.",
     )
 
 # ════════════════════════════════════════════════════════════════

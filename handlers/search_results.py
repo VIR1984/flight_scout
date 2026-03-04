@@ -332,13 +332,13 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         num_adults = 1
     estimated_total = price_per_pax * num_adults if price != "?" else "?"
 
-    text = "✅ <b>Самый дешёвый вариант</b>\n"
+    text = "<b>Лучший результат</b>\n"
     if price != "?":
-        text += f"\nЦена за 1 пассажира: {price_per_pax} ₽"
+        text += f"\n<b>{price_per_pax} ₽</b> за пассажира"
         if num_adults > 1:
-            text += f"\nПримерно за {num_adults} взрослых: ~{estimated_total} ₽"
+            text += f"\n<i>~{estimated_total} ₽ за {num_adults} взрослых</i>"
     else:
-        text += f"\nЦена: уточните на Aviasales"
+        text += "\n<i>Цену уточни на Aviasales</i>"
 
     if data.get("children", 0) > 0 or data.get("infants", 0) > 0:
         text += "\n<i>(стоимость для детей/младенцев может рассчитываться по-другому)</i>"
@@ -358,18 +358,18 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     text += (
         f"\n\n<b>Рейс:</b> {route_str}"
-        f"\nТуда: {display_depart}"
+        f"\n<b>Туда:</b> {display_depart}"
     )
     if data.get("need_return") and display_return:
-        text += f"\nОбратно: {display_return}"
-    text += f"\nПродолжительность: {duration}\n{transfer_text}"
+        text += f"\n<b>Обратно:</b> {display_return}"
+    text += f"\n{duration} · {transfer_text}"
 
     airline       = top_flight.get("airline", "")
     flight_number = top_flight.get("flight_number", "")
     if airline or flight_number:
         airline_display = AIRLINE_NAMES.get(airline, airline)
         flight_display  = f"{airline_display} {flight_number}".strip() if flight_number else airline_display
-        text += f"\nАвиакомпания: {flight_display}"
+        text += f"\n{flight_display}"
 
     booking_link = top_flight.get("link") or top_flight.get("deep_link")
     if booking_link:
@@ -398,11 +398,11 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     kb_buttons = []
     if booking_link:
-        kb_buttons.append([InlineKeyboardButton(text=f"✈️ Посмотреть детали за {price} ₽", url=booking_link)])
-    kb_buttons.append([InlineKeyboardButton(text="🔍 Все варианты на эти даты", url=fallback_link)])
+        kb_buttons.append([InlineKeyboardButton(text=f"Открыть на Aviasales — {price_per_pax} ₽ / чел.", url=booking_link)])
+    kb_buttons.append([InlineKeyboardButton(text="Все варианты на эти даты", url=fallback_link)])
 
-    kb_buttons.append([InlineKeyboardButton(text="📉 Следить за ценой", callback_data=f"watch_all_{cache_id}")])
-    kb_buttons.append([InlineKeyboardButton(text="✏️ Изменить данные", callback_data=f"edit_from_results_{cache_id}")])
+    kb_buttons.append([InlineKeyboardButton(text="Следить за ценой", callback_data=f"watch_all_{cache_id}")])
+    kb_buttons.append([InlineKeyboardButton(text="Изменить запрос", callback_data=f"edit_from_results_{cache_id}")])
 
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")
@@ -595,12 +595,12 @@ async def handle_watch_price(callback: CallbackQuery):
         return_date = data.get("original_return") or data.get("return_date")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔔 Любое изменение цены",    callback_data=f"set_threshold:0:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="🔔 Изменение на сотни ₽",    callback_data=f"set_threshold:100:{cache_id}:{price}")],
-        [InlineKeyboardButton(text="🔔 Изменение на тысячи ₽",   callback_data=f"set_threshold:1000:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="Любое изменение",            callback_data=f"set_threshold:0:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="Изменение на 100 ₽ и больше",  callback_data=f"set_threshold:100:{cache_id}:{price}")],
+        [InlineKeyboardButton(text="Изменение на 1 000 ₽ и больше", callback_data=f"set_threshold:1000:{cache_id}:{price}")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
-    await callback.message.answer("🔔 <b>Выберите условия уведомлений</b>", parse_mode="HTML", reply_markup=kb)
+    await callback.message.answer("<b>Когда уведомлять об изменении цены?</b>", parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
@@ -636,22 +636,22 @@ async def handle_set_threshold(callback: CallbackQuery):
     condition   = {0: "любом изменении", 100: "изменении на сотни ₽", 1000: "изменении на тысячи ₽"}.get(threshold, "изменении цены")
 
     response = (
-        f"✅ <b>Отлично! Я буду следить за ценами</b>\n"
-        f"📲 Пришлю уведомление, если цена изменится!\n"
-        f"📍 Маршрут: {origin_name} → {dest_name}\n"
-        f"📅 Вылет: {data['display_depart']}\n"
+        f"✅ <b>Слежение активировано</b>\n\n"
+        f"<b>Маршрут:</b> {origin_name} → {dest_name}\n"
+        f"<b>Вылет:</b> {data.get('display_depart', '')}\n"
     )
     if data.get("display_return"):
-        response += f"📅 Возврат: {data['display_return']}\n"
+        response += f"<b>Обратно:</b> {data['display_return']}\n"
     response += (
-        f"💰 Текущая цена: {price} ₽\n"
-        f"🔔 Уведомлять при: {condition}\n"
+        f"Цена сейчас: <b>{price} ₽</b>\n"
+        f"<i>Уведомлю при {condition}</i>\n\n"
+        "Управляй слежением в разделе <b>Подписки</b>."
     )
     await callback.message.edit_text(
         response, parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Мои подписки", callback_data="subs_section_watches")],
-            [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+            [InlineKeyboardButton(text="Мои подписки", callback_data="subs_section_watches")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
         ]),
     )
     await callback.answer()
@@ -663,10 +663,10 @@ async def handle_unwatch(callback: CallbackQuery):
     key     = callback.data.split("unwatch_")[1]
     user_id = callback.from_user.id
     if f":{user_id}:" not in key:
-        await callback.answer("❌ Это не ваше отслеживание!", show_alert=True)
+        await callback.answer("Это не твоё отслеживание.", show_alert=True)
         return
     await redis_client.remove_watch(user_id, key)
-    await callback.answer("✅ Отслеживание удалено")
+    await callback.answer("Слежение удалено")
     # Показываем обновлённый список слежений или меню подписок
     watches = await redis_client.get_user_watches(user_id)
     if watches:
@@ -674,9 +674,9 @@ async def handle_unwatch(callback: CallbackQuery):
         # Эмулируем callback для обновления списка
         try:
             await callback.message.edit_text(
-                "✅ Отслеживание удалено.",
+                "Слежение удалено.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="📉 Все отслеживания", callback_data="subs_section_watches")],
+                    [InlineKeyboardButton(text="Все отслеживания", callback_data="subs_section_watches")],
                     [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
                 ])
             )
@@ -684,7 +684,7 @@ async def handle_unwatch(callback: CallbackQuery):
             pass
     else:
         await callback.message.edit_text(
-            "✅ Отслеживание удалено.\n\nАктивных отслеживаний больше нет.",
+            "Слежение удалено.\n\nАктивных отслеживаний нет.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📋 Мои подписки", callback_data="subs_menu")],
                 [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],

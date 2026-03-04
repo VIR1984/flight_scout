@@ -78,15 +78,14 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     hot_only      = hot_count - digest_count
     watch_count   = len(price_watches)
 
+    # Формируем информативный заголовок с итогами
+    total = hot_count + watch_count
+    summary = f"Всего активных: {total}" if total else "Активных подписок нет"
     text = (
-        "📋 <b>Мои подписки</b>\n\n"
-        "Управляй всеми уведомлениями в одном месте.\n\n"
-        "🔥 <b>Горячие предложения</b>\n"
-        "Напишу, когда появится рейс дешевле твоего бюджета.\n\n"
-        "📰 <b>Дайджест</b>\n"
-        "Ежедневная или еженедельная подборка лучших цен.\n\n"
-        "📉 <b>Слежение за ценой</b>\n"
-        "Слежу за конкретным рейсом и сообщу о снижении цены."
+        f"<b>Подписки</b>\n<i>{summary}</i>\n\n"
+        "<b>Горячие предложения</b> — уведомлю, когда появится рейс дешевле бюджета.\n\n"
+        "<b>Дайджест</b> — ежедневная или еженедельная подборка лучших цен.\n\n"
+        "<b>Слежение за ценой</b> — слежу за конкретным рейсом и сообщу при изменении цены."
     )
 
     def _cnt(n): return f" ({n})" if n else ""
@@ -138,9 +137,9 @@ async def cb_section_hot(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="↩️ Назад", callback_data="subs_menu")],
         ])
         await callback.message.edit_text(
-            "🔥 <b>Горячие предложения</b>\n\n"
-            "У тебя пока нет горячих подписок.\n"
-            "Укажи направление и бюджет — напишу, как только появится выгодный рейс!",
+            "<b>Горячие предложения</b>\n\n"
+            "Горячих подписок пока нет.\n\n"
+            "<i>Укажи направление и бюджет — напишу, как только появится выгодный рейс.</i>",
             parse_mode="HTML", reply_markup=kb
         )
     else:
@@ -175,9 +174,9 @@ async def cb_section_digest(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="↩️ Назад", callback_data="subs_menu")],
         ])
         await callback.message.edit_text(
-            "📰 <b>Дайджест</b>\n\n"
-            "У тебя пока нет дайджест-подписок.\n"
-            "Настрой направление, и каждый день или неделю буду присылать лучшие предложения!",
+            "<b>Дайджест</b>\n\n"
+            "Дайджест-подписок пока нет.\n\n"
+            "<i>Настрой направление — буду присылать лучшие предложения каждый день или неделю.</i>",
             parse_mode="HTML", reply_markup=kb
         )
     else:
@@ -226,18 +225,18 @@ def _build_watch_card(w: dict, idx: int) -> str:
         a_disp = AIRLINE_NAMES.get(airline, airline)
         airline_str = f"{a_disp} {fnum}".strip() if fnum else a_disp
 
-    lines = [f"<b>{idx}. 📍 {orig_name} → {dest_name}</b>"]
-    lines.append(f"📅 Вылет туда: {depart}")
+    lines = [f"<b>{idx}. {orig_name} → {dest_name}</b>"]
+    lines.append(f"Вылет туда: <b>{depart}</b>")
     if ret:
-        lines.append(f"📅 Вылет обратно: {ret}")
+        lines.append(f"Вылет обратно: <b>{ret}</b>")
     if dur:
-        lines.append(f"⏱ Продолжительность: {dur}")
+        lines.append(f"Продолжительность: {dur}")
     if trf_str:
-        lines.append(f"🔗 {trf_str}")
+        lines.append(trf_str)
     if airline_str:
-        lines.append(f"✈️ Авиакомпания: {airline_str}")
-    lines.append(f"💰 Текущая цена: {price} ₽")
-    lines.append(f"🔔 Уведомлять при: {_threshold_label(thr)}")
+        lines.append(f"Авиакомпания: {airline_str}")
+    lines.append(f"Цена сейчас: <b>{price} ₽</b>")
+    lines.append(f"<i>Уведомлять: {_threshold_label(thr)}</i>")
 
     return "\n".join(lines)
 
@@ -254,9 +253,9 @@ async def cb_section_watches(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")],
         ])
         await callback.message.edit_text(
-            "📉 <b>Слежение за ценой</b>\n\n"
-            "У тебя пока нет активных отслеживаний.\n\n"
-            "Чтобы добавить: найди рейс через поиск и нажми <b>«📉 Следить за ценой»</b>.",
+            "<b>Слежение за ценой</b>\n\n"
+            "Активных отслеживаний нет.\n\n"
+            "<i>Найди рейс через поиск и нажми <b>«Следить за ценой»</b> — добавлю сюда.</i>",
             parse_mode="HTML", reply_markup=kb
         )
         await callback.answer()
@@ -276,13 +275,14 @@ async def cb_section_watches(callback: CallbackQuery, state: FSMContext):
         orig_name = "Везде" if not orig else IATA_TO_CITY.get(orig, orig)
         dest_name = "Везде" if not dest  else IATA_TO_CITY.get(dest, dest)
         del_buttons.append([InlineKeyboardButton(
-            text=f"🗑 Удалить №{i}: {orig_name} → {dest_name}",
+            text=f"Удалить: {orig_name} → {dest_name}",
             callback_data=f"unwatch_{w['watch_key']}"
         )])
 
     divider = "\n\n" + "─" * 20 + "\n\n"
+    count_str = f"1 рейс" if len(watches) == 1 else f"{len(watches)} рейса" if len(watches) < 5 else f"{len(watches)} рейсов"
     text = (
-        f"📉 <b>Слежение за ценой</b>  ({len(watches)} шт.)\n\n"
+        f"<b>Слежение за ценой</b> · <i>{count_str}</i>\n\n"
         + divider.join(blocks)
     )
 

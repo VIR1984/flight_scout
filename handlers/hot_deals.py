@@ -304,18 +304,12 @@ async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
 
     text = (
         "🔥 <b>Горячие предложения</b>\n\n"
-        "Укажите интересные вам направления, даты и бюджет — "
-        "и бот будет присылать уведомления о вау-ценах на билеты.\n\n"
-        "Вы сами решаете:\n"
-        "• Куда хотите лететь (морские курорты, города, весь мир или Россия)\n"
-        "• В каком месяце\n"
-        "• По какой цене\n\n"
-        "Как только появится подходящий рейс — вы узнаете первым!"
+        "Укажи направление, период и бюджет — напишу, как только появится выгодный рейс."
     )
     buttons = [[InlineKeyboardButton(text="⚙️ Настроить", callback_data="hd_new_sub")]]
     if subs:
-        buttons.append([InlineKeyboardButton(text=f"📋 Мои подписки ({len(subs)})", callback_data="hd_my_subs")])
-    buttons.append([InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")])
+        buttons.append([InlineKeyboardButton(text=f"Мои подписки ({len(subs)})", callback_data="hd_my_subs")])
+    buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
     await callback.message.edit_text(text, parse_mode="HTML",
                                      reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
@@ -336,11 +330,11 @@ async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     await callback.message.edit_text(
-        "Выберите тип подписки:\n\n"
-        "🔥 <b>Горячие предложения</b> — уведомление, как только появится рейс "
-        "дешевле вашего бюджета по нужному направлению.\n\n"
-        "📰 <b>Дайджест</b> — раз в день или раз в неделю получайте подборку "
-        "лучших предложений из вашего города.",
+        "Выбери тип подписки:\n\n"
+        "<b>Горячие предложения</b> — уведомление, как только появится рейс "
+        "дешевле твоего бюджета по нужному направлению.\n\n"
+        "<b>Дайджест</b> — раз в день или раз в неделю получай подборку "
+        "лучших предложений из твоего города.",
         parse_mode="HTML", reply_markup=kb
     )
     await callback.answer()
@@ -795,16 +789,16 @@ async def hd_save(callback: CallbackQuery, state: FSMContext):
     await state.clear()
 
     await callback.message.edit_text(
-        "🎉 <b>Подписка оформлена!</b>\n\n"
-        "Как только появится подходящий рейс, сразу пришлю уведомление.\n\n"
-        "Управлять подписками: кнопка «📋 Мои подписки» в разделе «🔥 Горячие предложения».",
+        "✅ <b>Подписка создана</b>\n\n"
+        "Напишу, как только появится рейс по твоим условиям.\n\n"
+        "<i>Управляй подпиской в разделе <b>Подписки</b>.</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Все мои подписки", callback_data="subs_menu")],
-            [InlineKeyboardButton(text="↩️ Главное меню",     callback_data="main_menu")],
+            [InlineKeyboardButton(text="Мои подписки", callback_data="subs_menu")],
+            [InlineKeyboardButton(text="↩️ В начало",  callback_data="main_menu")],
         ])
     )
-    await callback.answer("✅ Подписка сохранена!")
+    await callback.answer("Подписка сохранена")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -858,27 +852,28 @@ async def hd_my_subs_text_kb(user_id: int, subs: dict) -> tuple[str, InlineKeybo
         else:
             month_str = "любой период"
 
-        freq_map  = {"daily": "📆 ежедневно", "weekly": "📆 раз в неделю"}
+        freq_map  = {"daily": "ежедневно", "weekly": "раз в неделю"}
         freq_line = f"\n{freq_map[sub['frequency']]}" if not is_hot and sub.get("frequency") else ""
 
         blocks.append(
-            f"<b>{idx}. {sub_icon} {dest_str}</b>\n"
-            f"🛫 {origin_str}\n"
-            f"📅 {month_str}\n"
-            f"💰 {price_str}  ·  👤 {pax_str}{freq_line}"
+            f"<b>{idx}. {dest_str}</b>\n"
+            f"Откуда: {origin_str}\n"
+            f"Период: {month_str}\n"
+            f"Бюджет: {price_str} · {pax_str}{freq_line}"
         )
         buttons.append([InlineKeyboardButton(
-            text=f"🗑 Удалить №{idx} — {dest_str}",
+            text=f"Удалить: {dest_str}",
             callback_data=f"hd_del_{sub_id}"
         )])
 
     divider = "\n\n" + "─" * 20 + "\n\n"
+    count_str = f"1 подписка" if len(subs) == 1 else f"{len(subs)} подписки" if len(subs) < 5 else f"{len(subs)} подписок"
     text = (
-        f"🔔 <b>Ваши подписки</b>  ({len(subs)} шт.)\n\n"
+        f"<b>Подписки</b> · <i>{count_str}</i>\n\n"
         + divider.join(blocks)
     )
 
-    buttons.append([InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")])
+    buttons.append([InlineKeyboardButton(text="Добавить подписку", callback_data="hd_new_sub")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")])
 
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -891,7 +886,7 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext = None):
 
     if not subs:
         await callback.message.edit_text(
-            "У вас нет активных подписок.\nНажмите «⚙️ Настроить», чтобы создать первую!",
+            "<b>Подписки</b>\n\nАктивных подписок пока нет.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="⚙️ Настроить",  callback_data="hd_new_sub")],
                 [InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")],
@@ -914,5 +909,5 @@ async def hd_delete_sub(callback: CallbackQuery, state: FSMContext):
     sub_id  = callback.data.replace("hd_del_", "")
     user_id = callback.from_user.id
     await redis_client.delete_hot_sub(user_id, sub_id)
-    await callback.answer("✅ Подписка удалена")
+    await callback.answer("Подписка удалена")
     await hd_my_subs(callback)
