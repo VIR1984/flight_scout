@@ -44,6 +44,7 @@ class HotDealsSub(StatesGroup):
     choose_sub_type    = State()
     choose_category    = State()
     choose_dest_preset = State()   # подкатегория назначения (Турция / Египет / ...)
+    choose_dest_custom = State()   # ввод своего направления текстом
     choose_origins     = State()   # мультивыбор городов вылета
     choose_months      = State()   # мультивыбор месяцев
     choose_budget      = State()   # ввод бюджета числом
@@ -60,6 +61,7 @@ CATEGORIES = {
     "sea":    ("🏖️ Морские курорты",    ["AYT","HRG","SSH","RHO","DLM","LCA","TFS","PMI","CFU","HER","PFO","AER","SIP","BUS"]),
     "world":  ("🌍 Путешествия по миру", ["DXB","BKK","SIN","KUL","HKT","CMB","NBO","GRU","JFK","LAX","YYZ","ICN","TYO","PEK","DEL"]),
     "russia": ("🇷🇺 По России",          ["AER","LED","KZN","OVB","SVX","ROV","UFA","CEK","KRR","VOG","MCX","GRV","KUF","IKT","VVO"]),
+    "custom": ("🔍 Свой маршрут",   []),  # пользователь вводит сам
 }
 
 # Подкатегории направлений — быстрые варианты
@@ -354,8 +356,13 @@ async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
     await state.update_data(sub_type=sub_type)
     await state.set_state(HotDealsSub.choose_category)
 
+    # Показываем все категории кроме "custom" — она идёт отдельной кнопкой внизу
     buttons = [[InlineKeyboardButton(text=label, callback_data=f"hd_cat_{key}")]
-               for key, (label, _) in CATEGORIES.items()]
+               for key, (label, _) in CATEGORIES.items() if key != "custom"]
+    buttons.append([InlineKeyboardButton(
+        text="🔍 Свой маршрут",
+        callback_data="hd_cat_custom"
+    )])
     buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
@@ -370,6 +377,102 @@ async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
 # ════════════════════════════════════════════════════════════════
 # ШАГ 3a — подкатегория назначения
 # ════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════
+# ШАГ 3 (custom) — ввод своего направления
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "hd_cat_custom")
+async def hd_step3_custom_dest(callback: CallbackQuery, state: FSMContext):
+    """Пользователь выбрал Свой маршрут — просим ввести город или страну."""
+    await state.update_data(category="custom", origins=[], dest_iata_list=[], dest_preset_name="")
+    await state.set_state(HotDealsSub.choose_dest_custom)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    ])
+    await callback.message.edit_text(
+        "✈️ <b>Свой маршрут</b>\n\n"
+        "Введите <b>город или страну прилёта</b>:\n\n"
+        "<i>Примеры:\n"
+        "• Вьетнам\n"
+        "• Бали\n"
+        "• Бангкок\n"
+        "• Барселона</i>",
+        parse_mode="HTML", reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.message(HotDealsSub.choose_dest_custom)
+async def hd_custom_dest_text(message: Message, state: FSMContext):
+    """Обрабатываем введённый город/страну назначения."""
+    from utils.cities_loader import (
+        get_iata, get_city_name, fuzzy_get_iata,
+        COUNTRY_NAME_TO_ISO, COUNTRY_TOP_CITIES, IATA_TO_CITY,
+    )
+    raw = message.text.strip()
+    norm = raw.lower().replace("ё", "е")
+
+    dest_iata_list = []
+    dest_name      = ""
+
+    # 1. Пробуем как страну
+    iso = COUNTRY_NAME_TO_ISO.get(norm)
+    if iso:
+        dest_iata_list = COUNTRY_TOP_CITIES.get(iso, [])[:6]
+        # Красивое название страны — берём из исходного ввода с заглавной
+        dest_name = raw.capitalize()
+
+    # 2. Пробуем как город (точное совпадение)
+    if not dest_iata_list:
+        iata = get_iata(norm) or get_iata(raw)
+        if iata:
+            dest_iata_list = [iata]
+            dest_name = get_city_name(iata) or raw.capitalize()
+
+    # 3. Нечёткий поиск
+    if not dest_iata_list:
+        iata, corrected = fuzzy_get_iata(raw)
+        if iata:
+            dest_iata_list = [iata]
+            dest_name = corrected or raw.capitalize()
+
+    if not dest_iata_list:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_cat_custom")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
+        await message.answer(
+            f"❌ Не нашёл направление <b>{raw}</b>.\n\n"
+            "Попробуй написать иначе — например:\n"
+            "<i>Вьетнам, Бангкок, Барселона, Дубай</i>",
+            parse_mode="HTML", reply_markup=kb
+        )
+        return
+
+    await state.update_data(
+        dest_iata_list=dest_iata_list,
+        dest_preset_name=dest_name,
+        category="custom",
+    )
+    await message.answer(
+        f"✅ Направление: <b>{dest_name}</b>\n"
+        f"<i>Аэропорты: {", ".join(dest_iata_list)}</i>",
+        parse_mode="HTML"
+    )
+    await state.set_state(HotDealsSub.choose_origins)
+    await _ask_origins(message, state, edit=False)
+
+
+@router.callback_query(HotDealsSub.choose_dest_custom, F.data == "hd_new_sub")
+async def hd_custom_back(callback: CallbackQuery, state: FSMContext):
+    """Назад из ввода направления — к выбору типа подписки."""
+    data = await state.get_data()
+    sub_type = data.get("sub_type", "hot")
+    callback.data = f"hd_type_{sub_type}"
+    await hd_step2_category(callback, state)
+
 
 @router.callback_query(F.data.startswith("hd_cat_"))
 async def hd_step3_category_chosen(callback: CallbackQuery, state: FSMContext):
@@ -527,12 +630,28 @@ async def hd_origins_back(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
+    elif cat == "custom":
+        # Назад к вводу своего направления
+        await state.set_state(HotDealsSub.choose_dest_custom)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
+        await callback.message.edit_text(
+            "✈️ <b>Свой маршрут</b>\n\n"
+            "Введите <b>город или страну прилёта</b>:\n\n"
+            "<i>Примеры: Вьетнам, Бали, Бангкок, Барселона</i>",
+            parse_mode="HTML", reply_markup=kb
+        )
     else:
         # Назад к выбору категории
         sub_type = data.get("sub_type", "hot")
         await state.set_state(HotDealsSub.choose_category)
         buttons = [[InlineKeyboardButton(text=label, callback_data=f"hd_cat_{key}")]
-                   for key, (label, _) in CATEGORIES.items()]
+                   for key, (label, _) in CATEGORIES.items() if key != "custom"]
+        buttons.append([InlineKeyboardButton(
+            text="🔍 Свой маршрут", callback_data="hd_cat_custom"
+        )])
         buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")])
         buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         await callback.message.edit_text(
