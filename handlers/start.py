@@ -24,7 +24,7 @@ from handlers.flight_fsm import FlightSearch, _get_metro, _airport_keyboard, _ge
 from handlers.flight_wizard import ask_flight_type, ask_adults, show_summary
 
 router = Router()
-_SEARCH_SEMAPHORE = asyncio.Semaphore(10)
+from utils.api_limiter import USER_SEARCH_SEMAPHORE as _SEARCH_SEMAPHORE
 
 
 class FeedbackState(StatesGroup):

@@ -21,6 +21,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
 
 from utils.redis_client import redis_client
+from utils.api_limiter import BACKGROUND_SEMAPHORE
 from utils.link_converter import convert_to_partner_link
 from services.flight_search import search_flights, generate_booking_link
 from utils.cities_loader import get_city_name
@@ -142,7 +143,8 @@ class HotDealsSender:
             scan_dests = [d for d in dest_pool if d != origin]
             for dest in scan_dests:
                 try:
-                    flights = await search_flights(origin, dest, depart_str, None)
+                    async with BACKGROUND_SEMAPHORE:
+                        flights = await search_flights(origin, dest, depart_str, None)
                     if not flights:
                         continue
                     cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
@@ -301,7 +303,8 @@ class HotDealsSender:
             scan_dests = [d for d in dest_pool if d != origin]
             for dest in scan_dests:
                 try:
-                    flights = await search_flights(origin, dest, depart_date, None)
+                    async with BACKGROUND_SEMAPHORE:
+                        flights = await search_flights(origin, dest, depart_date, None)
                     if not flights:
                         continue
                     cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)

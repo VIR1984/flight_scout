@@ -398,7 +398,7 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     kb_buttons = []
     if booking_link:
-        kb_buttons.append([InlineKeyboardButton(text=f"Открыть на Aviasales — {price_per_pax} ₽ / чел.", url=booking_link)])
+        kb_buttons.append([InlineKeyboardButton(text=f"Посмотреть детали — {price_per_pax} ₽ / чел.", url=booking_link)])
     kb_buttons.append([InlineKeyboardButton(text="Все варианты на эти даты", url=fallback_link)])
 
     kb_buttons.append([InlineKeyboardButton(text="Следить за ценой", callback_data=f"watch_all_{cache_id}")])
