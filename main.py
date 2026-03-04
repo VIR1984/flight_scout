@@ -114,7 +114,7 @@ async def main():
     hot_deals_task = asyncio.create_task(hot_deals_sender.start())
 
     from utils import daily_stats as _daily_stats
-    asyncio.create_task(_daily_stats.start())
+    daily_stats_task = asyncio.create_task(_daily_stats.start())
     logger.info("✅ Сервис: daily_stats (ежедневный отчёт в канал)")
     logger.info("✅ HotDealsSender запущен")
 
@@ -125,7 +125,7 @@ async def main():
         # Уведомляем канал о старте бота
         from utils.channel_logger import log_event
         asyncio.create_task(log_event("bot_start", detail="Бот запущен и готов к работе"))
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         logger.info("🛑 Остановка бота...")
 
@@ -135,9 +135,10 @@ async def main():
 
         watcher_task.cancel()
         hot_deals_task.cancel()
+        daily_stats_task.cancel()
 
         # Ждём завершения
-        for task in [watcher_task, hot_deals_task]:
+        for task in [watcher_task, hot_deals_task, daily_stats_task]:
             try:
                 await asyncio.wait_for(task, timeout=5.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):

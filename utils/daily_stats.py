@@ -34,21 +34,35 @@ async def start():
     """
     logger.info(f"[DailyStats] Сервис запущен. Отчёт каждый день в {DAILY_REPORT_HOUR:02d}:00 UTC")
 
-    while True:
-        wait = await _seconds_until_next_report()
-        hours = int(wait // 3600)
-        mins  = int((wait % 3600) // 60)
-        logger.info(f"[DailyStats] Следующий отчёт через {hours}ч {mins}м")
+    try:
+        while True:
+            wait = await _seconds_until_next_report()
+            hours = int(wait // 3600)
+            mins  = int((wait % 3600) // 60)
+            logger.info(f"[DailyStats] Следующий отчёт через {hours}ч {mins}м")
 
-        await asyncio.sleep(wait)
+            await asyncio.sleep(wait)
 
-        try:
-            await _send_report()
-        except Exception as exc:
-            logger.error(f"[DailyStats] Ошибка при отправке отчёта: {exc}")
+            try:
+                await _send_report()
+            except Exception as exc:
+                import traceback
+                logger.error(f"[DailyStats] Ошибка при отправке отчёта: {exc}\n{traceback.format_exc()}")
+                # Уведомляем в канал об ошибке
+                try:
+                    from utils.channel_logger import log_error
+                    await log_error("DailyStats", exc)
+                except Exception:
+                    pass
 
-        # Небольшая пауза чтобы не запустить дважды в одну минуту
-        await asyncio.sleep(70)
+            # Небольшая пауза чтобы не запустить дважды в одну минуту
+            await asyncio.sleep(70)
+    except asyncio.CancelledError:
+        logger.info("[DailyStats] Задача остановлена")
+        raise
+    except Exception as exc:
+        import traceback
+        logger.critical(f"[DailyStats] Фатальная ошибка — сервис остановлен: {exc}\n{traceback.format_exc()}")
 
 
 async def _send_report():

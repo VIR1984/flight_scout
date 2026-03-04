@@ -32,12 +32,8 @@ DROP_THRESHOLD = 0.10      # уведомлять только при сниже
 ROUTE_COOLDOWN = 86400     # кулдаун на маршрут: 24 часа
 SUB_COOLDOWN   = 12 * 3600 # общий таймер подписки: не чаще 12 ч
 
-CATEGORIES = {
-    "sea":    ("🏖️ Морские курорты",   ["AYT", "HRG", "SSH", "RHO", "DLM", "LCA", "TFS", "PMI", "CFU", "HER", "PFO", "AER", "SIP", "BUS"]),
-    "city":   ("🏙️ Городские поездки", ["IST", "BCN", "CDG", "FCO", "AMS", "BER", "PRG", "BUD", "WAW", "VIE", "ATH", "HEL", "ARN", "OSL", "CPH"]),
-    "world":  ("🌍 Путешествия по миру", ["DXB", "BKK", "SIN", "KUL", "HKT", "CMB", "NBO", "GRU", "JFK", "LAX", "YYZ", "ICN", "TYO", "PEK", "DEL"]),
-    "russia": ("🇷🇺 По России",          ["AER", "LED", "KZN", "OVB", "SVX", "ROV", "UFA", "CEK", "KRR", "VOG", "MCX", "GRV", "KUF", "IKT", "VVO"]),
-}
+# Единый источник категорий — из handlers
+from handlers.hot_deals import CATEGORIES
 
 
 def _resolve_search_date(sub: dict) -> date:
@@ -112,73 +108,90 @@ class HotDealsSender:
         if time.time() - sub.get("last_notified", 0) < SUB_COOLDOWN:
             return
 
-        origin     = sub.get("origin_iata", "")
+        # ── Города вылета: поддержка мультигорода ──
+        origins_list = sub.get("origins", [])
+        if origins_list:
+            origin_iatas = [o["iata"] for o in origins_list if o.get("iata")]
+        else:
+            origin_iatas = [sub.get("origin_iata")] if sub.get("origin_iata") else []
+        if not origin_iatas:
+            logger.warning(f"[HotDeals] sub={sub_id}: нет городов вылета — пропускаем")
+            return
+
         category   = sub.get("category", "world")
         max_price  = sub.get("max_price", 0)
         passengers = sub.get("passengers", 1)
-        _, destinations = CATEGORIES.get(category, ("", []))
+        _, cat_destinations = CATEGORIES.get(category, ("", []))
+
+        # ── Направления назначения ──
+        # custom: пользователь задал свой список; иначе — список категории
+        if category == "custom":
+            dest_pool = sub.get("dest_iata_list", [])
+        else:
+            dest_pool = cat_destinations
+
+        if not dest_pool:
+            logger.warning(f"[HotDeals] sub={sub_id}: пустой список назначений (cat={category})")
+            return
+
         depart_str = _resolve_search_date(sub).strftime("%Y-%m-%d")
+        logger.info(f"[HotDeals] sub={sub_id} origins={origin_iatas} → {len(dest_pool)} направлений дата={depart_str}")
 
-        # Улучшение 1: перебираем ВСЕ направления
-        scan_dests = [d for d in destinations if d != origin]
-        logger.info(f"[HotDeals] sub={sub_id} {origin} → {len(scan_dests)} направлений дата={depart_str}")
+        candidates: List[Tuple[int, str, str, dict, Optional[float]]] = []
+        for origin in origin_iatas:
+            scan_dests = [d for d in dest_pool if d != origin]
+            for dest in scan_dests:
+                try:
+                    flights = await search_flights(origin, dest, depart_str, None)
+                    if not flights:
+                        continue
+                    cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+                    price = cheapest.get("value") or cheapest.get("price") or 0
+                    if not price:
+                        continue
 
-        candidates: List[Tuple[int, str, dict, Optional[float]]] = []
-        for dest in scan_dests:
-            try:
-                flights = await search_flights(origin, dest, depart_str, None)
-                if not flights:
-                    continue
-                cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-                price = cheapest.get("value") or cheapest.get("price") or 0
-                if not price:
-                    continue
+                    baseline = await redis_client.get_baseline_price(origin, dest)
+                    await redis_client.update_baseline_price(origin, dest, price)
 
-                # Сначала читаем старый baseline, потом обновляем EMA
-                baseline = await redis_client.get_baseline_price(origin, dest)
-                await redis_client.update_baseline_price(origin, dest, price)
-                if max_price and price > max_price:
-                    continue
-                # Фильтр по DROP_THRESHOLD применяем только если baseline уже накоплен
-                if baseline is not None and (baseline - price) / baseline < DROP_THRESHOLD:
-                    logger.debug(f"[HotDeals] {origin}→{dest}: снижение < {DROP_THRESHOLD:.0%} (baseline={int(baseline)}₽, now={int(price)}₽)")
-                    continue
+                    if max_price and price * passengers > max_price * passengers:
+                        continue
+                    if baseline is not None and (baseline - price) / baseline < DROP_THRESHOLD:
+                        logger.debug(f"[HotDeals] {origin}→{dest}: снижение < {DROP_THRESHOLD:.0%}")
+                        continue
 
-                candidates.append((price, dest, cheapest, baseline))
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.warning(f"[HotDeals] {origin}→{dest}: {e}")
+                    candidates.append((price, origin, dest, cheapest, baseline))
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.warning(f"[HotDeals] {origin}→{dest}: {e}")
 
         if not candidates:
             logger.info(f"[HotDeals] sub={sub_id}: нет кандидатов")
             return
 
-        # Улучшение 4: берём дешевейший маршрут не на кулдауне
         candidates.sort(key=lambda x: x[0])
         chosen = None
-        for price, dest, flight, baseline in candidates:
+        for price, orig, dest, flight, baseline in candidates:
             if not await redis_client.is_route_on_cooldown(sub_id, dest, ROUTE_COOLDOWN):
-                chosen = (price, dest, flight, baseline)
+                chosen = (price, orig, dest, flight, baseline)
                 break
 
         if chosen is None:
             logger.info(f"[HotDeals] sub={sub_id}: все {len(candidates)} кандидатов на кулдауне")
             return
 
-        best_price, best_dest, best_flight, baseline = chosen
-        logger.info(f"[HotDeals] 🔥 {origin}→{best_dest} {best_price}₽")
+        best_price, best_orig, best_dest, best_flight, baseline = chosen
+        logger.info(f"[HotDeals] 🔥 {best_orig}→{best_dest} {best_price}₽")
         await self._send_hot_notification(
-            user_id, sub_id, sub, best_flight, best_price, best_dest,
+            user_id, sub_id, sub, best_flight, best_price, best_orig, best_dest,
             passengers, depart_str, baseline=baseline,
         )
 
     async def _send_hot_notification(
         self, user_id: int, sub_id: str, sub: dict,
-        flight: dict, price: int, dest_iata: str,
+        flight: dict, price: int, origin_iata: str, dest_iata: str,
         passengers: int, depart_str: str, baseline: Optional[float] = None,
     ):
-        origin_iata = sub.get("origin_iata", "")
-        origin_name = sub.get("origin_name", origin_iata)
+        origin_name = get_city_name(origin_iata) or sub.get("origin_name", origin_iata)
         dest_name   = get_city_name(dest_iata) or dest_iata
         cat_label, _ = CATEGORIES.get(sub.get("category", ""), ("", []))
 
@@ -252,45 +265,63 @@ class HotDealsSender:
                 logger.error(f"❌ [Digest] sub {sub_id}: {e}")
 
     async def _send_digest(self, user_id: int, sub_id: str, sub: dict):
-        origin     = sub.get("origin_iata", "")
+        # ── Города вылета: мультигород ──
+        origins_list = sub.get("origins", [])
+        if origins_list:
+            origin_iatas = [o["iata"] for o in origins_list if o.get("iata")]
+        else:
+            origin_iatas = [sub.get("origin_iata")] if sub.get("origin_iata") else []
+        if not origin_iatas:
+            logger.warning(f"[Digest] sub={sub_id}: нет городов вылета")
+            return
+        # Для отображения берём первый город (или все через запятую)
+        origin_name = ", ".join(
+            get_city_name(iata) or iata for iata in origin_iatas
+        )
+
         category   = sub.get("category", "world")
         max_price  = sub.get("max_price", 0)
         passengers = sub.get("passengers", 1)
-        cat_label, destinations = CATEGORIES.get(category, ("", []))
+        cat_label, cat_destinations = CATEGORIES.get(category, ("", []))
 
-        # Улучшение 2: ищем по выбранному месяцу
+        if category == "custom":
+            dest_pool = sub.get("dest_iata_list", [])
+        else:
+            dest_pool = cat_destinations
+
+        if not dest_pool:
+            logger.warning(f"[Digest] sub={sub_id}: пустой список назначений (cat={category})")
+            return
+
         depart_date = _resolve_search_date(sub).strftime("%Y-%m-%d")
-        logger.info(f"[Digest] user={user_id} {origin} кат={category} дата={depart_date}")
+        logger.info(f"[Digest] user={user_id} origins={origin_iatas} кат={category} дата={depart_date}")
 
-        # Улучшение 1: все направления
-        scan_dests = [d for d in destinations if d != origin]
-        deals: List[Tuple[int, str, dict, Optional[float]]] = []
+        deals: List[Tuple[int, str, str, dict, Optional[float]]] = []
+        for origin in origin_iatas:
+            scan_dests = [d for d in dest_pool if d != origin]
+            for dest in scan_dests:
+                try:
+                    flights = await search_flights(origin, dest, depart_date, None)
+                    if not flights:
+                        continue
+                    cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+                    price = cheapest.get("value") or cheapest.get("price") or 0
+                    if not price:
+                        continue
 
-        for dest in scan_dests:
-            try:
-                flights = await search_flights(origin, dest, depart_date, None)
-                if not flights:
-                    continue
-                cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
-                price = cheapest.get("value") or cheapest.get("price") or 0
-                if not price:
-                    continue
+                    baseline = await redis_client.update_baseline_price(origin, dest, price)
 
-                # Улучшение 3: обновляем EMA
-                baseline = await redis_client.update_baseline_price(origin, dest, price)
+                    if max_price and price > max_price:
+                        continue
 
-                if max_price and price > max_price:
-                    continue
+                    if await redis_client.is_route_on_cooldown(sub_id, dest, ROUTE_COOLDOWN):
+                        logger.debug(f"[Digest] {origin}→{dest}: кулдаун")
+                        continue
 
-                # Улучшение 4: пропускаем маршруты на кулдауне
-                if await redis_client.is_route_on_cooldown(sub_id, dest, ROUTE_COOLDOWN):
-                    logger.debug(f"[Digest] {origin}→{dest}: кулдаун")
-                    continue
-
-                deals.append((price, dest, cheapest, baseline))
-                await asyncio.sleep(0.3)
-            except Exception:
-                pass
+                    deals.append((price, origin, dest, cheapest, baseline))
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
 
         if not deals:
             logger.info(f"[Digest] sub={sub_id}: нет предложений")
@@ -298,28 +329,26 @@ class HotDealsSender:
 
         deals.sort(key=lambda x: x[0])
         top3 = deals[:3]
-
-        origin_name = sub.get("origin_name", origin)
         freq_str = "Ежедневная подборка" if sub.get("frequency", "daily") == "daily" else "Еженедельная подборка"
         text = f"📰 <b>{freq_str} горячих рейсов</b>\n{cat_label}\n🛫 Из: <b>{origin_name}</b>\n\n"
         kb_buttons = []
 
-        for i, (price, dest_iata, flight, baseline) in enumerate(top3, 1):
+        for i, (price, orig_iata, dest_iata, flight, baseline) in enumerate(top3, 1):
             dest_name = get_city_name(dest_iata) or dest_iata
+            orig_name = get_city_name(orig_iata) or orig_iata
 
-            # Улучшение 3: показываем % скидки
             discount = ""
             if baseline and baseline > price:
                 discount = f" 📉 <b>-{int((baseline - price) / baseline * 100)}%</b>"
 
-            text += f"{i}. ✈️ <b>{origin_name} → {dest_name}</b>\n"
+            text += f"{i}. ✈️ <b>{orig_name} → {dest_name}</b>\n"
             text += f"   💰 от <b>{price:,} ₽</b> / чел.{discount}".replace(",", "\u202f")
             if passengers > 1:
                 text += f" · {price * passengers:,} ₽ за {passengers} чел.".replace(",", "\u202f")
             text += "\n\n"
 
             booking_link = await convert_to_partner_link(generate_booking_link(
-                flight=flight, origin=origin, dest=dest_iata,
+                flight=flight, origin=orig_iata, dest=dest_iata,
                 depart_date=depart_date, passengers_code=str(passengers), return_date=None,
             ))
             kb_buttons.append([InlineKeyboardButton(
@@ -339,7 +368,7 @@ class HotDealsSender:
             sub["last_notified"] = int(time.time())
             await redis_client.update_hot_sub(user_id, sub_id, sub)
             # Улучшение 4: кулдаун на все отправленные маршруты
-            for _, dest_iata, _, _ in top3:
+            for _, _orig, dest_iata, _, _ in top3:
                 await redis_client.set_route_cooldown(sub_id, dest_iata, ROUTE_COOLDOWN)
             logger.info(f"✅ [Digest] {user_id} топ-3: {[d for _,d,_,_ in top3]}")
         except TelegramForbiddenError:
