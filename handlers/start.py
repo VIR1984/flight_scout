@@ -32,9 +32,9 @@ class FeedbackState(StatesGroup):
 
 MAIN_MENU_TEXT = (
     "Привет! Я помогу тебе летать выгодно.\n\n"
-    "✈️ <b>Поиск</b> — простой маршрут туда и обратно.\n"
+    "✈️ <b>Поиск</b> — билеты на любые даты и направления.\n"
     "🗺 <b>Маршрут</b> — составной поиск по нескольким городам.\n"
-    "🔥 <b>Горячие</b> — уведомления о супер-ценах.\n\n"
+    "🔥 <b>Горячие</b> — уведомления о ВАУ-ценах.\n\n"
     "Жми кнопки внизу, чтобы начать"
 )
 
@@ -167,21 +167,9 @@ async def nav_subs(message: Message, state: FSMContext):
     await state.clear()
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
-    user_id = message.from_user.id
-    subs = await redis_client.get_hot_subs(user_id)
-    if not subs:
-        await message.answer(
-            "📋 <b>Мои подписки</b>\n\nАктивных подписок нет.\n"
-            "Хотите настроить уведомления о горячих ценах?",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔥 Создать подписку", callback_data="hd_new_sub")]
-            ]),
-        )
-    else:
-        from handlers.hot_deals import hd_my_subs_text_kb
-        text, kb = await hd_my_subs_text_kb(user_id, subs)
-        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    from handlers.subscriptions import build_subs_menu_kb
+    text, kb = await build_subs_menu_kb(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.message(F.text == "❓ Помощь")

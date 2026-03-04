@@ -104,15 +104,20 @@ class RedisClient:
         return key
 
     async def get_user_watches(self, user_id: int) -> List[Dict[str, Any]]:
-        """Получить все отслеживания пользователя"""
+        """Получить все отслеживания пользователя (с watch_key для удаления)"""
         if not self.client:
             return []
         keys = await self.client.smembers(f"{self.prefix}user:watches:{user_id}")
         watches = []
         for key in keys:
-            data = await self.client.get(key)
-            if data:
-                watches.append(json.loads(data))
+            raw = await self.client.get(key)
+            if raw:
+                item = json.loads(raw)
+                # Для совместимости со старыми записями без watch_key
+                if "watch_key" not in item:
+                    key_str = key.decode() if isinstance(key, bytes) else str(key)
+                    item["watch_key"] = key_str
+                watches.append(item)
         return watches
 
     async def remove_watch(self, user_id: int, watch_key: str):

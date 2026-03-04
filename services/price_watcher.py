@@ -138,20 +138,25 @@ class PriceWatcher:
         if not new_price:
             return False
         
-        # Рассчитываем изменение с минимальным порогом 50₽ для избежания "дрожания"
+        # price_change > 0 → цена УПАЛА (было 5000, стало 4000 → change=+1000)
+        # price_change < 0 → цена ВЫРОСЛА (было 5000, стало 6000 → change=-1000)
         price_change = int(float(current_price)) - int(float(new_price))
         abs_change = abs(price_change)
-        should_notify = price_change != 0 and abs_change >= max(50, threshold)
-        
-        if not should_notify:
-            # Тихо обновляем цену без уведомления
-            if abs_change > 0:
+
+        # Уведомляем ТОЛЬКО при снижении цены выше порога
+        price_dropped = price_change > 0 and abs_change >= max(50, threshold)
+
+        if not price_dropped:
+            # Тихо обновляем текущую цену (без уведомления)
+            if abs_change >= 50:
                 watch["current_price"] = new_price
                 await redis_client.client.setex(
                     key,
                     86400 * 30,
                     json.dumps(watch, ensure_ascii=False)
                 )
+                direction = "выросла" if price_change < 0 else "почти не изменилась"
+                logger.info(f"📊 Цена {direction}: {current_price} → {new_price} ₽ [{origin}→{dest}] (без уведомления)")
             return False
         
         # === ВСТРОЕННЫЙ ФРАГМЕНТ ОБРАБОТКИ БЛОКИРОВОК ===
@@ -217,25 +222,27 @@ class PriceWatcher:
         try:
             origin_name = IATA_TO_CITY.get(watch["origin"],watch["origin"]) if watch.get("origin") else "Везде"
             dest_name = IATA_TO_CITY.get(watch["dest"],watch["dest"]) if watch.get("dest") else "Везде"
-            emoji = "📉" if price_change > 0 else "📈"
+            # Уведомляем только при снижении — emoji всегда 📉
             passenger_desc = self._format_passengers(watch.get("passengers", "1"))
-            
+            depart_display = watch.get("display_depart") or watch.get("depart_date", "")
+            return_display = watch.get("display_return") or watch.get("return_date")
+
             message = (
-                f"{emoji} <b>Цена изменилась!</b>\n"
+                f"📉 <b>Цена снизилась!</b>\n"
                 f"📍 <b>Маршрут:</b> {origin_name} → {dest_name}\n"
-                f"📅 <b>Вылет:</b> {watch['depart_date']}\n"
+                f"📅 <b>Вылет:</b> {depart_display}\n"
             )
-            if watch.get("return_date"):
-                message += f"📅 <b>Возврат:</b> {watch['return_date']}\n"
+            if return_display:
+                message += f"📅 <b>Обратно:</b> {return_display}\n"
             if passenger_desc:
                 message += f"👥 <b>Пассажиры:</b> {passenger_desc}\n"
-            
+
             message += (
                 f"\n"
                 f"💰 <b>Было:</b> {watch['current_price']} ₽\n"
-                f"💰 <b>Стало:</b> {new_price} ₽\n"
-                f"{emoji} <b>Разница:</b> {abs(price_change)} ₽\n"
-                f"✈️ <b>Спешите забронировать — цены могут вырасти!</b>"
+                f"🔥 <b>Стало:</b> {new_price} ₽\n"
+                f"📉 <b>Выгода:</b> {abs(price_change)} ₽\n"
+                f"⚡️ Цены могут вернуться — не упустите момент!"
             )
             
             dummy_flight = {

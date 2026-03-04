@@ -650,7 +650,8 @@ async def handle_set_threshold(callback: CallbackQuery):
     await callback.message.edit_text(
         response, parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
+            [InlineKeyboardButton(text="📋 Мои подписки", callback_data="subs_section_watches")],
+            [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
         ]),
     )
     await callback.answer()
@@ -665,13 +666,30 @@ async def handle_unwatch(callback: CallbackQuery):
         await callback.answer("❌ Это не ваше отслеживание!", show_alert=True)
         return
     await redis_client.remove_watch(user_id, key)
-    await callback.message.edit_text(
-        "✅ Отслеживание цены остановлено.\nБольше не буду присылать уведомления по этому маршруту.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")]
-        ]),
-    )
-    await callback.answer()
+    await callback.answer("✅ Отслеживание удалено")
+    # Показываем обновлённый список слежений или меню подписок
+    watches = await redis_client.get_user_watches(user_id)
+    if watches:
+        from handlers.subscriptions import cb_section_watches
+        # Эмулируем callback для обновления списка
+        try:
+            await callback.message.edit_text(
+                "✅ Отслеживание удалено.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📉 Все отслеживания", callback_data="subs_section_watches")],
+                    [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+                ])
+            )
+        except Exception:
+            pass
+    else:
+        await callback.message.edit_text(
+            "✅ Отслеживание удалено.\n\nАктивных отслеживаний больше нет.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="subs_menu")],
+                [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+            ]),
+        )
 
 
 # ════════════════════════════════════════════════════════════════

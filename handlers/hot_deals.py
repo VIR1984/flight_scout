@@ -681,8 +681,8 @@ async def hd_save(callback: CallbackQuery, state: FSMContext):
         "Управлять подписками: кнопка «📋 Мои подписки» в разделе «🔥 Горячие предложения».",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
-            [InlineKeyboardButton(text="↩️ Главное меню", callback_data="main_menu")],
+            [InlineKeyboardButton(text="📋 Все мои подписки", callback_data="subs_menu")],
+            [InlineKeyboardButton(text="↩️ Главное меню",     callback_data="main_menu")],
         ])
     )
     await callback.answer("✅ Подписка сохранена!")
