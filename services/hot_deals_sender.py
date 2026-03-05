@@ -38,24 +38,43 @@ from handlers.hot_deals import CATEGORIES
 
 
 def _resolve_search_date(sub: dict) -> date:
-    """Улучшение 2: ближайший выбранный месяц, fallback — сегодня + 30 дней."""
+    """
+    Возвращает дату для поиска:
+    - берём 15-е число выбранного месяца
+    - если до этой даты меньше MIN_DAYS_AHEAD — берём следующий выбранный месяц
+    - если ни один не подходит — fallback today + 30 дней
+    Это нужно потому что grouped_prices API не возвращает данные
+    на даты ближе ~14 дней (кеш 48ч + нет предложений).
+    """
+    MIN_DAYS_AHEAD = 14  # grouped_prices стабильно работает от 14 дней
     today = date.today()
+    min_date = today + timedelta(days=MIN_DAYS_AHEAD)
+
     for mk in sub.get("travel_months", []):
         try:
             m, y = map(int, mk.split("_"))
             candidate = date(y, m, 15)
-            if candidate >= today:
+            if candidate >= min_date:
                 return candidate
+            # Месяц текущий но 15-е уже скоро — берём последний день месяца + 1
+            # т.е. 1-е следующего месяца как запасной вариант внутри того же месяца
+            import calendar
+            last_day = calendar.monthrange(y, m)[1]
+            end_of_month = date(y, m, last_day)
+            if end_of_month >= min_date:
+                return end_of_month
         except Exception:
             pass
+
     tm, ty = sub.get("travel_month"), sub.get("travel_year")
     if tm and ty:
         try:
             candidate = date(ty, tm, 15)
-            if candidate >= today:
+            if candidate >= min_date:
                 return candidate
         except Exception:
             pass
+
     return today + timedelta(days=30)
 
 
