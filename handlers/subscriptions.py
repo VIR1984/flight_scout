@@ -144,12 +144,15 @@ async def cb_section_hot(callback: CallbackQuery, state: FSMContext):
         )
     else:
         from handlers.hot_deals import hd_my_subs_text_kb
-        # Передаём только горячие
         text, kb = await hd_my_subs_text_kb(user_id, hot_subs)
-        # Добавляем кнопки навигации
+        # Добавляем заголовок типа подписки
+        text = "🔥 <b>Горячие предложения</b>\n\n" + text
         new_buttons = list(kb.inline_keyboard)
-        new_buttons.insert(-1, [InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_hot")])
+        # Одна кнопка "Добавить ещё" (без дубля "Добавить подписку")
+        new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_hot")])
+        # Порядок: сначала "К подпискам", потом "В начало"
         new_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
+        new_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
         new_kb = InlineKeyboardMarkup(inline_keyboard=new_buttons)
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=new_kb)
 
@@ -182,9 +185,11 @@ async def cb_section_digest(callback: CallbackQuery, state: FSMContext):
     else:
         from handlers.hot_deals import hd_my_subs_text_kb
         text, kb = await hd_my_subs_text_kb(user_id, digest_subs)
+        text = "📰 <b>Дайджест</b>\n\n" + text
         new_buttons = list(kb.inline_keyboard)
-        new_buttons.insert(-1, [InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_digest")])
+        new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_digest")])
         new_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
+        new_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
         new_kb = InlineKeyboardMarkup(inline_keyboard=new_buttons)
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=new_kb)
 
@@ -287,6 +292,7 @@ async def cb_section_watches(callback: CallbackQuery, state: FSMContext):
     )
 
     del_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
+    del_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=del_buttons)
 
     # Telegram ограничивает длину сообщения — если слишком длинное, отправляем новым

@@ -874,9 +874,8 @@ async def hd_my_subs_text_kb(user_id: int, subs: dict) -> tuple[str, InlineKeybo
         f"<b>Подписки</b> · <i>{count_str}</i>\n\n"
         + divider.join(blocks)
     )
-
-    buttons.append([InlineKeyboardButton(text="Добавить подписку", callback_data="hd_new_sub")])
-    buttons.append([InlineKeyboardButton(text="↩️ В начало",   callback_data="main_menu")])
+    # Кнопки навигации НЕ добавляем здесь — их добавляет subscriptions.py
+    # чтобы не было дублей "Добавить подписку" + "Добавить ещё"
 
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -898,7 +897,13 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext = None):
         return
 
     text, kb = await hd_my_subs_text_kb(user_id, subs)
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    # Добавляем кнопки навигации (subscriptions.py здесь не участвует)
+    new_buttons = list(kb.inline_keyboard)
+    new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_new_sub")])
+    new_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
+    new_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
+    new_kb = InlineKeyboardMarkup(inline_keyboard=new_buttons)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=new_kb)
     await callback.answer()
 
 
