@@ -442,24 +442,62 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
 async def _show_no_flights(callback: CallbackQuery, data: dict,
                             origins: list, destinations: list, pax_code: str):
-    # \u0422\u0440\u0435\u043a\u0430\u0435\u043c \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u044b \u0431\u0435\u0437 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432
+    """Показать экран 'билеты не найдены' со ссылками на Aviasales и Trip.com."""
     for orig in origins:
         for dest in destinations:
             asyncio.create_task(redis_client.track_no_results(
                 orig, dest, data.get("depart_date", "")
             ))
-    """Показать экран 'билеты не найдены' со ссылкой на Aviasales."""
+
     origin_iata = origins[0] if origins else data.get("origin_iata", "MOW")
+    dest_iata   = destinations[0] if destinations else data.get("dest_iata", "")
     d1 = format_avia_link_date(data["depart_date"])
     d2 = format_avia_link_date(data["return_date"]) if data.get("return_date") else ""
-    dest_iata = destinations[0] if destinations else data.get("dest_iata", "")
     route        = f"{origin_iata}{d1}{dest_iata}{d2}{pax_code}"
     partner_link = await convert_to_partner_link(f"https://www.aviasales.ru/search/{route}")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+
+    # Сохраняем данные в кэш, чтобы "Изменить маршрут" работало даже после state.clear()
+    cache_id = str(uuid4())
+    await redis_client.set_search_cache(cache_id, {
+        "flights": [],
+        "origin":         data.get("origin", ""),
+        "origin_iata":    data.get("origin_iata", ""),
+        "origin_name":    data.get("origin_name", ""),
+        "dest":           data.get("dest", ""),
+        "dest_iata":      dest_iata,
+        "dest_name":      data.get("dest_name", ""),
+        "depart_date":    data.get("depart_date", ""),
+        "return_date":    data.get("return_date"),
+        "need_return":    data.get("need_return", False),
+        "flight_type":    data.get("flight_type", "all"),
+        "adults":         data.get("adults", 1),
+        "children":       data.get("children", 0),
+        "infants":        data.get("infants", 0),
+        "passenger_code": data.get("passenger_code", pax_code),
+        "passenger_desc": data.get("passenger_desc", ""),
+        "original_depart": data.get("depart_date", ""),
+        "original_return": data.get("return_date"),
+    })
+
+    kb_buttons = [
         [InlineKeyboardButton(text="🔍 Поискать на Aviasales", url=partner_link)],
-        [InlineKeyboardButton(text="✏️ Изменить маршрут", callback_data="back_to_summary")],
-        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
-    ])
+    ]
+
+    # Кнопка Trip.com на экране "не найдено"
+    _trip_url = build_trip_link(
+        origin=origin_iata,
+        dest=dest_iata,
+        depart_date=data.get("depart_date", ""),
+        passengers_code=pax_code,
+        return_date=data.get("return_date") if data.get("need_return") else None,
+    )
+    if _trip_url and is_trip_supported(origin_iata, dest_iata):
+        kb_buttons.append([InlineKeyboardButton(text="🌐 Поискать на Trip.com", url=_trip_url)])
+
+    kb_buttons.append([InlineKeyboardButton(text="✏️ Изменить маршрут", callback_data=f"edit_from_results_{cache_id}")])
+    kb_buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await callback.message.edit_text(
         "😔 <b>Билеты не найдены.</b>\n\nПопробуйте изменить даты или маршрут.",
         parse_mode="HTML", reply_markup=kb,
