@@ -28,6 +28,7 @@ from handlers.flight_fsm import (
 from handlers.country_search import _ask_country_city, _finalize_route
 from services.flight_search import normalize_date
 from utils.date_hints import hint_depart, hint_return
+from utils.redis_client import redis_client
 
 router = Router()
 

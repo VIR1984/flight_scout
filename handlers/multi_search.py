@@ -24,6 +24,7 @@ from utils.cities_loader import (
     _normalize_name,
 )
 from utils.link_converter import convert_to_partner_link
+from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.smart_reminder import cancel_inactivity, schedule_inactivity, mark_fsm_inactive
 from handlers.flight_constants import CANCEL_KB

@@ -5,6 +5,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+try:
+    from aiogram.fsm.storage.redis import RedisStorage as AiogramRedisStorage
+    _REDIS_STORAGE_AVAILABLE = True
+except ImportError:
+    _REDIS_STORAGE_AVAILABLE = False
 from dotenv import load_dotenv
 
 # Импорт роутеров
@@ -74,7 +79,22 @@ async def main():
     logger.info("✅ ChannelLogHandler подключён")
 
     # ─── 4. Диспетчер ───
-    storage = MemoryStorage()
+    # Используем RedisStorage для FSM если Redis доступен —
+    # иначе при редеплое/рестарте Railway все сессии теряются (MemoryStorage)
+    _redis_url = os.getenv("REDIS_URL", "").strip()
+    if _redis_url and _REDIS_STORAGE_AVAILABLE:
+        try:
+            from redis.asyncio import from_url as _redis_from_url
+            _redis_conn = _redis_from_url(_redis_url, decode_responses=False)
+            storage = AiogramRedisStorage(_redis_conn)
+            logger.info("✅ FSM storage: Redis")
+        except Exception as _e:
+            logger.warning(f"⚠️ RedisStorage недоступен ({_e}), используем MemoryStorage")
+            storage = MemoryStorage()
+    else:
+        storage = MemoryStorage()
+        if not _redis_url:
+            logger.warning("⚠️ FSM storage: Memory (REDIS_URL не задан — сессии не переживут рестарт)")
     dp = Dispatcher(storage=storage)
 
     # ─── 5. Регистрация роутеров ───
