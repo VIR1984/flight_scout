@@ -25,6 +25,7 @@ from utils.cities_loader import get_city_name, IATA_TO_CITY
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
+from utils.trip_link import build_trip_link, is_trip_supported
 from utils.smart_reminder import cancel_inactivity, mark_fsm_inactive, remind_after_search, schedule_inactivity
 from handlers.flight_constants import (
     CANCEL_KB, MULTI_AIRPORT_CITIES, AIRPORT_NAMES,
@@ -405,6 +406,17 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     if booking_link:
         kb_buttons.append([InlineKeyboardButton(text=f"🔍 Посмотреть детали  {price_per_pax:,} ₽".replace(",", "\u202f"), url=booking_link)])
     kb_buttons.append([InlineKeyboardButton(text="Все варианты на эти даты", url=fallback_link)])
+
+    # Кнопка Trip.com — альтернативная площадка
+    _trip_url = build_trip_link(
+        origin=origin_iata,
+        dest=dest_iata,
+        depart_date=data["depart_date"],
+        passengers_code=passengers_code,
+        return_date=data.get("return_date") if data.get("need_return") else None,
+    )
+    if _trip_url and is_trip_supported(origin_iata, dest_iata):
+        kb_buttons.append([InlineKeyboardButton(text="🌐 Сравнить на Trip.com", url=_trip_url)])
 
     kb_buttons.append([InlineKeyboardButton(text="Следить за ценой", callback_data=f"watch_all_{cache_id}")])
     kb_buttons.append([InlineKeyboardButton(text="Изменить запрос", callback_data=f"edit_from_results_{cache_id}")])
