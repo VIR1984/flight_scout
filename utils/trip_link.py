@@ -20,7 +20,39 @@ utils/trip_link.py
 """
 
 import os
+from datetime import date
 from urllib.parse import urlencode
+
+
+def _normalize_trip_date(date_str: str) -> str:
+    """
+    Конвертирует дату любого формата в ГГГГ-ММ-ДД для Trip.com.
+    Поддерживает: 'ДД.ММ', 'ДД.ММ.ГГГГ', 'ГГГГ-ММ-ДД' (возвращает как есть).
+    """
+    if not date_str:
+        return date_str
+    # Уже в нужном формате ГГГГ-ММ-ДД
+    if len(date_str) == 10 and date_str[4] == '-':
+        return date_str
+    try:
+        parts = date_str.split('.')
+        day, month = int(parts[0]), int(parts[1])
+        # Если год передан явно (ДД.ММ.ГГГГ)
+        if len(parts) == 3 and len(parts[2]) == 4:
+            year = int(parts[2])
+        else:
+            # Ближайший будущий год
+            today = date.today()
+            year = today.year
+            try:
+                target = date(year, month, day)
+            except ValueError:
+                return date_str
+            if target < today:
+                year += 1
+        return f"{year}-{month:02d}-{day:02d}"
+    except Exception:
+        return date_str
 
 # ── Маппинг IATA аэропортов → коды городов Trip.com ──────────────────────────
 # Trip.com использует коды мета-городов (LON вместо LHR/LGW, MOW вместо SVO/DME)
@@ -135,6 +167,11 @@ def build_trip_link(
 
     if not alliance_id or not sid:
         return None
+
+    # Нормализуем даты в формат ГГГГ-ММ-ДД (Trip.com не принимает ДД.ММ)
+    depart_date = _normalize_trip_date(depart_date)
+    if return_date:
+        return_date = _normalize_trip_date(return_date)
 
     # Конвертируем IATA → Trip.com city codes
     dcity = iata_to_trip_city(origin)
