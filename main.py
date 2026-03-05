@@ -50,8 +50,16 @@ async def main():
     await load_cities_from_api()
 
     # ─── 3. Инициализация бота ───
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    if not bot_token:
+        logger.critical(
+            "❌ BOT_TOKEN не задан! "
+            "Добавьте переменную окружения BOT_TOKEN в Railway: "
+            "Settings → Variables → New Variable"
+        )
+        raise SystemExit(1)
     bot = Bot(
-        token=os.getenv("BOT_TOKEN"),
+        token=bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     # Регистрируем синглтон для использования в фоновых задачах
