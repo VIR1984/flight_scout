@@ -224,7 +224,7 @@ async def process_country_city_pick(callback: CallbackQuery, state: FSMContext):
     if value == "custom":
         prompt = "отправления" if role == "origin" else "назначения"
         await callback.message.edit_text(
-            f"Введите город {prompt}:",
+            f"Введи город {prompt}:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
             ])
@@ -266,7 +266,7 @@ async def process_country_city_pick(callback: CallbackQuery, state: FSMContext):
             dest_val = data.get("dest", "")
             if not data.get("dest_iata") and dest_val != "везде":
                 await callback.message.answer(
-                    "Теперь введите <b>город назначения</b>:",
+                    "Теперь введи <b>город назначения</b>:",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
@@ -295,7 +295,7 @@ async def process_country_city_pick(callback: CallbackQuery, state: FSMContext):
         dest_val = data.get("dest", "")
         if not data.get("dest_iata") and dest_val != "везде":
             await callback.message.answer(
-                "Отлично! Теперь введите <b>город назначения</b>:",
+                "Отлично! Теперь введи <b>город назначения</b>:",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
@@ -325,8 +325,8 @@ async def process_country_city_text(message: Message, state: FSMContext):
         fuzzy_iata, fuzzy_name = fuzzy_get_iata(city)
         if fuzzy_iata:
             await message.answer(
-                f"❓ Не нашёл «{city}» — вы имели в виду <b>{fuzzy_name}</b>?\n"
-                "Напишите название ещё раз.",
+                f"❓ Не нашёл «{city}» — ты имел в виду <b>{fuzzy_name}</b>?\n"
+                "Напиши название ещё раз.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
@@ -352,7 +352,7 @@ async def process_country_city_text(message: Message, state: FSMContext):
         dest_val = data.get("dest", "")
         if not data.get("dest_iata") and dest_val != "везде":
             await message.answer(
-                f"✅ Город вылета: <b>{city_name}</b>\n\nТеперь введите <b>город назначения</b>:",
+                f"✅ Город вылета: <b>{city_name}</b>\n\nТеперь введи <b>город назначения</b>:",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="✖ Отменить поиск", callback_data="main_menu")]
@@ -381,7 +381,7 @@ async def _finalize_route(target, state: FSMContext):
 
     if orig_iata and dest_iata and orig_iata == dest_iata:
         await msg.answer(
-            "❌ Город вылета и прибытия не могут совпадать. Выберите разные города.",
+            "❌ Город вылета и прибытия не могут совпадать. Выбери разные города.",
             reply_markup=CANCEL_KB,
         )
         await state.set_state(FlightSearch.route)
@@ -395,14 +395,14 @@ async def _finalize_route(target, state: FSMContext):
         await state.set_state(FlightSearch.choose_airport)
         kb = _airport_keyboard(metro, origin_name)
         await msg.answer(
-            f"Вы выбрали: <b>{origin_name}</b>\n\n"
-            f"Из {origin_name} летят из нескольких аэропортов — выберите нужный:",
+            f"Ты выбрал: <b>{origin_name}</b>\n\n"
+            f"Из {origin_name} летят из нескольких аэропортов — выбери нужный:",
             parse_mode="HTML", reply_markup=kb,
         )
     else:
         await state.set_state(FlightSearch.depart_date)
         await msg.answer(
-            f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
+            f"Введи дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         from utils.inactivity import schedule_inactivity

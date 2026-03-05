@@ -28,6 +28,55 @@ async def _seconds_until_next_report() -> float:
     return delta
 
 
+async def cleanup_expired_months():
+    """
+    Удаляет из всех горячих подписок месяцы которые уже прошли.
+    Вызывается раз в сутки из фонового цикла daily_stats.
+    """
+    from utils.redis_client import redis_client
+    from datetime import date
+
+    if not redis_client.client:
+        return
+
+    today     = date.today()
+    cur_year  = today.year
+    cur_month = today.month
+    removed_total = 0
+
+    try:
+        all_subs = await redis_client.get_all_hot_subs()
+    except Exception as exc:
+        logger.warning(f"[cleanup_months] Не удалось получить подписки: {exc}")
+        return
+
+    for user_id, sub_id, sub in all_subs:
+        months = sub.get("travel_months", [])
+        if not months:
+            continue
+
+        fresh = []
+        for mk in months:
+            try:
+                m, y = map(int, mk.split("_"))
+                if (y, m) >= (cur_year, cur_month):
+                    fresh.append(mk)
+            except Exception:
+                fresh.append(mk)
+
+        removed = len(months) - len(fresh)
+        if removed > 0:
+            sub["travel_months"] = fresh
+            try:
+                await redis_client.update_hot_sub(user_id, sub_id, sub)
+                removed_total += removed
+            except Exception as exc:
+                logger.warning(f"[cleanup_months] Ошибка sub={sub_id}: {exc}")
+
+    if removed_total:
+        logger.info(f"[cleanup_months] ✅ Удалено {removed_total} устаревших месяцев из подписок")
+
+
 async def start():
     """
     Основной цикл. Вызывать через asyncio.create_task(daily_stats.start()).
@@ -54,6 +103,12 @@ async def start():
                     await log_error("DailyStats", exc)
                 except Exception:
                     pass
+
+            # Чистим устаревшие месяцы из подписок раз в сутки
+            try:
+                await cleanup_expired_months()
+            except Exception as _ce:
+                logger.warning(f"[DailyStats] cleanup_months: {_ce}")
 
             # Небольшая пауза чтобы не запустить дважды в одну минуту
             await asyncio.sleep(70)

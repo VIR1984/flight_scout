@@ -30,13 +30,13 @@ async def start_track_flight(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             "📊 <b>Информация о рейсе</b>\n\n"
-            "Введите номер рейса (например, <code>SU381</code> или <code>Аэрофлот 381</code>):",
+            "Введи номер рейса (например, <code>SU381</code> или <code>Аэрофлот 381</code>):",
             parse_mode="HTML",
             reply_markup=kb
         )
     except Exception:
         await callback.message.answer(
-            "📊 <b>Информация о рейсе</b>\n\nВведите номер рейса:",
+            "📊 <b>Информация о рейсе</b>\n\nВведи номер рейса:",
             parse_mode="HTML",
             reply_markup=kb
         )
@@ -117,7 +117,7 @@ async def process_flight_number(message: Message, state: FSMContext):
 
     await message.answer(
         f"✅ Рейс: <b>{airline}{flight_num}</b>\n\n"
-        "📅 Введите дату вылета в формате <code>ДД.ММ</code>:",
+        "📅 Введи дату вылета в формате <code>ДД.ММ</code>:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
@@ -149,7 +149,7 @@ async def process_depart_date(message: Message, state: FSMContext):
     ])
 
     await message.answer(
-        f"📋 <b>Подтвердите данные:</b>\n"
+        f"📋 <b>Подтверди данные:</b>\n"
         f"✈️ Рейс: {airline}{flight_num}\n"
         f"📅 Дата: {date_text}\n\n"
         f"Проверить детали рейса?",
@@ -213,7 +213,7 @@ async def _fetch_and_show_flight(
         api_date = f"{year}-{month:02d}-{day:02d}"
     except Exception:
         await callback.message.edit_text(
-            "❌ Ошибка в дате. Попробуйте ввести ещё раз.",
+            "❌ Ошибка в дате. Попробуй ввести ещё раз.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
             ])
@@ -231,7 +231,7 @@ async def _fetch_and_show_flight(
     if not details:
         await callback.message.edit_text(
             "❌ Не удалось получить информацию о рейсе.\n"
-            "Проверьте номер рейса и дату, или попробуйте позже.",
+            "Проверь номер рейса и дату, или попробуй позже.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
             ])
@@ -242,7 +242,7 @@ async def _fetch_and_show_flight(
 
     if details.get("error") == "rate_limit":
         await callback.message.edit_text(
-            "⚠️ Сервис временно перегружен. Попробуйте позже.",
+            "⚠️ Сервис временно перегружен. Попробуй позже.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
             ])
@@ -300,7 +300,7 @@ async def edit_track(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "📊 <b>Информация о рейсе</b>\n\n"
-        "Введите номер рейса:",
+        "Введи номер рейса:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]
         ])
@@ -392,7 +392,7 @@ async def subscribe_to_flight(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"🔔 <b>Подписка на рейс {airline}{flight_num}</b>\n\n"
-        "Вы будете получать уведомления о:\n"
+        "Ты будешь получать уведомления о:\n"
         "• Изменении статуса рейса\n"
         "• Задержках и отменах\n"
         "• Изменении гейта вылета\n"
@@ -429,7 +429,7 @@ async def confirm_subscription(callback: CallbackQuery):
     await callback.message.edit_text(
         f"✅ <b>Подписка оформлена!</b>\n\n"
         f"Рейс: {airline}{flight_num}  ·  {depart_date}\n\n"
-        "Вы получите уведомление при изменении статуса рейса.",
+        "Ты получишь уведомление при изменении статуса рейса.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↩️ В меню", callback_data="main_menu")]

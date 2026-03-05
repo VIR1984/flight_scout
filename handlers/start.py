@@ -182,7 +182,7 @@ async def nav_help(message: Message, state: FSMContext):
         "Бот не хранит персональные данные. При поиске используются только маршрут, "
         "даты и число пассажиров — исключительно для запроса к Aviasales.\n\n"
         "Параметры подписок хранятся в зашифрованном виде и автоматически удаляются через 30 дней.\n\n"
-        "Данные банковских карт боту не передаются. Оплата проходит напрямую на сайте Aviasales.\n\n"
+        "Данные банковских карт боту не передаются. Оплата проходит напрямую на сайте парнета.\n\n"
         "<i>Нажми «Поиск», чтобы начать.</i>",
         parse_mode="HTML",
     )
@@ -203,7 +203,7 @@ async def handle_help(callback: CallbackQuery):
         "——————————————\n\n"
         "<b>Конфиденциальность</b>\n\n"
         "Бот не хранит персональные данные. Параметры подписок хранятся в зашифрованном виде и автоматически удаляются через 30 дней. "
-        "Данные банковских карт боту не передаются — оплата происходит на сайте Aviasales."
+        "Данные банковских карт боту не передаются — оплата происходит на сайте партнера."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
@@ -279,17 +279,17 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
         metro = _get_metro(orig_iata) if orig_iata else None
         if metro:
             await callback.message.answer(
-                f"Вы выбрали: <b>{origin_name}</b>\n\n"
+                f"Ты выбрал: <b>{origin_name}</b>\n\n"
                 f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выберите нужный:",
                 parse_mode="HTML", reply_markup=_airport_keyboard(metro, origin_name),
             )
         else:
-            await callback.message.answer("Выберите аэропорт:", reply_markup=CANCEL_KB)
+            await callback.message.answer("Выбери аэропорт:", reply_markup=CANCEL_KB)
     elif current == FlightSearch.depart_date.state:
         existing = data.get("depart_date", "")
         hint = f"\n<i>Последний ввод: {existing}</i>" if existing else ""
         await callback.message.answer(
-            f"Введите дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 10.03</i>",
+            f"Введи дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: 10.03</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
     elif current == FlightSearch.need_return.state:
@@ -300,7 +300,7 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("Нужен ли обратный билет?", reply_markup=kb)
     elif current == FlightSearch.return_date.state:
         await callback.message.answer(
-            "Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
+            "Введи дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: 20.03</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
     elif current == FlightSearch.flight_type.state:
@@ -311,7 +311,7 @@ async def handle_continue_search(callback: CallbackQuery, state: FSMContext):
     elif current == FlightSearch.confirm.state:
         await show_summary(callback.message, state)
     else:
-        await callback.message.answer("Используйте кнопки внизу экрана.")
+        await callback.message.answer("Используй кнопки внизу экрана.")
         return
 
     schedule_inactivity(callback.message.chat.id, callback.from_user.id)
@@ -398,7 +398,7 @@ async def cmd_myid(message: Message):
     """Показывает Telegram ID пользователя — для настройки ADMIN_USER_ID."""
     admin_id = os.getenv("ADMIN_USER_ID", "не задан")
     await message.answer(
-        f"👤 Ваш Telegram ID: <code>{message.from_user.id}</code>\n\n"
+        f"👤 Твой Telegram ID: <code>{message.from_user.id}</code>\n\n"
         f"Текущий <code>ADMIN_USER_ID</code> в .env: <code>{admin_id}</code>\n\n"
         f"{'✅ Совпадает — вы администратор' if str(message.from_user.id) == admin_id else '❌ Не совпадает — установите ADMIN_USER_ID = ' + str(message.from_user.id)}",
         parse_mode="HTML",
@@ -563,7 +563,7 @@ async def cmd_sendstats(message: Message):
     if not admin_id:
         await message.answer(
             "❌ <b>ADMIN_USER_ID не задан</b>\n\n"
-            "Добавьте переменную окружения <code>ADMIN_USER_ID</code> = ваш Telegram ID.\n"
+            "Добавь переменную окружения <code>ADMIN_USER_ID</code> = ваш Telegram ID.\n"
             "Узнать свой ID можно у @userinfobot",
             parse_mode="HTML",
         )

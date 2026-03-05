@@ -156,8 +156,8 @@ async def start_multi_search(message: Message, state: FSMContext):
     schedule_inactivity(message.chat.id, message.from_user.id)
     await message.answer(
         "🗺 <b>Составной маршрут — Шаг 1</b>\n\n"
-        "Добавьте от 2 до 6 перелётов.\n"
-        "Введите <b>город отправления</b> первого перелёта:\n\n"
+        "Добавь от 2 до 6 перелётов.\n"
+        "Введи <b>город отправления</b> первого перелёта:\n\n"
         "<i>Пример: Москва</i>",
         parse_mode="HTML",
         reply_markup=CANCEL_KB,
@@ -178,8 +178,8 @@ async def ms_origin(message: Message, state: FSMContext):
         fuzzy_iata, fuzzy_name = fuzzy_get_iata(text)
         if fuzzy_iata:
             await message.answer(
-                f"❓ Не нашёл «{text}» — возможно, вы имели в виду <b>{fuzzy_name}</b>?\n"
-                "Напишите правильное название города.",
+                f"❓ Не нашёл «{text}» — возможно, ты имел в виду <b>{fuzzy_name}</b>?\n"
+                "Напиши правильное название города.",
                 parse_mode="HTML", reply_markup=CANCEL_KB,
             )
         else:
@@ -197,7 +197,7 @@ async def ms_origin(message: Message, state: FSMContext):
     await message.answer(
         f"🗺 <b>Перелёт {seg_num} — город прибытия</b>\n\n"
         f"📍 Вылет: <b>{name}</b>\n\n"
-        "Введите <b>город прибытия</b>:\n<i>Пример: Стамбул</i>",
+        "Введи <b>город прибытия</b>:\n<i>Пример: Стамбул</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
 
@@ -219,7 +219,7 @@ async def ms_dest(message: Message, state: FSMContext):
         if fuzzy_iata:
             await message.answer(
                 f"❓ Не нашёл «{text}» — возможно, вы имели в виду <b>{fuzzy_name}</b>?\n"
-                "Напишите правильное название города.",
+                "Напиши правильное название города.",
                 parse_mode="HTML", reply_markup=CANCEL_KB,
             )
         else:
@@ -231,7 +231,7 @@ async def ms_dest(message: Message, state: FSMContext):
 
     if iata == cur_origin_iata:
         await message.answer(
-            "❌ Город прибытия не может совпадать с городом вылета.\nВведите другой город.",
+            "❌ Город прибытия не может совпадать с городом вылета.\nВведи другой город.",
             reply_markup=CANCEL_KB,
         )
         return
@@ -243,7 +243,7 @@ async def ms_dest(message: Message, state: FSMContext):
     orig_name = data.get("_cur_origin_name", cur_origin_iata)
     await message.answer(
         f"📍 {orig_name} → <b>{name}</b>\n\n"
-        f"Введите <b>дату вылета</b> в формате <code>ДД.ММ</code>:\n<i>Пример: {hint_depart()}</i>",
+        f"Введи <b>дату вылета</b> в формате <code>ДД.ММ</code>:\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
 
@@ -276,7 +276,7 @@ async def ms_date(message: Message, state: FSMContext):
             if cur_m * 100 + cur_d < prev_m * 100 + prev_d:
                 await message.answer(
                     f"❌ Дата не может быть раньше предыдущего перелёта ({prev_date}).\n"
-                    "Введите корректную дату.",
+                    "Введи корректную дату.",
                     reply_markup=CANCEL_KB,
                 )
                 return
@@ -322,9 +322,9 @@ async def ms_date(message: Message, state: FSMContext):
     await state.set_state(MultiSearch.segment_origin)
     await message.answer(
         summary_text + (
-            "\n\nДобавьте следующий перелёт или завершите маршрут."
+            "\n\nДобавь следующий перелёт или завершите маршрут."
             if seg_count >= 2 else
-            "\n\nДобавьте следующий перелёт:"
+            "\n\nДобавь следующий перелёт:"
         ),
         parse_mode="HTML",
         reply_markup=kb,
@@ -350,13 +350,13 @@ async def ms_add_segment(callback: CallbackQuery, state: FSMContext):
         await state.set_state(MultiSearch.segment_dest)
         await callback.message.answer(
             f"📍 Вылет: <b>{last['dest_name']}</b> (продолжение маршрута)\n\n"
-            "Введите <b>город прибытия</b>:",
+            "Введи <b>город прибытия</b>:",
             parse_mode="HTML",
             reply_markup=CANCEL_KB,
         )
     else:
         await callback.message.answer(
-            "Введите город отправления:",
+            "Введи город отправления:",
             reply_markup=CANCEL_KB,
         )
     await callback.answer()
@@ -589,8 +589,8 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
         f"👥 Пассажиры: {pax_desc}\n\n"
         "─────────────────\n"
         "👇 <b>Маршрут уже заполнен на Aviasales.</b>\n"
-        "Нажмите кнопку ниже, затем <b>«Найти билеты»</b> — "
-        "и увидите все варианты с ценами."
+        "Нажми кнопку ниже, затем <b>«Найти билеты»</b> — "
+        "и увидишь все варианты с ценами."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Открыть поиск на Aviasales", url=partner_link)],

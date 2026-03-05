@@ -580,7 +580,7 @@ async def handle_more_flights(callback: CallbackQuery):
 
     cached = await redis_client.get_search_cache(cache_id)
     if not cached:
-        await callback.answer("Данные устарели — выполните новый поиск", show_alert=True)
+        await callback.answer("Данные устарели — выполни новый поиск", show_alert=True)
         return
 
     all_f   = cached.get("flights", [])

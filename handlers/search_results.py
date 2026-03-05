@@ -744,7 +744,7 @@ async def handle_show_transfer(callback: CallbackQuery):
     if redis_client.client:
         if await redis_client.client.get(f"declined_transfer:{user_id}"):
             await callback.answer(
-                "Вы недавно отказались от трансферов. Предложения снова появятся через несколько дней.",
+                "Ты недавно отказался от трансферов. Предложения снова появятся через несколько дней.",
                 show_alert=True,
             )
             return

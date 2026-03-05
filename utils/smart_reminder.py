@@ -96,7 +96,7 @@ async def _inactivity_reminder(chat_id: int, user_id: int,
         ])
         await bot.send_message(
             chat_id,
-            "👋 Ещё ищете билеты? Продолжим?",
+            "👋 Ещё ищешь билеты? Продолжим?",
             reply_markup=kb1,
         )
         logger.info(f"[SmartReminder] Напоминание #1 → chat_id={chat_id}")
@@ -120,7 +120,7 @@ async def _inactivity_reminder(chat_id: int, user_id: int,
         ])
         await bot.send_message(
             chat_id,
-            "💡 Пока думаете — можно подписаться на вау-цены: "
+            "💡 Пока думаешь — можно подписаться на вау-цены: "
             "я сам сообщу, когда появятся горячие билеты по интересным направлениям.",
             reply_markup=kb2,
         )
@@ -159,8 +159,8 @@ async def remind_after_search(chat_id: int, user_id: int,
     try:
         await bot.send_message(
             chat_id,
-            "💡 Хотите узнавать о горячих ценах первыми? "
-            "Укажите направления — и я сообщу, как только появятся выгодные билеты.",
+            "💡 Хочешь узнавать о горячих ценах первыми? "
+            "Укажи направления — и я сообщу, как только появятся выгодные билеты.",
             reply_markup=kb,
         )
         _last_hot_deals_reminder[user_id] = time.time()

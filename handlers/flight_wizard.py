@@ -98,15 +98,15 @@ async def process_route(message: Message, state: FSMContext):
             fuzzy_iata, fuzzy_name = fuzzy_get_iata(origin)
             if fuzzy_iata:
                 await message.answer(
-                    f"❓ Не нашёл «{origin}» — может быть, вы имели в виду <b>{fuzzy_name}</b>?\n"
-                    f"Напишите маршрут ещё раз с правильным названием.\n\n"
+                    f"❓ Не нашёл «{origin}» — может быть, ты имел в виду <b>{fuzzy_name}</b>?\n"
+                    f"Напиши маршрут ещё раз с правильным названием.\n\n"
                     f"<i>Пример: {fuzzy_name} - Сочи</i>",
                     parse_mode="HTML", reply_markup=CANCEL_KB,
                 )
             else:
                 await message.answer(
                     f"❌ Не знаю город отправления: <b>{origin}</b>\n"
-                    f"Проверьте написание и попробуйте ещё раз.",
+                    f"Проверь написание и попробуй ещё раз.",
                     parse_mode="HTML", reply_markup=CANCEL_KB,
                 )
             return
@@ -132,15 +132,15 @@ async def process_route(message: Message, state: FSMContext):
             fuzzy_iata, fuzzy_name = fuzzy_get_iata(dest)
             if fuzzy_iata:
                 await message.answer(
-                    f"❓ Не нашёл «{dest}» — может быть, вы имели в виду <b>{fuzzy_name}</b>?\n"
-                    f"Напишите маршрут ещё раз с правильным названием.\n\n"
+                    f"❓ Не нашёл «{dest}» — может быть, ты имел в виду <b>{fuzzy_name}</b>?\n"
+                    f"Напиши маршрут ещё раз с правильным названием.\n\n"
                     f"<i>Пример: Москва - {fuzzy_name}</i>",
                     parse_mode="HTML", reply_markup=CANCEL_KB,
                 )
             else:
                 await message.answer(
                     f"❌ Не знаю город прибытия: <b>{dest}</b>\n"
-                    f"Проверьте написание и попробуйте ещё раз.",
+                    f"Проверь написание и попробуй ещё раз.",
                     parse_mode="HTML", reply_markup=CANCEL_KB,
                 )
             return
@@ -150,14 +150,14 @@ async def process_route(message: Message, state: FSMContext):
 
     if origin == "везде" and dest == "везде":
         await message.answer(
-            "❌ Нельзя искать «Везде → Везде».\nУкажите хотя бы один конкретный город.",
+            "❌ Нельзя искать «Везде → Везде».\nУкажи хотя бы один конкретный город.",
             reply_markup=CANCEL_KB,
         )
         return
 
     if orig_iata and dest_iata and orig_iata == dest_iata:
         await message.answer(
-            "❌ Город вылета и прибытия не могут совпадать.\nПожалуйста, выберите разные города.",
+            "❌ Город вылета и прибытия не могут совпадать.\nПожалуйста, выбери разные города.",
             reply_markup=CANCEL_KB,
         )
         return
@@ -180,8 +180,8 @@ async def process_route(message: Message, state: FSMContext):
             metro = _get_metro(orig_iata)
             await state.update_data(_edit_mode=True, origin_airports=None, origin_airport_label=None)
             await message.answer(
-                f"Вы выбрали: <b>{origin_name}</b>\n\n"
-                f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выберите нужный:",
+                f"Ты выбрал: <b>{origin_name}</b>\n\n"
+                f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выбери нужный:",
                 parse_mode="HTML",
                 reply_markup=_airport_keyboard(metro, origin_name),
             )
@@ -195,8 +195,8 @@ async def process_route(message: Message, state: FSMContext):
         metro = _get_metro(orig_iata)
         await state.update_data(origin_airports=None, origin_airport_label=None)
         await message.answer(
-            f"Вы выбрали: <b>{origin_name}</b>\n\n"
-            f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выберите нужный:",
+            f"Ты выбрал: <b>{origin_name}</b>\n\n"
+            f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выбери нужный:",
             parse_mode="HTML",
             reply_markup=_airport_keyboard(metro, origin_name),
         )
@@ -206,7 +206,7 @@ async def process_route(message: Message, state: FSMContext):
 
     await message.answer(
         f"✈️ <b> 2/6</b> — Дата вылета\n\n"
-        f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
+        f"Введи дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.depart_date)
@@ -261,7 +261,7 @@ async def _after_airport_pick(callback: CallbackQuery, state: FSMContext):
     # Отправляем новое сообщение с вопросом о дате (не редактируем — выбор остаётся виден)
     await callback.message.answer(
         f"✈️ <b>2/6</b> — Дата вылета\n\n"
-        f"Введите дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
+        f"Введи дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.depart_date)
@@ -293,7 +293,7 @@ async def process_depart_date(message: Message, state: FSMContext):
             return
         if data.get("need_return"):
             await message.answer(
-                f"✏️ Введите новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
+                f"✏️ Введи новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
                 parse_mode="HTML", reply_markup=CANCEL_KB,
             )
             await state.set_state(FlightSearch.return_date)
@@ -328,7 +328,7 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
     if need_return:
         await callback.message.edit_text(
             f"✈️ <b>3/6</b> — Дата возврата\n\n"
-            f"Введите дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
+            f"Введи дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB,
         )
@@ -344,7 +344,7 @@ async def need_return_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Используйте кнопки навигации внизу.")
+    await message.answer("Используй кнопки навигации внизу.")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -366,7 +366,7 @@ async def process_return_date(message: Message, state: FSMContext):
     if norm_return and norm_depart and norm_return <= norm_depart:
         await message.answer(
             "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
-            "Укажите правильную дату возврата.",
+            "Укажи правильную дату возврата.",
             reply_markup=CANCEL_KB,
         )
         return
@@ -416,7 +416,7 @@ async def flight_type_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Используйте кнопки навигации внизу.")
+    await message.answer("Используй кнопки навигации внизу.")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -452,7 +452,7 @@ async def adults_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Используйте кнопки навигации внизу.")
+    await message.answer("Используй кнопки навигации внизу.")
 
 
 async def ask_has_children(message: Message, state: FSMContext):
@@ -483,7 +483,7 @@ async def has_children_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Используйте кнопки навигации внизу.")
+    await message.answer("Используй кнопки навигации внизу.")
 
 
 async def ask_children(message: Message, state: FSMContext):
@@ -495,7 +495,7 @@ async def ask_children(message: Message, state: FSMContext):
             for i in range(0, len(nums), 5)]
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer(
-        "Сколько детей (от 2 до 11 лет)?\nЕсли у вас младенцы, укажете дальше.",
+        "Сколько детей (от 2 до 11 лет)?\nЕсли у вас младенцы, укажи дальше.",
         reply_markup=kb,
     )
     await state.set_state(FlightSearch.children)
@@ -526,7 +526,7 @@ async def children_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Используйте кнопки навигации внизу.")
+    await message.answer("Используй кнопки навигации внизу.")
 
 
 async def ask_infants(message: Message, state: FSMContext):
@@ -562,7 +562,7 @@ async def infants_to_menu(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     await state.clear()
-    await message.answer("Используйте кнопки навигации внизу.")
+    await message.answer("Используй кнопки навигации внизу.")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -584,7 +584,7 @@ async def show_summary(message, state: FSMContext):
     await state.update_data(passenger_code=passenger_code, passenger_desc=passenger_desc)
     data = await state.get_data()
 
-    summary = "✈️ <b>6/6 - Подтверждение</b>\n\nПроверьте даты и данные:\n\n" + build_choices_summary(data)
+    summary = "✈️ <b>6/6 - Подтверждение</b>\n\nПроверь даты и данные:\n\n" + build_choices_summary(data)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_search")],
         [InlineKeyboardButton(text="✏️ Маршрут",   callback_data="edit_route"),
@@ -595,7 +595,7 @@ async def show_summary(message, state: FSMContext):
     ])
 
     await message.answer(summary, parse_mode="HTML")
-    await message.answer("Подтвердите или измените параметры:", reply_markup=kb)
+    await message.answer("Подтверди или измени параметры:", reply_markup=kb)
     await state.set_state(FlightSearch.confirm)
 
     chat_id = message.chat.id if hasattr(message, "chat") else message.from_user.id
@@ -610,7 +610,7 @@ async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: st
     if action == "route":
         await state.update_data(_edit_mode=True, origin_airports=None, origin_airport_label=None)
         await callback.message.edit_text(
-            "✏️ Введите новый маршрут:\n<b>Город вылета - Город прибытия</b>\n\n<i>Пример: Москва - Сочи</i>",
+            "✏️ Введи новый маршрут:\n<b>Город вылета - Город прибытия</b>\n\n<i>Пример: Москва - Сочи</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         await state.set_state(FlightSearch.route)
@@ -618,9 +618,9 @@ async def _do_edit_action(callback: CallbackQuery, state: FSMContext, action: st
     elif action == "dates":
         await state.update_data(_edit_mode=True)
         data = await state.get_data()
-        hint = "\n(затем введёте дату обратного рейса)" if data.get("need_return") else ""
+        hint = "\n(затем введёшь дату обратного рейса)" if data.get("need_return") else ""
         await callback.message.edit_text(
-            f"✏️ Введите новую дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: {hint_depart()}</i>",
+            f"✏️ Введи новую дату вылета в формате <code>ДД.ММ</code>{hint}\n<i>Пример: {hint_depart()}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         await state.set_state(FlightSearch.depart_date)

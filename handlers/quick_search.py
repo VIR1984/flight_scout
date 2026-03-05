@@ -254,7 +254,7 @@ async def handle_flight_request(message: Message) -> None:
 
     if is_origin_everywhere and is_dest_everywhere:
         await message.answer(
-            "❌ Нельзя искать «Везде → Везде».\nУкажите хотя бы один конкретный город.",
+            "❌ Нельзя искать «Везде → Везде».\nУкажи хотя бы один конкретный город.",
             reply_markup=CANCEL_KB
         )
         return
@@ -277,7 +277,7 @@ async def handle_flight_request(message: Message) -> None:
 
     if orig_iata_check and dest_iata_check and orig_iata_check == dest_iata_check:
         await message.answer(
-            "❌ Город вылета и прибытия не могут совпадать.\nПожалуйста, выберите разные города.",
+            "❌ Город вылета и прибытия не могут совпадать.\nПожалуйста, выбери разные города.",
             reply_markup=CANCEL_KB
         )
         return
@@ -288,7 +288,7 @@ async def handle_flight_request(message: Message) -> None:
         if nr and nd and nr <= nd:
             await message.answer(
                 "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
-                "Укажите правильную дату возврата.",
+                "Укажи правильную дату возврата.",
                 reply_markup=CANCEL_KB
             )
             return
@@ -362,7 +362,7 @@ async def handle_flight_request(message: Message) -> None:
         ])
         await message.answer(
             "😔 Прямых рейсов на эти даты не найдено.\n"
-            "Хотите посмотреть варианты с пересадками? Они часто дешевле!",
+            "Хочешь посмотреть варианты с пересадками? Они часто дешевле!",
             reply_markup=kb,
         )
         return

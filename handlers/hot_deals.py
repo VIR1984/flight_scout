@@ -116,12 +116,12 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
         text = (
             f"🛫 <b>Города вылета</b>\n\n"
             f"Добавлено: <b>{names}</b>\n\n"
-            f"Допишите ещё города через запятую или нажмите «Готово».\n"
-            f"Чтобы убрать город — нажмите ❌ рядом с ним."
+            f"Допиши ещё города через запятую или нажми «Готово».\n"
+            f"Чтобы убрать город — нажми ❌ рядом с ним."
         )
     else:
         text = (
-            "Введите <b>город(а) вылета</b>.\n\n"
+            "Введи <b>город(а) вылета</b>.\n\n"
             "Можно сразу несколько — через запятую или пробел:\n"
             "<i>Москва, Казань, Екатеринбург</i>\n\n"
             "Бот будет следить за ценами из каждого города."
@@ -185,7 +185,7 @@ async def _ask_months(target, selected: list):
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
-    text = "Выберите <b>месяц вылета</b>. Можно выбрать несколько."
+    text = "Выбери <b>месяц вылета</b>. Можно выбрать несколько."
     if selected:
         labels = [MONTHS_LABELS.get(k.split("_")[0], k) for k in selected]
         text += f"\n\n<i>Выбрано: {', '.join(labels)}</i>"
@@ -200,8 +200,8 @@ async def _ask_budget(target):
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     text = (
-        "Укажите <b>максимальную цену на человека</b> (в рублях).\n\n"
-        "Напишите сумму числом — или <b>0</b> для поиска без ограничений.\n"
+        "Укажи <b>максимальную цену на человека</b> (в рублях).\n\n"
+        "Напиши сумму числом — или <b>0</b> для поиска без ограничений.\n"
         "<i>Пример: 12000</i>"
     )
     send = target.answer if isinstance(target, Message) else target.message.edit_text
@@ -295,7 +295,7 @@ async def _show_confirm(target, data: dict):
 async def hot_deals_menu(callback: CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
     if current_state and not current_state.startswith("HotDealsSub"):
-        await callback.answer("⚠️ Сначала завершите или отмените текущий поиск билетов", show_alert=True)
+        await callback.answer("⚠️ Сначала заверши или отмени текущий поиск билетов", show_alert=True)
         return
 
     await state.clear()
@@ -361,7 +361,7 @@ async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
     await callback.message.edit_text(
-        "Выберите <b>направление</b> (тематику путешествия):",
+        "Выбери <b>направление</b> (тематику путешествия):",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
@@ -387,7 +387,7 @@ async def hd_step3_custom_dest(callback: CallbackQuery, state: FSMContext):
     ])
     await callback.message.edit_text(
         "✈️ <b>Свой маршрут</b>\n\n"
-        "Введите <b>город или страну прилёта</b>:\n\n"
+        "Введи <b>город или страну прилёта</b>:\n\n"
         "<i>Примеры:\n"
         "• Вьетнам\n"
         "• Бали\n"
@@ -488,7 +488,7 @@ async def hd_step3_category_chosen(callback: CallbackQuery, state: FSMContext):
         buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data=f"hd_type_{await _get_sub_type(state)}")])
         buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         await callback.message.edit_text(
-            f"<b>{cat_label}</b> — куда именно хотите лететь?",
+            f"<b>{cat_label}</b> — куда именно хочешь лететь?",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
@@ -586,7 +586,7 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
     data    = await state.get_data()
     origins = data.get("origins", [])
     if not origins:
-        await callback.answer("Добавьте хотя бы один город", show_alert=True)
+        await callback.answer("Добавь хотя бы один город", show_alert=True)
         return
     await state.set_state(HotDealsSub.choose_months)
     await _ask_months(callback, selected=[])
@@ -633,7 +633,7 @@ async def hd_origins_back(callback: CallbackQuery, state: FSMContext):
         ])
         await callback.message.edit_text(
             "✈️ <b>Свой маршрут</b>\n\n"
-            "Введите <b>город или страну прилёта</b>:\n\n"
+            "Введи <b>город или страну прилёта</b>:\n\n"
             "<i>Примеры: Вьетнам, Бали, Бангкок, Барселона</i>",
             parse_mode="HTML", reply_markup=kb
         )
@@ -649,7 +649,7 @@ async def hd_origins_back(callback: CallbackQuery, state: FSMContext):
         buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")])
         buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         await callback.message.edit_text(
-            "Выберите <b>направление</b> (тематику путешествия):",
+            "Выбери <b>направление</b> (тематику путешествия):",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
@@ -692,7 +692,7 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
     data     = await state.get_data()
     selected = data.get("travel_months", [])
     if not selected:
-        await callback.answer("Выберите хотя бы один месяц", show_alert=True)
+        await callback.answer("Выбери хотя бы один месяц", show_alert=True)
         return
     first = selected[0].split("_")
     await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
@@ -710,7 +710,7 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
     raw = message.text.strip().replace(" ", "").replace("₽", "").replace(",", "")
     if not raw.isdigit():
         await message.answer(
-            "Введите сумму числом.\n<i>Пример: 12000</i>",
+            "Введи сумму числом.\n<i>Пример: 12000</i>",
             parse_mode="HTML",
             reply_markup=BACK_TO_MAIN
         )

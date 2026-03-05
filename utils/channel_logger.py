@@ -294,7 +294,7 @@ def _escape(text: str) -> str:
 
 class ChannelLogHandler(logging.Handler):
     """
-    Добавьте в main.py:
+    Добавь в main.py:
         from utils.channel_logger import ChannelLogHandler
         logging.getLogger().addHandler(ChannelLogHandler(level=logging.ERROR))
 
