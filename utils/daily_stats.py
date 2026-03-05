@@ -7,7 +7,7 @@
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +120,72 @@ async def start():
         logger.critical(f"[DailyStats] Фатальная ошибка — сервис остановлен: {exc}\n{traceback.format_exc()}")
 
 
-async def _send_report():
-    """Собирает аналитику и отправляет отчёт."""
+async def health_check() -> dict:
+    """
+    Проверяет состояние всех ключевых функций бота.
+    Возвращает словарь {component: status_str}.
+    Вызывается раз в сутки, результат идёт в канал как отдельный блок.
+    """
     from utils.redis_client import redis_client
-    from utils.channel_logger import send_daily_report
+    from services.flight_search import search_flights, normalize_date
+    from datetime import date, timedelta
+    import time
+
+    results = {}
+
+    # 1. Redis
+    try:
+        if redis_client.client:
+            await redis_client.client.ping()
+            results["Redis"] = "✅ OK"
+        else:
+            results["Redis"] = "❌ Нет подключения"
+    except Exception as e:
+        results["Redis"] = f"❌ {e}"
+
+    # 2. Aviasales API (тестовый запрос MOW→LED через 30 дней)
+    try:
+        t0 = time.monotonic()
+        test_date = (date.today() + timedelta(days=30)).strftime("%Y-%m-%d")
+        flights = await search_flights("MOW", "LED", test_date, None)
+        ms = int((time.monotonic() - t0) * 1000)
+        if flights:
+            results["Aviasales API"] = f"✅ OK  ({len(flights)} рейсов, {ms}ms)"
+        else:
+            results["Aviasales API"] = f"⚠️ Ответ пустой ({ms}ms)"
+    except Exception as e:
+        results["Aviasales API"] = f"❌ {e}"
+
+    # 3. Travelpayouts (partner link) — просто проверяем переменные
+    import os
+    tp_token = os.getenv("TRAVELPAYOUTS_API_TOKEN") or os.getenv("AVIASALES_TOKEN", "")
+    results["Travelpayouts"] = "✅ Токен задан" if tp_token else "❌ Токен не задан"
+
+    # 4. Подписки горячих предложений
+    try:
+        all_subs = await redis_client.get_all_hot_subs()
+        results["Горячие подписки"] = f"✅ {len(all_subs)} активных"
+    except Exception as e:
+        results["Горячие подписки"] = f"❌ {e}"
+
+    # 5. Слежение за ценами
+    try:
+        watches = await redis_client.get_all_watch_keys()
+        results["Слежение за ценами"] = f"✅ {len(watches)} активных"
+    except Exception as e:
+        results["Слежение за ценами"] = f"❌ {e}"
+
+    # 6. Канал аналитики
+    channel_id = os.getenv("ANALYTICS_CHANNEL_ID", "")
+    results["Канал аналитики"] = "✅ Задан" if channel_id else "❌ Не задан"
+
+    return results
+
+
+async def _send_report():
+    """Собирает аналитику, health check и отправляет отчёт."""
+    from utils.redis_client import redis_client
+    from utils.channel_logger import send_daily_report, _send
 
     logger.info("[DailyStats] Собираю аналитику...")
 
@@ -137,6 +199,20 @@ async def _send_report():
     ok = await send_daily_report(an, triggered_by="auto")
     if not ok:
         raise RuntimeError("Отчёт не отправлен — проверь ANALYTICS_CHANNEL_ID и что бот добавлен в канал как администратор")
+
+    # Health check — отдельным сообщением после основного отчёта
+    try:
+        hc = await health_check()
+        lines = ["🏥 <b>Health Check</b>\n"]
+        all_ok = all("✅" in v for v in hc.values())
+        for component, status in hc.items():
+            lines.append(f"  {status}  —  {component}")
+        lines.append("")
+        lines.append("✅ Все системы в норме" if all_ok else "⚠️ Есть проблемы — проверь выше")
+        await _send("\n".join(lines))
+        logger.info("[DailyStats] ✅ Health check отправлен")
+    except Exception as e:
+        logger.warning(f"[DailyStats] Health check не отправлен: {e}")
 
     logger.info("[DailyStats] ✅ Ежедневный отчёт отправлен в канал")
 

@@ -209,6 +209,7 @@ async def process_route(message: Message, state: FSMContext):
         f"Введи дату вылета в формате <code>ДД.ММ</code>\n<i>Пример: {hint_depart()}</i>",
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
+    import asyncio as _aio; _aio.ensure_future(redis_client.track_funnel_step("2_date"))
     await state.set_state(FlightSearch.depart_date)
     schedule_inactivity(message.chat.id, message.from_user.id)
 
@@ -394,6 +395,7 @@ async def ask_flight_type(message: Message, state: FSMContext):
     ])
     await message.answer("✈️ <b>4/6</b> — Тип рейса\n\nКакие рейсы показывать?",
                          parse_mode="HTML", reply_markup=kb)
+    import asyncio as _aio; _aio.ensure_future(redis_client.track_funnel_step("4_flight_type"))
     await state.set_state(FlightSearch.flight_type)
 
 
@@ -431,6 +433,7 @@ async def ask_adults(message: Message, state: FSMContext):
     ])
     await message.answer("✈️ <b>5/6</b> — Пассажиры\n\nСколько взрослых пассажиров (от 12 лет)?",
                          parse_mode="HTML", reply_markup=kb)
+    import asyncio as _aio; _aio.ensure_future(redis_client.track_funnel_step("5_passengers"))
     await state.set_state(FlightSearch.adults)
 
 
@@ -596,6 +599,7 @@ async def show_summary(message, state: FSMContext):
 
     await message.answer(summary, parse_mode="HTML")
     await message.answer("Подтверди или измени параметры:", reply_markup=kb)
+    import asyncio as _aio; _aio.ensure_future(redis_client.track_funnel_step("6_confirm"))
     await state.set_state(FlightSearch.confirm)
 
     chat_id = message.chat.id if hasattr(message, "chat") else message.from_user.id

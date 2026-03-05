@@ -170,6 +170,10 @@ async def process_everywhere_search(
     is_origin_everywhere = (search_type == "origin_everywhere")
     is_dest_everywhere = (search_type == "destination_everywhere")
     
+    import asyncio as _aio
+    _search_type = "everywhere_dest" if is_dest_everywhere else "everywhere_origin"
+    _aio.ensure_future(redis_client.track_search_type(_search_type))
+    _aio.ensure_future(redis_client.track_funnel_step("5_result_shown"))
     sorted_flights  = sorted(all_flights, key=lambda f: f.get("value") or f.get("price") or 999_999)
     cheapest_flight = sorted_flights[0]
     rest_flights    = sorted_flights[1:]
@@ -283,7 +287,7 @@ async def process_everywhere_search(
         )
         if not booking_link.startswith(("http://", "https://")):
             booking_link = f"https://www.aviasales.ru{booking_link}"
-    booking_link = await convert_to_partner_link(booking_link)
+    booking_link = await convert_to_partner_link(booking_link, context="everywhere")
 
     # ── Кнопки ────────────────────────────────────────────────────────────────
     kb_buttons = []

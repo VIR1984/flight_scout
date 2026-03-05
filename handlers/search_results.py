@@ -297,6 +297,10 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         "flight_type": flight_type,
     })
 
+    # Трекинг: тип поиска и воронка
+    import asyncio as _aio
+    _aio.ensure_future(redis_client.track_search_type("normal"))
+    _aio.ensure_future(redis_client.track_funnel_step("5_result_shown"))
     top_flight   = find_cheapest_flight_on_exact_date(all_flights, data["depart_date"], data.get("return_date"))
     price        = top_flight.get("value") or top_flight.get("price") or "?"
     origin_iata  = top_flight["origin"]
@@ -394,8 +398,8 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     if not fallback_link.startswith(("http://", "https://")):
         fallback_link = f"https://www.aviasales.ru{fallback_link}"
 
-    booking_link  = await convert_to_partner_link(booking_link)
-    fallback_link = await convert_to_partner_link(fallback_link)
+    booking_link  = await convert_to_partner_link(booking_link, context="search_results")
+    fallback_link = await convert_to_partner_link(fallback_link, context="search_results_fallback")
 
     kb_buttons = []
     if booking_link:
@@ -634,6 +638,8 @@ async def handle_set_threshold(callback: CallbackQuery):
         passengers=data.get("passenger_code") or data.get("passengers_code", "1"),
         threshold=threshold,
     )
+    import asyncio as _aio
+    _aio.ensure_future(redis_client.track_subscription_event("price_watch", "created"))
 
     origin_name = "Везде" if is_origin_everywhere else (IATA_TO_CITY.get(origin, origin) if origin else "—")
     dest_name   = "Везде" if is_dest_everywhere   else (IATA_TO_CITY.get(dest, dest)     if dest   else "—")

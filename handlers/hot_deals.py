@@ -786,6 +786,8 @@ async def hd_save(callback: CallbackQuery, state: FSMContext):
     }
 
     await redis_client.save_hot_sub(user_id, sub)
+    import asyncio as _aio
+    _aio.ensure_future(redis_client.track_subscription_event(sub.get("sub_type", "hot_deals"), "created"))
     await state.clear()
 
     await callback.message.edit_text(

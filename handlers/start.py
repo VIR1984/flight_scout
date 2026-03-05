@@ -327,6 +327,8 @@ async def start_flight_search(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML", reply_markup=CANCEL_KB,
     )
     await state.set_state(FlightSearch.route)
+    import asyncio as _aio
+    _aio.ensure_future(redis_client.track_funnel_step("1_route"))
     schedule_inactivity(callback.message.chat.id, callback.from_user.id)
     await callback.answer()
 

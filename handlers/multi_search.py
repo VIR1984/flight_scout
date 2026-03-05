@@ -579,7 +579,8 @@ async def ms_confirm(callback: CallbackQuery, state: FSMContext):
     logger.info(f"[MultiSearch] booking_url: {booking_url}")
 
     # Короткая партнёрская ссылка — как в стандартном поиске
-    partner_link = await convert_to_partner_link(booking_url)
+    import asyncio as _aio; _aio.ensure_future(redis_client.track_search_type("multi"))
+    partner_link = await convert_to_partner_link(booking_url, context="multi_search")
     logger.info(f"[MultiSearch] user={callback.from_user.id} partner={partner_link[:60]}...")
 
     route_preview = _segments_summary(segments)

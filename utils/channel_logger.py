@@ -275,6 +275,81 @@ async def send_daily_report(an: dict, triggered_by: str = "auto") -> bool:
             lines_nr.append(f"  {route}   —   {cnt} раз")
         await _send("\n".join(lines_nr))
 
+    # ── Блок 8: Типы поиска ───────────────────────────────────────
+    search_types = an.get("search_types", {})
+    if search_types:
+        total_st = sum(search_types.values()) or 1
+        type_labels = {
+            "normal":           "🔍 Обычный",
+            "everywhere_dest":  "🌍 Город→Везде",
+            "everywhere_origin":"🌍 Везде→Город",
+            "country":          "🗺 По стране",
+            "multi":            "✈️ Мультиcity",
+            "quick":            "⚡ Быстрый",
+        }
+        lines_st = ["🔎 <b>Типы поиска</b>\n"]
+        for k, cnt in sorted(search_types.items(), key=lambda x: -x[1]):
+            label = type_labels.get(k, k)
+            pct = round(cnt / total_st * 100)
+            lines_st.append(f"  {label:<20} <b>{cnt}</b>  ({pct}%)")
+        await _send("\n".join(lines_st))
+
+    # ── Блок 9: Клики по ссылкам ─────────────────────────────────
+    total_clicks = an.get("total_link_clicks", 0)
+    clicks_by_ctx = an.get("link_clicks_by_context", {})
+    if total_clicks:
+        ctx_labels = {
+            "search_results":          "📋 Результат поиска",
+            "search_results_fallback": "📋 Все варианты",
+            "everywhere":              "🌍 Везде",
+            "multi_search":            "✈️ Мультиcity",
+            "unknown":                 "❓ Без контекста",
+        }
+        lines_cl = [f"🔗 <b>Переходы по ссылкам</b>  —  всего: <b>{total_clicks}</b>\n"]
+        for k, cnt in sorted(clicks_by_ctx.items(), key=lambda x: -x[1]):
+            label = ctx_labels.get(k, k)
+            lines_cl.append(f"  {label:<26} <b>{cnt}</b>")
+        await _send("\n".join(lines_cl))
+
+    # ── Блок 10: Воронка поиска ───────────────────────────────────
+    funnel = an.get("funnel", {})
+    if funnel:
+        funnel_steps = [
+            ("1_route",      "1. Ввёл маршрут"),
+            ("2_date",       "2. Выбрал дату"),
+            ("4_flight_type","3. Тип рейса"),
+            ("5_passengers", "4. Пассажиры"),
+            ("6_confirm",    "5. Подтверждение"),
+            ("5_result_shown","6. Увидел результат"),
+        ]
+        max_f = max(funnel.values()) or 1
+        lines_f = ["🎯 <b>Воронка поиска</b>\n"]
+        prev = None
+        for key, label in funnel_steps:
+            cnt = funnel.get(key, 0)
+            drop = ""
+            if prev and prev > 0 and cnt < prev:
+                drop_pct = round((prev - cnt) / prev * 100)
+                drop = f"  ↓{drop_pct}% отсев"
+            lines_f.append(f"  {label:<26} <b>{cnt}</b>{drop}")
+            prev = cnt
+        await _send("\n".join(lines_f))
+
+    # ── Блок 11: Типы подписок ────────────────────────────────────
+    sub_types = an.get("sub_types", {})
+    total_subs_created = an.get("total_subs_created", 0)
+    if sub_types or total_subs_created:
+        sub_labels = {
+            "hot_deals":   "🔥 Горячие предложения",
+            "digest":      "📰 Дайджест",
+            "price_watch": "📉 Слежение за ценой",
+        }
+        lines_sub = [f"📬 <b>Подписки</b>  —  создано всего: <b>{total_subs_created}</b>\n"]
+        for k, cnt in sorted(sub_types.items(), key=lambda x: -x[1]):
+            label = sub_labels.get(k, k)
+            lines_sub.append(f"  {label:<28} <b>{cnt}</b> активных")
+        await _send("\n".join(lines_sub))
+
     # ── Итог ─────────────────────────────────────────────────────
     await _send("✅ <b>Отчёт завершён</b>")
     return True
@@ -308,8 +383,10 @@ class ChannelLogHandler(logging.Handler):
         import time
         now = time.monotonic()
         key = record.name
-        if now - self._last_sent.get(key, 0) < self.DEBOUNCE:
-            return
+        # CRITICAL всегда отправляем немедленно — дебаунс не применяем
+        if record.levelno < logging.CRITICAL:
+            if now - self._last_sent.get(key, 0) < self.DEBOUNCE:
+                return
         self._last_sent[key] = now
 
         try:

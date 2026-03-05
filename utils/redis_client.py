@@ -421,6 +421,46 @@ class RedisClient:
         await self.client.zincrby(f"{p}analytics:no_results", 1, route)
         await self.client.incr(f"{p}analytics:total_no_results")
 
+
+    async def track_link_click(self, context: str = "unknown") -> None:
+        """Счётчик генерации партнёрских ссылок (= показов кнопки бронирования)."""
+        if not self.client:
+            return
+        p = self.prefix
+        await self.client.hincrby(f"{p}analytics:link_clicks", context, 1)
+        await self.client.incr(f"{p}analytics:total_link_clicks")
+
+    async def track_funnel_step(self, step: str) -> None:
+        """
+        Воронка поиска. Шаги:
+          start → route → date → passengers → confirm → result_shown → link_clicked
+        Позволяет видеть на каком шаге пользователи уходят.
+        """
+        if not self.client:
+            return
+        await self.client.hincrby(f"{self.prefix}analytics:funnel", step, 1)
+
+    async def track_search_type(self, search_type: str) -> None:
+        """
+        Тип поиска: normal / everywhere_dest / everywhere_origin /
+                    country / multi / quick
+        """
+        if not self.client:
+            return
+        await self.client.hincrby(f"{self.prefix}analytics:search_types", search_type, 1)
+
+    async def track_subscription_event(self, sub_type: str, action: str = "created") -> None:
+        """
+        sub_type: hot_deals / digest / price_watch
+        action:   created / deleted
+        """
+        if not self.client:
+            return
+        p = self.prefix
+        await self.client.hincrby(f"{p}analytics:sub_types", sub_type, 1 if action == "created" else -1)
+        if action == "created":
+            await self.client.incr(f"{p}analytics:total_subs_created")
+
     async def get_analytics(self) -> dict:
         """Собирает всю аналитику для /stats."""
         if not self.client:
@@ -480,6 +520,36 @@ class RedisClient:
             result["price_watches"] = len(watches)
         except Exception:
             result["price_watches"] = "—"
+
+        # Клики по ссылкам
+        result["total_link_clicks"] = int(await self.client.get(f"{p}analytics:total_link_clicks") or 0)
+        link_clicks_raw = await self.client.hgetall(f"{p}analytics:link_clicks")
+        result["link_clicks_by_context"] = {
+            (k.decode() if isinstance(k, bytes) else k): int(v)
+            for k, v in link_clicks_raw.items()
+        }
+
+        # Воронка поиска
+        funnel_raw = await self.client.hgetall(f"{p}analytics:funnel")
+        result["funnel"] = {
+            (k.decode() if isinstance(k, bytes) else k): int(v)
+            for k, v in funnel_raw.items()
+        }
+
+        # Типы поиска
+        st_raw = await self.client.hgetall(f"{p}analytics:search_types")
+        result["search_types"] = {
+            (k.decode() if isinstance(k, bytes) else k): int(v)
+            for k, v in st_raw.items()
+        }
+
+        # Типы подписок
+        subs_raw = await self.client.hgetall(f"{p}analytics:sub_types")
+        result["sub_types"] = {
+            (k.decode() if isinstance(k, bytes) else k): int(v)
+            for k, v in subs_raw.items()
+        }
+        result["total_subs_created"] = int(await self.client.get(f"{p}analytics:total_subs_created") or 0)
 
         return result
 
