@@ -84,7 +84,7 @@ async def build_subs_menu_kb(user_id: int, username: Optional[str] = None) -> tu
     # Тариф пользователя для строки-подсказки
     plan_data = await get_user_plan(user_id, username)
     plan_key  = plan_data.get("plan", "free")
-    cfg       = PLANS[plan_key]
+    cfg       = PLANS.get(plan_key) or PLANS["free"]  # fallback на free если неизвестный plan
     hot_lim   = "∞" if cfg["hot_limit"]    == 0 else str(cfg["hot_limit"])
     dig_lim   = "∞" if cfg["digest_limit"] == 0 else str(cfg["digest_limit"])
     plan_line = f"\n<i>Тариф {cfg['label']}: горячие {hot_only}/{hot_lim} · дайджест {digest_count}/{dig_lim}</i>"

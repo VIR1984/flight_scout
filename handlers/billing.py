@@ -76,6 +76,16 @@ PLANS: dict[str, dict] = {
         "priority":         True,
         "badge":            "💎",
     },
+    # VIP — безлимитный тариф для доверенных пользователей (без оплаты)
+    "vip": {
+        "label":            "👑 VIP",
+        "price_rub":        0,
+        "hot_limit":        0,   # безлимит
+        "digest_limit":     0,
+        "flystack_tokens":  0,
+        "priority":         True,
+        "badge":            "👑",
+    },
 }
 
 # Сколько дней активен оплаченный тариф
@@ -220,7 +230,7 @@ async def can_add_sub(user_id: int, sub_type: str, username: Optional[str] = Non
 
     plan_data = await get_user_plan(user_id)
     plan_key  = plan_data.get("plan", "free")
-    cfg       = PLANS[plan_key]
+    cfg       = PLANS.get(plan_key) or PLANS["free"]
 
     limit = cfg["hot_limit"] if sub_type == "hot" else cfg["digest_limit"]
     if limit == 0:
@@ -331,7 +341,7 @@ async def handle_yookassa_webhook(payment_id: str, status: str) -> bool:
     try:
         import utils.bot_instance as _bi
         if _bi.bot:
-            cfg = PLANS[plan_key]
+            cfg = PLANS.get(plan_key) or PLANS["free"]
             tok_line = (
                 f"\n🎯 Начислено <b>{cfg['flystack_tokens']} токенов FlyStack</b>"
                 if cfg["flystack_tokens"] else ""
@@ -548,7 +558,7 @@ async def billing_status(callback: CallbackQuery):
             [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
         ])
     else:
-        cfg     = PLANS[plan_key]
+        cfg     = PLANS.get(plan_key) or PLANS["free"]
         hot_str = "∞" if cfg["hot_limit"]    == 0 else str(cfg["hot_limit"])
         dig_str = "∞" if cfg["digest_limit"] == 0 else str(cfg["digest_limit"])
         lines = [
