@@ -33,6 +33,8 @@ DROP_THRESHOLD = 0.10      # уведомлять только при сниже
 ROUTE_COOLDOWN = 86400     # кулдаун на маршрут: 24 часа
 SUB_COOLDOWN   = 12 * 3600 # общий таймер подписки: не чаще 12 ч
 
+NUDGE_INTERVAL = 3 * 86400  # "напоминалка" — не чаще раза в 3 дня
+
 # Единый источник категорий — из handlers
 from handlers.hot_deals import CATEGORIES
 
@@ -187,6 +189,8 @@ class HotDealsSender:
 
         if not candidates:
             logger.info(f"[HotDeals] sub={sub_id}: нет кандидатов")
+            # ── Напоминалка: показываем лучшую цену даже если не прошла фильтры ──
+            await self._maybe_send_nudge(user_id, sub_id, sub, origin_iatas, dest_pool, depart_str)
             return
 
         candidates.sort(key=lambda x: x[0])
@@ -198,6 +202,7 @@ class HotDealsSender:
 
         if chosen is None:
             logger.info(f"[HotDeals] sub={sub_id}: все {len(candidates)} кандидатов на кулдауне")
+            await self._maybe_send_nudge(user_id, sub_id, sub, origin_iatas, dest_pool, depart_str)
             return
 
         best_price, best_orig, best_dest, best_flight, baseline = chosen
@@ -206,6 +211,131 @@ class HotDealsSender:
             user_id, sub_id, sub, best_flight, best_price, best_orig, best_dest,
             passengers, depart_str, baseline=baseline,
         )
+
+    async def _maybe_send_nudge(
+        self, user_id: int, sub_id: str, sub: dict,
+        origin_iatas: list, dest_pool: list, depart_str: str,
+    ):
+        """
+        Отправляет 'напоминалку' пользователю раз в NUDGE_INTERVAL дней,
+        даже если цена не прошла фильтры (бюджет / порог снижения).
+        Показывает лучшую найденную цену и объясняет ситуацию.
+        """
+        nudge_key = f"{redis_client.prefix}hotsub_nudge:{sub_id}"
+        try:
+            last_nudge = await redis_client.client.get(nudge_key)
+            if last_nudge and time.time() - float(last_nudge) < NUDGE_INTERVAL:
+                return
+        except Exception:
+            return
+
+        max_price  = sub.get("max_price", 0)
+        passengers = sub.get("passengers", 1)
+
+        # Находим лучшую цену по всем направлениям без учёта бюджета/порога
+        best: Optional[tuple] = None  # (price, origin, dest, flight, baseline)
+        for origin in origin_iatas:
+            for dest in [d for d in dest_pool if d != origin]:
+                try:
+                    async with BACKGROUND_SEMAPHORE:
+                        flights = await search_flights(origin, dest, depart_str, None)
+                    if not flights:
+                        continue
+                    cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
+                    price = cheapest.get("value") or cheapest.get("price") or 0
+                    if not price:
+                        continue
+                    baseline = await redis_client.get_baseline_price(origin, dest)
+                    if best is None or price < best[0]:
+                        best = (price, origin, dest, cheapest, baseline)
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    continue
+
+        if not best:
+            logger.info(f"[Nudge] sub={sub_id}: данных нет — пропускаем")
+            return
+
+        best_price, best_orig, best_dest, best_flight, baseline = best
+
+        # Сохраняем время отправки нaдж
+        try:
+            await redis_client.client.set(nudge_key, str(time.time()), ex=NUDGE_INTERVAL + 3600)
+        except Exception:
+            pass
+
+        logger.info(f"[Nudge] 📣 sub={sub_id} {best_orig}→{best_dest} {best_price}₽ (бюджет={max_price})")
+        await self._send_nudge_notification(
+            user_id, sub_id, sub, best_flight, best_price, best_orig, best_dest,
+            passengers, depart_str, max_price, baseline,
+        )
+
+    async def _send_nudge_notification(
+        self, user_id: int, sub_id: str, sub: dict,
+        flight: dict, price: int, origin_iata: str, dest_iata: str,
+        passengers: int, depart_str: str,
+        max_price: int, baseline: Optional[float],
+    ):
+        origin_name = get_city_name(origin_iata) or sub.get("origin_name", origin_iata)
+        dest_name   = get_city_name(dest_iata) or dest_iata
+
+        # Определяем тип сообщения — по бюджету или по порогу снижения
+        over_budget = max_price and price > max_price
+        if over_budget:
+            header = "👀 <b>Бот следит за твоим направлением!</b>"
+            budget_note = (
+                f"\n\n⚠️ Сейчас цена <b>{price:,} ₽</b> выше твоего бюджета "
+                f"<b>{max_price:,} ₽</b>".replace(",", "\u202f")
+            )
+            cta = "Это лучшее предложение на данный момент — возможно, стоит скорректировать бюджет в подписке."
+        else:
+            header = "👀 <b>Бот следит за твоим направлением!</b>"
+            budget_note = ""
+            cta = "Цены пока не снизились достаточно — продолжаем следить!"
+
+        # Блок со сравнением с baseline
+        history_note = ""
+        if baseline:
+            diff_pct = int(abs(baseline - price) / baseline * 100)
+            if price < baseline:
+                history_note = f"\n📉 Обычно от <b>{int(baseline):,} ₽</b> — сейчас на {diff_pct}% дешевле".replace(",", "\u202f")
+            elif price > baseline:
+                history_note = f"\n📈 Обычно от <b>{int(baseline):,} ₽</b> — сейчас на {diff_pct}% дороже".replace(",", "\u202f")
+
+        text = (
+            f"{header}\n\n"
+            f"✈️ <b>{origin_name} → {dest_name}</b>\n"
+            f"📅 Примерно: {depart_str}\n"
+            f"💰 Лучшая цена сейчас: <b>{price:,} ₽</b> / чел.".replace(",", "\u202f")
+            + history_note + budget_note +
+            f"\n\n{cta}"
+        )
+        if passengers > 1:
+            text += f"\n🧮 За {passengers} чел.: <b>{price * passengers:,} ₽</b>".replace(",", "\u202f")
+
+        booking_link = await convert_to_partner_link(generate_booking_link(
+            flight=flight, origin=origin_iata, dest=dest_iata,
+            depart_date=depart_str, passengers_code=str(passengers), return_date=None,
+        ))
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"✈️ Посмотреть билеты за {price:,} ₽".replace(",", "\u202f"),
+                url=booking_link,
+            )],
+            [InlineKeyboardButton(text="✏️ Изменить бюджет", callback_data=f"hd_edit_{sub_id}")] if over_budget else
+            [InlineKeyboardButton(text="🔔 Продолжать следить", callback_data=f"hd_keep_{sub_id}")],
+            [InlineKeyboardButton(text="❌ Отменить подписку",  callback_data=f"hd_del_{sub_id}")],
+        ])
+
+        try:
+            await self.bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb)
+            logger.info(f"✅ [Nudge] {user_id}: {origin_iata}→{dest_iata} {price}₽")
+        except TelegramForbiddenError:
+            await redis_client.delete_hot_sub(user_id, sub_id)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+        except TelegramAPIError as e:
+            logger.error(f"❌ [Nudge] API: {e}")
 
     async def _send_hot_notification(
         self, user_id: int, sub_id: str, sub: dict,

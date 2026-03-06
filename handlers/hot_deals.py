@@ -918,3 +918,29 @@ async def hd_delete_sub(callback: CallbackQuery, state: FSMContext):
     await redis_client.delete_hot_sub(user_id, sub_id)
     await callback.answer("Подписка удалена")
     await hd_my_subs(callback)
+
+
+# ════════════════════════════════════════════════════════════════
+# Кнопки из напоминалок (nudge)
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("hd_keep_"))
+async def hd_keep_sub(callback: CallbackQuery):
+    """Пользователь нажал 'Продолжать следить' в напоминалке."""
+    await callback.answer("✅ Продолжаем следить за ценами!", show_alert=False)
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="hd_my_subs")],
+                [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
+            ])
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("hd_edit_"))
+async def hd_edit_sub_budget(callback: CallbackQuery, state: FSMContext):
+    """Пользователь нажал 'Изменить бюджет' из напоминалки — открываем его подписки."""
+    await callback.answer()
+    await hd_my_subs(callback)
