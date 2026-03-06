@@ -40,21 +40,25 @@ PLANS: dict[str, dict] = {
         "label":           "Бесплатный",
         "emoji":           "🆓",
         "price_rub":       0,
-        "hot_limit":       3,   # горячие предложения  (0 = безлимит)
-        "priority":        False,  # приоритет уведомлений
-        "digest_limit":    3,   # дайджест
-        "watch_limit":     3,   # слежение за ценой
+        "hot_limit":       3,
+        "digest_limit":    3,
+        "watch_limit":     3,
         "flystack_tokens": 0,
+        "priority":        False,
+        "multi_origin":    False,  # только 1 город вылета
+        "multi_month":     False,  # только 1 месяц
     },
     "plus": {
         "label":           "Плюс",
         "emoji":           "⚡️",
         "price_rub":       149,
         "hot_limit":       10,
-        "priority":        True,
         "digest_limit":    10,
         "watch_limit":     10,
         "flystack_tokens": 0,
+        "priority":        True,
+        "multi_origin":    True,
+        "multi_month":     True,
     },
     "premium": {
         "label":           "Премиум",
@@ -65,6 +69,8 @@ PLANS: dict[str, dict] = {
         "watch_limit":     0,
         "flystack_tokens": 20,
         "priority":        True,
+        "multi_origin":    True,
+        "multi_month":     True,
     },
     # Служебный — не отображается в меню
     "vip": {
@@ -76,6 +82,8 @@ PLANS: dict[str, dict] = {
         "watch_limit":     0,
         "flystack_tokens": 0,
         "priority":        True,
+        "multi_origin":    True,
+        "multi_month":     True,
     },
 }
 
@@ -233,14 +241,15 @@ async def can_add_sub(
 
     if plan_key == "free":
         reason = (
-            f"На <b>бесплатном тарифе</b> доступно <b>{limit} {tl}</b>.\n\n"
-            f"Переходи на <b>\u26a1\ufe0f Плюс</b> — по 10 каждого типа, 149\u202f\u20bd/мес.\n"
-            f"Или <b>\U0001f48e Премиум</b> — безлимит, 349\u202f\u20bd/мес."
+            f"Использовано <b>{current} из {limit}</b> {tl} на бесплатном тарифе.\n\n"
+            f"Хочешь больше?\n"
+            f"⚡️ <b>Плюс</b> — до 10 каждого типа · 149\u202f\u20bd/мес\n"
+            f"💎 <b>Премиум</b> — безлимит + FlyStack · 349\u202f\u20bd/мес"
         )
     elif plan_key == "plus":
         reason = (
-            f"На тарифе <b>Плюс</b> доступно <b>{limit} {tl}</b>.\n\n"
-            f"Переходи на <b>\U0001f48e Премиум</b> — безлимит за 349\u202f\u20bd/мес."
+            f"Использовано <b>{current} из {limit}</b> {tl} на тарифе Плюс.\n\n"
+            f"💎 <b>Премиум</b> снимает все ограничения — безлимит · 349\u202f\u20bd/мес"
         )
     else:
         reason = f"Достигнут лимит: {limit} шт."
@@ -301,8 +310,10 @@ async def _plans_text(user_id: int, username: Optional[str] = None) -> str:
         block += f"  · Горячие предложения: <b>{_lim(cfg['hot_limit'])}</b>\n"
         block += f"  · Дайджест: <b>{_lim(cfg['digest_limit'])}</b>\n"
         block += f"  · Слежение за ценой: <b>{_lim(cfg['watch_limit'])}</b>\n"
-        prio = "⚡️ мгновенно" if cfg.get("priority") else "⏰ +30 мин"
+        prio  = "⚡️ мгновенно" if cfg.get("priority") else "⏰ +30 мин"
         block += f"  · Приоритет уведомлений: <b>{prio}</b>\n"
+        multi = "✅" if cfg.get("multi_origin") else "—"
+        block += f"  · Несколько городов вылета: <b>{multi}</b>\n"
 
         # FlyStack — только в Премиуме
         if key == "premium":

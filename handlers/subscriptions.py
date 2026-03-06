@@ -155,13 +155,16 @@ async def cb_section_hot(callback: CallbackQuery, state: FSMContext):
         )
     else:
         from handlers.hot_deals import hd_my_subs_text_kb
+        from handlers.billing import can_add_sub
         text, kb = await hd_my_subs_text_kb(user_id, hot_subs)
-        # Добавляем заголовок типа подписки
         text = "🔥 <b>Горячие предложения</b>\n\n" + text
         new_buttons = list(kb.inline_keyboard)
-        # Одна кнопка "Добавить ещё" (без дубля "Добавить подписку")
-        new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_hot")])
-        # Порядок: сначала "К подпискам", потом "В начало"
+        # Умная кнопка: лимит → тарифы, есть место → добавить
+        ok, _ = await can_add_sub(user_id, "hot", callback.from_user.username)
+        if ok:
+            new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_hot")])
+        else:
+            new_buttons.append([InlineKeyboardButton(text="💳 Увеличить лимит", callback_data="billing_menu")])
         new_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
         new_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
         new_kb = InlineKeyboardMarkup(inline_keyboard=new_buttons)
@@ -195,10 +198,15 @@ async def cb_section_digest(callback: CallbackQuery, state: FSMContext):
         )
     else:
         from handlers.hot_deals import hd_my_subs_text_kb
+        from handlers.billing import can_add_sub
         text, kb = await hd_my_subs_text_kb(user_id, digest_subs)
         text = "📰 <b>Дайджест</b>\n\n" + text
         new_buttons = list(kb.inline_keyboard)
-        new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_digest")])
+        ok, _ = await can_add_sub(user_id, "digest", callback.from_user.username)
+        if ok:
+            new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_type_digest")])
+        else:
+            new_buttons.append([InlineKeyboardButton(text="💳 Увеличить лимит", callback_data="billing_menu")])
         new_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
         new_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
         new_kb = InlineKeyboardMarkup(inline_keyboard=new_buttons)

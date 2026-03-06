@@ -27,7 +27,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from utils.redis_client import redis_client
 from utils.cities_loader import get_iata, get_city_name
-from handlers.billing import can_add_sub, show_paywall
+from handlers.billing import can_add_sub, show_paywall, get_user_plan, PLANS
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -106,27 +106,49 @@ MONTHS_LABELS = {
 async def _ask_origins(target, state: FSMContext, edit: bool = False):
     """
     Шаг «Город(а) вылета».
-    Первый показ — пустой список, просим ввести города.
-    После ввода — показываем добавленные с кнопками ❌ для редактирования.
+    Free-тариф: только 1 город. Plus/Premium: несколько.
     """
     data    = await state.get_data()
     origins = data.get("origins", [])
+    user_id = data.get("user_id_fsm")
+
+    # Определяем разрешён ли мультигород для этого пользователя
+    multi_allowed = True
+    if user_id:
+        plan_data     = await get_user_plan(user_id)
+        plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
+        multi_allowed = plan_cfg.get("multi_origin", False)
 
     if origins:
         names = ", ".join(o["name"] for o in origins)
-        text = (
-            f"🛫 <b>Города вылета</b>\n\n"
-            f"Добавлено: <b>{names}</b>\n\n"
-            f"Допиши ещё города через запятую или нажми «Готово».\n"
-            f"Чтобы убрать город — нажми ❌ рядом с ним."
-        )
+        if multi_allowed:
+            text = (
+                f"🛫 <b>Города вылета</b>\n\n"
+                f"Добавлено: <b>{names}</b>\n\n"
+                f"Допиши ещё города через запятую или нажми «Готово».\n"
+                f"Чтобы убрать город — нажми ❌ рядом с ним."
+            )
+        else:
+            text = (
+                f"🛫 <b>Город вылета</b>\n\n"
+                f"Выбран: <b>{names}</b>\n\n"
+                f"<i>На бесплатном тарифе доступен только 1 город вылета.\n"
+                f"⚡️ Плюс и 💎 Премиум открывают поиск из нескольких городов.</i>"
+            )
     else:
-        text = (
-            "Введи <b>город(а) вылета</b>.\n\n"
-            "Можно сразу несколько — через запятую или пробел:\n"
-            "<i>Москва, Казань, Екатеринбург</i>\n\n"
-            "Бот будет следить за ценами из каждого города."
-        )
+        if multi_allowed:
+            text = (
+                "Введи <b>город(а) вылета</b>.\n\n"
+                "Можно сразу несколько — через запятую или пробел:\n"
+                "<i>Москва, Казань, Екатеринбург</i>\n\n"
+                "Бот будет следить за ценами из каждого города."
+            )
+        else:
+            text = (
+                "Введи <b>город вылета</b>.\n\n"
+                "<i>На бесплатном тарифе доступен только 1 город.\n"
+                "⚡️ Плюс и 💎 Премиум открывают мультигород.</i>"
+            )
 
     buttons = []
     if origins:
@@ -160,8 +182,8 @@ def _city_word(n: int) -> str:
     return "городов"
 
 
-async def _ask_months(target, selected: list):
-    """Мультиселект месяцев вылета."""
+async def _ask_months(target, selected: list, multi_allowed: bool = True):
+    """Выбор месяца вылета. Free: только один месяц. Plus/Premium: мультиселект."""
     cur_month = date.today().month
     cur_year  = date.today().year
     buttons   = []
@@ -182,14 +204,21 @@ async def _ask_months(target, selected: list):
         buttons.append(row)
 
     buttons.append([InlineKeyboardButton(text="🗓️ Любой месяц", callback_data="hd_month_any_any")])
-    if selected:
+    if multi_allowed and selected:
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
-    text = "Выбери <b>месяц вылета</b>. Можно выбрать несколько."
-    if selected:
-        labels = [MONTHS_LABELS.get(k.split("_")[0], k) for k in selected]
-        text += f"\n\n<i>Выбрано: {', '.join(labels)}</i>"
+    if multi_allowed:
+        text = "Выбери <b>месяц вылета</b>. Можно выбрать несколько."
+        if selected:
+            labels = [MONTHS_LABELS.get(k.split("_")[0], k) for k in selected]
+            text += f"\n\n<i>Выбрано: {', '.join(labels)}</i>"
+    else:
+        text = (
+            "Выбери <b>месяц вылета</b>.\n\n"
+            "<i>На бесплатном тарифе доступен только 1 месяц.\n"
+            "⚡️ Плюс и 💎 Премиум открывают мультивыбор месяцев.</i>"
+        )
 
     send = target.answer if isinstance(target, Message) else target.message.edit_text
     await send(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
@@ -348,7 +377,7 @@ async def hd_step1_sub_type(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.in_({"hd_type_hot", "hd_type_digest"}))
 async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
     sub_type = "hot" if callback.data == "hd_type_hot" else "digest"
-    await state.update_data(sub_type=sub_type)
+    await state.update_data(sub_type=sub_type, user_id_fsm=callback.from_user.id)
     await state.set_state(HotDealsSub.choose_category)
 
     # Показываем все категории кроме "custom" — она идёт отдельной кнопкой внизу
@@ -537,9 +566,27 @@ async def hd_step3b_preset_chosen(callback: CallbackQuery, state: FSMContext):
 async def hd_origins_text(message: Message, state: FSMContext):
     """
     Пользователь вводит город(а) вылета — через запятую или пробел.
-    Примеры: «Москва», «Москва, Казань», «Москва Сочи Казань»
+    Free-тариф: принимаем только первый город, игнорируем остальные.
     """
     raw = message.text.strip()
+
+    data    = await state.get_data()
+    origins = list(data.get("origins", []))
+
+    # Проверяем разрешён ли мультигород
+    plan_data     = await get_user_plan(message.from_user.id)
+    plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
+    multi_allowed = plan_cfg.get("multi_origin", False)
+
+    # Если уже есть город и мультигород запрещён — мягко отказываем
+    if origins and not multi_allowed:
+        await message.answer(
+            "На бесплатном тарифе доступен только <b>1 город вылета</b>.\n\n"
+            "⚡️ <b>Плюс</b> и 💎 <b>Премиум</b> открывают поиск из нескольких городов.",
+            parse_mode="HTML"
+        )
+        await _ask_origins(message, state, edit=False)
+        return
 
     # Разбиваем по запятым; если запятых нет — по пробелам
     if "," in raw:
@@ -547,8 +594,9 @@ async def hd_origins_text(message: Message, state: FSMContext):
     else:
         parts = raw.split()
 
-    data    = await state.get_data()
-    origins = list(data.get("origins", []))
+    # Free: берём только первый токен
+    if not multi_allowed:
+        parts = parts[:1]
 
     added     = []
     not_found = []
@@ -565,13 +613,16 @@ async def hd_origins_text(message: Message, state: FSMContext):
             continue
         origins.append({"iata": iata, "name": name})
         added.append(name)
+        # Free: останавливаемся после первого добавленного города
+        if not multi_allowed:
+            break
 
-    await state.update_data(origins=origins)
+    # Сохраняем user_id для последующих проверок плана в _ask_origins
+    await state.update_data(origins=origins, user_id_fsm=message.from_user.id)
 
-    # Обратная связь
     feedback = []
     if added:
-        feedback.append(f"✅ Добавлены: <b>{', '.join(added)}</b>")
+        feedback.append(f"✅ Добавлен: <b>{', '.join(added)}</b>")
     if dupes:
         feedback.append(f"Уже есть: {', '.join(dupes)}")
     if not_found:
@@ -589,8 +640,11 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
     if not origins:
         await callback.answer("Добавь хотя бы один город", show_alert=True)
         return
+    plan_data     = await get_user_plan(callback.from_user.id)
+    plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
+    multi_allowed = plan_cfg.get("multi_month", False)
     await state.set_state(HotDealsSub.choose_months)
-    await _ask_months(callback, selected=[])
+    await _ask_months(callback, selected=[], multi_allowed=multi_allowed)
     await callback.answer()
 
 
@@ -668,6 +722,11 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
     month_val = parts[2]
     year_val  = parts[3]
 
+    # Проверяем разрешён ли мультивыбор
+    plan_data     = await get_user_plan(callback.from_user.id)
+    plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
+    multi_allowed = plan_cfg.get("multi_month", False)
+
     if month_val == "any":
         await state.update_data(travel_months=[], travel_month=None, travel_year=None)
         await state.set_state(HotDealsSub.choose_budget)
@@ -677,6 +736,7 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
 
     key      = f"{month_val}_{year_val}"
     selected = list(data.get("travel_months", []))
+
     if key in selected:
         selected.remove(key)
         await callback.answer("Снято")
@@ -685,7 +745,16 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
         await callback.answer("✅ Выбрано")
 
     await state.update_data(travel_months=selected)
-    await _ask_months(callback, selected=selected)
+
+    # Free: первый выбранный месяц сразу подтверждается, переходим дальше
+    if not multi_allowed and selected:
+        first = selected[0].split("_")
+        await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
+        await state.set_state(HotDealsSub.choose_budget)
+        await _ask_budget(callback)
+        return
+
+    await _ask_months(callback, selected=selected, multi_allowed=multi_allowed)
 
 
 @router.callback_query(HotDealsSub.choose_months, F.data == "hd_months_done")
@@ -909,7 +978,14 @@ async def hd_my_subs(callback: CallbackQuery, state: FSMContext = None):
     text, kb = await hd_my_subs_text_kb(user_id, subs)
     # Добавляем кнопки навигации (subscriptions.py здесь не участвует)
     new_buttons = list(kb.inline_keyboard)
-    new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_new_sub")])
+
+    # Умная кнопка: если лимит исчерпан — ведём на тарифы, иначе — добавить
+    ok, _ = await can_add_sub(user_id, "hot", callback.from_user.username)
+    if ok:
+        new_buttons.append([InlineKeyboardButton(text="➕ Добавить ещё", callback_data="hd_new_sub")])
+    else:
+        new_buttons.append([InlineKeyboardButton(text="💳 Увеличить лимит подписок", callback_data="billing_menu")])
+
     new_buttons.append([InlineKeyboardButton(text="↩️ К подпискам", callback_data="subs_menu")])
     new_buttons.append([InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")])
     new_kb = InlineKeyboardMarkup(inline_keyboard=new_buttons)
