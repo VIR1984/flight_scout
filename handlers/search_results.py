@@ -39,6 +39,7 @@ from handlers.flight_fsm import (
     FlightSearch, _format_datetime, _format_duration, build_choices_summary, _get_metro,
 )
 from handlers.flight_wizard import show_summary
+from handlers.billing import can_add_sub, show_paywall
 from handlers.start import _SEARCH_SEMAPHORE
 
 router = Router()
@@ -690,6 +691,15 @@ async def handle_set_threshold(callback: CallbackQuery):
     top    = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     origin = None if is_origin_everywhere else (top.get("origin") or data.get("origin_iata", ""))
     dest   = None if is_dest_everywhere   else (data.get("dest_iata") or top.get("destination", ""))
+
+    # ── Проверяем лимит тарифа ────────────────────────────────
+    ok, reason = await can_add_sub(
+        callback.from_user.id, "watch", callback.from_user.username
+    )
+    if not ok:
+        await show_paywall(callback, reason)
+        return
+    # ────────────────────────────────────────────────────────────
 
     await redis_client.save_price_watch(
         user_id=callback.from_user.id,

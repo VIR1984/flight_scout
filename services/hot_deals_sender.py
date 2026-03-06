@@ -21,6 +21,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
 
 from utils.redis_client import redis_client
+from handlers.billing import get_user_plan, PLANS
 from utils.api_limiter import BACKGROUND_SEMAPHORE
 from utils.link_converter import convert_to_partner_link
 from services.flight_search import search_flights, generate_booking_link
@@ -32,6 +33,10 @@ MSK = ZoneInfo("Europe/Moscow")
 DROP_THRESHOLD = 0.10      # уведомлять только при снижении >= 10% от базовой
 ROUTE_COOLDOWN = 86400     # кулдаун на маршрут: 24 часа
 SUB_COOLDOWN   = 12 * 3600 # общий таймер подписки: не чаще 12 ч
+
+# Задержка для бесплатного тарифа: платные получают уведомления сразу,
+# бесплатные — через PRIORITY_DELAY секунд
+PRIORITY_DELAY = 30 * 60  # 30 минут
 
 # ── Расписание напоминалок (когда реального уведомления нет) ─────────────────
 # Шаг 0: день 0  → день 3   — «живой знак», лучшая цена
@@ -123,9 +128,44 @@ class HotDealsSender:
         all_subs = await redis_client.get_all_hot_subs()
         hot_subs = [(uid, sid, s) for uid, sid, s in all_subs if s.get("sub_type") == "hot"]
         logger.info(f"🔍 [HotDeals] {len(hot_subs)} горячих подписок")
+
+        # ── Приоритет уведомлений: сначала платные, потом бесплатные ────────
+        # Определяем план каждого пользователя и делим на две очереди
+        priority_subs = []   # plus / premium / vip — получают сразу
+        free_subs     = []   # free — получают через PRIORITY_DELAY
+
         for user_id, sub_id, sub in hot_subs:
+            plan_data = await get_user_plan(user_id)
+            plan_key  = plan_data.get("plan", "free")
+            if plan_key in ("plus", "premium", "vip"):
+                priority_subs.append((user_id, sub_id, sub))
+            else:
+                free_subs.append((user_id, sub_id, sub))
+
+        logger.info(
+            f"🔍 [HotDeals] приоритет: {len(priority_subs)} платных, "
+            f"{len(free_subs)} бесплатных (задержка {PRIORITY_DELAY//60} мин)"
+        )
+
+        # Сначала — платные подписчики
+        for user_id, sub_id, sub in priority_subs:
             if not self.running:
-                break
+                return
+            try:
+                await self._check_hot_sub(user_id, sub_id, sub)
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"❌ [HotDeals] sub {sub_id}: {e}", exc_info=True)
+
+        # Ждём PRIORITY_DELAY если есть кому отправлять из бесплатных
+        if free_subs and priority_subs and self.running:
+            logger.info(f"⏳ [HotDeals] пауза {PRIORITY_DELAY//60} мин перед бесплатными")
+            await asyncio.sleep(PRIORITY_DELAY)
+
+        # Затем — бесплатные подписчики
+        for user_id, sub_id, sub in free_subs:
+            if not self.running:
+                return
             try:
                 await self._check_hot_sub(user_id, sub_id, sub)
                 await asyncio.sleep(1)
@@ -576,9 +616,37 @@ class HotDealsSender:
         all_subs = await redis_client.get_all_hot_subs()
         digest_subs = [(uid, sid, s) for uid, sid, s in all_subs if s.get("sub_type") == "digest"]
         logger.info(f"📰 [Digest] {len(digest_subs)} подписок (пн={is_monday_run})")
+
+        # ── Приоритет: сначала платные, потом бесплатные ────────────────
+        priority_subs = []
+        free_subs     = []
         for user_id, sub_id, sub in digest_subs:
             if sub.get("frequency", "daily") == "weekly" and not is_monday_run:
                 continue
+            plan_data = await get_user_plan(user_id)
+            plan_key  = plan_data.get("plan", "free")
+            if plan_key in ("plus", "premium", "vip"):
+                priority_subs.append((user_id, sub_id, sub))
+            else:
+                free_subs.append((user_id, sub_id, sub))
+
+        logger.info(
+            f"📰 [Digest] приоритет: {len(priority_subs)} платных, "
+            f"{len(free_subs)} бесплатных"
+        )
+
+        for user_id, sub_id, sub in priority_subs:
+            try:
+                await self._send_digest(user_id, sub_id, sub)
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"❌ [Digest] sub {sub_id}: {e}")
+
+        if free_subs and priority_subs:
+            logger.info(f"⏳ [Digest] пауза {PRIORITY_DELAY//60} мин перед бесплатными")
+            await asyncio.sleep(PRIORITY_DELAY)
+
+        for user_id, sub_id, sub in free_subs:
             try:
                 await self._send_digest(user_id, sub_id, sub)
                 await asyncio.sleep(1)
