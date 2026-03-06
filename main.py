@@ -23,6 +23,7 @@ from handlers.everywhere_search import router as everywhere_router
 from handlers.hot_deals import router as hot_deals_router
 from handlers.subscriptions import router as subscriptions_router
 from handlers.multi_search import router as multi_search_router
+from handlers.billing import router as billing_router
 
 # Импорт утилит и сервисов
 from utils.logger import logger
@@ -102,6 +103,9 @@ async def main():
     # потому что start_router раньше перехватывал hot_deals_menu
     dp.include_router(nav_router)       # ← ПЕРВЫМ: nav-кнопки всегда сбрасывают FSM
     logger.info("✅ Роутер: nav_router")
+
+    dp.include_router(billing_router)
+    logger.info("✅ Роутер: billing_router")
 
     dp.include_router(subscriptions_router)
     logger.info("✅ Роутер: subscriptions_router")

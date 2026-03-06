@@ -70,19 +70,28 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     Строит главный экран «📋 Подписки».
     Показывает счётчики по каждому типу и три кнопки входа.
     """
-    hot_subs     = await redis_client.get_hot_subs(user_id)
+    from handlers.billing import get_user_plan, PLANS
+
+    hot_subs      = await redis_client.get_hot_subs(user_id)
     price_watches = await redis_client.get_user_watches(user_id)
 
-    hot_count     = len(hot_subs)
-    digest_count  = sum(1 for s in hot_subs.values() if s.get("sub_type") == "digest")
-    hot_only      = hot_count - digest_count
-    watch_count   = len(price_watches)
+    hot_count    = len(hot_subs)
+    digest_count = sum(1 for s in hot_subs.values() if s.get("sub_type") == "digest")
+    hot_only     = hot_count - digest_count
+    watch_count  = len(price_watches)
 
-    # Формируем информативный заголовок с итогами
-    total = hot_count + watch_count
+    # Тариф пользователя для строки-подсказки
+    plan_data = await get_user_plan(user_id)
+    plan_key  = plan_data.get("plan", "free")
+    cfg       = PLANS[plan_key]
+    hot_lim   = "∞" if cfg["hot_limit"]    == 0 else str(cfg["hot_limit"])
+    dig_lim   = "∞" if cfg["digest_limit"] == 0 else str(cfg["digest_limit"])
+    plan_line = f"\n<i>Тариф {cfg['label']}: горячие {hot_only}/{hot_lim} · дайджест {digest_count}/{dig_lim}</i>"
+
+    total   = hot_count + watch_count
     summary = f"Всего активных: {total}" if total else "Активных подписок нет"
     text = (
-        f"<b>Подписки</b>\n<i>{summary}</i>\n\n"
+        f"<b>Подписки</b>\n<i>{summary}</i>{plan_line}\n\n"
         "<b>Горячие предложения</b> — уведомлю, когда появится рейс дешевле бюджета.\n\n"
         "<b>Дайджест</b> — ежедневная или еженедельная подборка лучших цен.\n\n"
         "<b>Слежение за ценой</b> — слежу за конкретным рейсом и сообщу при изменении цены."
@@ -102,6 +111,7 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
             text=f"📉 Слежение за ценой{_cnt(watch_count)}",
             callback_data="subs_section_watches"
         )],
+        [InlineKeyboardButton(text=f"💳 Тарифы  [{cfg['badge'] or cfg['label']}]", callback_data="billing_menu")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     return text, kb

@@ -27,6 +27,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from utils.redis_client import redis_client
 from utils.cities_loader import get_iata, get_city_name
+from handlers.billing import can_add_sub, show_paywall
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -765,6 +766,15 @@ async def hd_save(callback: CallbackQuery, state: FSMContext):
     origins = data.get("origins", [])
     # Обратная совместимость: первый город как origin_iata/origin_name
     first_origin = origins[0] if origins else {}
+
+    # ── Проверка лимита тарифа ────────────────────────────────────────────────
+    sub_type_val = data.get("sub_type", "hot")
+    ok, reason   = await can_add_sub(user_id, sub_type_val)
+    if not ok:
+        await state.clear()
+        await show_paywall(callback, reason)
+        return
+    # ─────────────────────────────────────────────────────────────────────────
 
     sub = {
         "user_id":         user_id,
