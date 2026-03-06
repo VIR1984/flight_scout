@@ -112,7 +112,7 @@ async def build_subs_menu_kb(user_id: int, username: Optional[str] = None) -> tu
             text=f"📉 Слежение за ценой{_cnt(watch_count)}",
             callback_data="subs_section_watches"
         )],
-        [InlineKeyboardButton(text=f"💳 Тарифы  [{cfg['badge'] or cfg['label']}]", callback_data="billing_menu")],
+        [InlineKeyboardButton(text=f"💳 Тарифы  [{cfg.get('emoji', '') or cfg['label']}]", callback_data="billing_menu")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     return text, kb
