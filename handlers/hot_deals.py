@@ -769,7 +769,7 @@ async def hd_save(callback: CallbackQuery, state: FSMContext):
 
     # ── Проверка лимита тарифа ────────────────────────────────────────────────
     sub_type_val = data.get("sub_type", "hot")
-    ok, reason   = await can_add_sub(user_id, sub_type_val)
+    ok, reason   = await can_add_sub(user_id, sub_type_val, callback.from_user.username)
     if not ok:
         await state.clear()
         await show_paywall(callback, reason)
