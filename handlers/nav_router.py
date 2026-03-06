@@ -107,3 +107,27 @@ async def nav_feedback(message: Message, state: FSMContext):
     await _reset_state(message, state)
     from handlers.start import nav_feedback as _handler
     await _handler(message, state)
+
+@router.message(Command("search"))
+async def nav_cmd_search(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import nav_search as _handler
+    await _handler(message, state)
+
+@router.message(Command("hot"))
+async def nav_cmd_hot(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import nav_hot as _handler
+    await _handler(message, state)
+
+@router.message(Command("subs"))
+async def nav_cmd_subs(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import nav_subs as _handler
+    await _handler(message, state)
+
+@router.message(Command("feedback"))
+async def nav_cmd_feedback(message: Message, state: FSMContext):
+    await _reset_state(message, state)
+    from handlers.start import nav_feedback as _handler
+    await _handler(message, state)

@@ -24,6 +24,8 @@ from handlers.hot_deals import router as hot_deals_router
 from handlers.subscriptions import router as subscriptions_router
 from handlers.multi_search import router as multi_search_router
 from handlers.billing import router as billing_router
+from handlers.help import router as help_router
+from handlers.get_file_id import router as get_file_id_router
 
 # Импорт утилит и сервисов
 from utils.logger import logger
@@ -101,7 +103,13 @@ async def main():
     # ─── 5. Регистрация роутеров ───
     # ВАЖНО: hot_deals_router должен быть ДО start_router,
     # потому что start_router раньше перехватывал hot_deals_menu
-    dp.include_router(nav_router)       # ← ПЕРВЫМ: nav-кнопки всегда сбрасывают FSM
+    dp.include_router(help_router)
+    logger.info("✅ Роутер: help_router")
+
+    dp.include_router(get_file_id_router)
+    logger.info("✅ Роутер: get_file_id_router")
+
+    dp.include_router(nav_router)       # ← ПЕРВЫМ: nav-кнопки сбрасывают FSM
     logger.info("✅ Роутер: nav_router")
 
     dp.include_router(billing_router)
@@ -153,6 +161,36 @@ async def main():
     logger.info("🚀 Бот запущен! Ожидаю сообщения...")
 
     # ─── 7. Polling ───
+    # ─── Меню команд (видимое пользователям) ─────────────────────────────────
+    # Секретные /stats /sendstats /feedback_log /myid — здесь НЕ указываются
+    from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+    _public_commands = [
+        BotCommand(command="start",    description="🏠 Главное меню"),
+        BotCommand(command="help",     description="❓ Справка и документы"),
+        BotCommand(command="search",   description="✈️ Поиск авиабилетов"),
+        BotCommand(command="hot",      description="🔥 Горячие предложения"),
+        BotCommand(command="subs",     description="📋 Мои подписки"),
+        BotCommand(command="feedback", description="💬 Обратная связь"),
+    ]
+    await bot.set_my_commands(_public_commands, scope=BotCommandScopeDefault())
+    logger.info("✅ Публичное меню команд установлено")
+    _admin_id_str = os.getenv("ADMIN_USER_ID", "").strip()
+    if _admin_id_str:
+        try:
+            _admin_commands = _public_commands + [
+                BotCommand(command="stats",        description="📊 Статистика"),
+                BotCommand(command="sendstats",    description="📤 Отправить статистику"),
+                BotCommand(command="feedback_log", description="📝 Лог обратной связи"),
+                BotCommand(command="myid",         description="🔑 Мой Telegram ID"),
+            ]
+            await bot.set_my_commands(
+                _admin_commands,
+                scope=BotCommandScopeChat(chat_id=int(_admin_id_str)),
+            )
+            logger.info(f"✅ Admin-меню установлено для {_admin_id_str}")
+        except Exception as _cmd_err:
+            logger.warning(f"⚠️ Admin-меню: {_cmd_err}")
+
     try:
         # Уведомляем канал о старте бота
         from utils.channel_logger import log_event

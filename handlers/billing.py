@@ -60,7 +60,7 @@ PLANS: dict[str, dict] = {
     },
     "plus": {
         "label":            "⚡️ Плюс",
-        "price_rub":        50,
+        "price_rub":        149,
         "hot_limit":        10,
         "digest_limit":     10,
         "flystack_tokens":  0,
@@ -69,7 +69,7 @@ PLANS: dict[str, dict] = {
     },
     "premium": {
         "label":            "💎 Премиум",
-        "price_rub":        150,
+        "price_rub":        349,
         "hot_limit":        0,   # безлимит
         "digest_limit":     0,
         "flystack_tokens":  20,
