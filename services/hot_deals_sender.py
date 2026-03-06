@@ -210,10 +210,20 @@ class HotDealsSender:
             scan_dests = [d for d in dest_pool if d != origin]
             for dest in scan_dests:
                 try:
+                    # Пропускаем маршруты без данных Aviasales (кеш 48ч)
+                    if await redis_client.is_route_empty(origin, dest):
+                        logger.debug(f"[HotDeals] {origin}→{dest}: пропуск (нет данных, кеш 48ч)")
+                        continue
+
                     async with BACKGROUND_SEMAPHORE:
                         flights = await search_flights(origin, dest, depart_str, None)
                     if not flights:
+                        await redis_client.set_route_empty(origin, dest)
+                        logger.debug(f"[HotDeals] {origin}→{dest}: нет данных → кеш 48ч")
                         continue
+                    # Данные появились — сбрасываем метку если была
+                    await redis_client.clear_route_empty(origin, dest)
+
                     cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
                     price = cheapest.get("value") or cheapest.get("price") or 0
                     if not price:
@@ -320,10 +330,17 @@ class HotDealsSender:
         for origin in origin_iatas:
             for dest in [d for d in dest_pool if d != origin]:
                 try:
+                    if await redis_client.is_route_empty(origin, dest):
+                        logger.debug(f"[Nudge] {origin}→{dest}: пропуск (кеш 48ч)")
+                        continue
+
                     async with BACKGROUND_SEMAPHORE:
                         flights = await search_flights(origin, dest, depart_str, None)
                     if not flights:
+                        await redis_client.set_route_empty(origin, dest)
                         continue
+                    await redis_client.clear_route_empty(origin, dest)
+
                     cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
                     price = cheapest.get("value") or cheapest.get("price") or 0
                     if not price:
@@ -690,10 +707,17 @@ class HotDealsSender:
             scan_dests = [d for d in dest_pool if d != origin]
             for dest in scan_dests:
                 try:
+                    if await redis_client.is_route_empty(origin, dest):
+                        logger.debug(f"[Digest] {origin}→{dest}: пропуск (кеш 48ч)")
+                        continue
+
                     async with BACKGROUND_SEMAPHORE:
                         flights = await search_flights(origin, dest, depart_date, None)
                     if not flights:
+                        await redis_client.set_route_empty(origin, dest)
                         continue
+                    await redis_client.clear_route_empty(origin, dest)
+
                     cheapest = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
                     price = cheapest.get("value") or cheapest.get("price") or 0
                     if not price:

@@ -333,6 +333,47 @@ class RedisClient:
             return
         await self.client.set(f"{self.prefix}route_cd:{sub_id}:{dest}", "1", ex=cooldown)
 
+    # ── Кеш пустых маршрутов ────────────────────────────────────────────────
+    # Aviasales grouped_prices кешируется ~48ч на их стороне.
+    # Если маршрут вернул пустой ответ — не опрашиваем снова раньше TTL.
+    # Ключ: route_empty:{origin}:{dest} — глобальный (не per-sub),
+    # т.к. пустой ответ одинаков для всех подписок с тем же маршрутом.
+
+    EMPTY_ROUTE_TTL = 48 * 3600  # 48 часов — срок кеша Aviasales
+
+    async def is_route_empty(self, origin: str, dest: str) -> bool:
+        """True если маршрут недавно возвращал пустой ответ API (ждём TTL)."""
+        if not self.client:
+            return False
+        try:
+            return await self.client.exists(
+                f"{self.prefix}route_empty:{origin}:{dest}"
+            ) > 0
+        except Exception:
+            return False
+
+    async def set_route_empty(self, origin: str, dest: str) -> None:
+        """Помечает маршрут как пустой на EMPTY_ROUTE_TTL секунд."""
+        if not self.client:
+            return
+        try:
+            await self.client.set(
+                f"{self.prefix}route_empty:{origin}:{dest}",
+                "1",
+                ex=self.EMPTY_ROUTE_TTL,
+            )
+        except Exception:
+            pass
+
+    async def clear_route_empty(self, origin: str, dest: str) -> None:
+        """Сбрасывает метку — вызывать когда по маршруту вдруг появились данные."""
+        if not self.client:
+            return
+        try:
+            await self.client.delete(f"{self.prefix}route_empty:{origin}:{dest}")
+        except Exception:
+            pass
+
 
     # ════════════════════════════════════════════════════════════════
     # Analytics

@@ -305,7 +305,7 @@ async def process_everywhere_search(
     # ── Кнопки ────────────────────────────────────────────────────────────────
     kb_buttons = []
     kb_buttons.append([InlineKeyboardButton(
-        text=f"🔍 Посмотреть детали  {price_int:,} ₽".replace(",", "\u202f"),
+        text=f"🔍 Посмотреть детали за  {price_int:,} ₽".replace(",", "\u202f"),
         url=booking_link,
     )])
 

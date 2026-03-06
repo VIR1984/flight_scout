@@ -418,7 +418,7 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     kb_buttons = []
     if booking_link:
-        kb_buttons.append([InlineKeyboardButton(text=f"🔍 Посмотреть детали  {price_per_pax:,} ₽".replace(",", "\u202f"), url=booking_link)])
+        kb_buttons.append([InlineKeyboardButton(text=f"🔍 Посмотреть детали за  {price_per_pax:,} ₽".replace(",", "\u202f"), url=booking_link)])
     kb_buttons.append([InlineKeyboardButton(text="Все варианты на эти даты", url=fallback_link)])
 
     # Кнопка Trip.com — альтернативная площадка

@@ -143,13 +143,19 @@ class PriceWatcher:
                         origin_iata=origin, depart_date=depart_date
                     )
                 else:
-                    # Конкретный маршрут
+                    # Конкретный маршрут — пропускаем если недавно был пустым
+                    if await redis_client.is_route_empty(origin, dest):
+                        logger.debug(f"[PriceWatch] {origin}→{dest}: пропуск (нет данных, кеш 48ч)")
+                        self._cycle_cache[route_key] = (None, time.time())
+                        return
                     flights = await search_flights(
                         origin=origin, destination=dest,
                         depart_date=depart_date, return_date=return_date,
                     )
 
                 if not flights:
+                    if origin and dest:  # только конкретный маршрут, не везде
+                        await redis_client.set_route_empty(origin, dest)
                     self._cycle_cache[route_key] = (None, time.time())
                     return
                 mf = min(flights, key=lambda f: f.get("value") or f.get("price") or 999999)
