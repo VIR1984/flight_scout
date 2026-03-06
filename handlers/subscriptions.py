@@ -14,6 +14,7 @@
 """
 
 import logging
+from typing import Optional
 from aiogram import Router, F
 from aiogram.types import (
     CallbackQuery, Message,
@@ -65,7 +66,7 @@ def _watch_key_from_data(w: dict) -> str:
 # Главный экран Подписок
 # ════════════════════════════════════════════════════════════════
 
-async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+async def build_subs_menu_kb(user_id: int, username: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
     """
     Строит главный экран «📋 Подписки».
     Показывает счётчики по каждому типу и три кнопки входа.
@@ -81,7 +82,7 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     watch_count  = len(price_watches)
 
     # Тариф пользователя для строки-подсказки
-    plan_data = await get_user_plan(user_id)
+    plan_data = await get_user_plan(user_id, username)
     plan_key  = plan_data.get("plan", "free")
     cfg       = PLANS[plan_key]
     hot_lim   = "∞" if cfg["hot_limit"]    == 0 else str(cfg["hot_limit"])
@@ -121,7 +122,7 @@ async def build_subs_menu_kb(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
 async def cb_subs_menu(callback: CallbackQuery, state: FSMContext):
     """Открыть главный экран подписок (из inline-кнопки)."""
     cancel_inactivity(callback.message.chat.id)
-    text, kb = await build_subs_menu_kb(callback.from_user.id)
+    text, kb = await build_subs_menu_kb(callback.from_user.id, callback.from_user.username)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:

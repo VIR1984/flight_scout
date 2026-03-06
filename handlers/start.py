@@ -161,7 +161,7 @@ async def nav_subs(message: Message, state: FSMContext):
     cancel_inactivity(message.chat.id)
     mark_fsm_inactive(message.chat.id)
     from handlers.subscriptions import build_subs_menu_kb
-    text, kb = await build_subs_menu_kb(message.from_user.id)
+    text, kb = await build_subs_menu_kb(message.from_user.id, message.from_user.username)
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 

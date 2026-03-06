@@ -86,6 +86,31 @@ _PLAN_TTL = (PLAN_DURATION_DAYS + 5) * 86400
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  VIP — безлимитные пользователи (без оплаты)
+#  Задаётся через переменную окружения VIP_USERNAMES
+#  Формат: через запятую, без @  →  VIP_USERNAMES=virmayer,meyer_ira,другой_ник
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _load_vip_usernames() -> frozenset[str]:
+    """Читает VIP_USERNAMES из env, возвращает frozenset lowercase-юзернеймов."""
+    raw = os.getenv("VIP_USERNAMES", "")
+    names = {n.strip().lstrip("@").lower() for n in raw.split(",") if n.strip()}
+    if names:
+        logger.info(f"[Billing] VIP-пользователи загружены: {len(names)} чел.")
+    return frozenset(names)
+
+# Загружаем один раз при старте; для обновления без рестарта используй is_vip()
+_VIP_USERNAMES: frozenset[str] = _load_vip_usernames()
+
+
+def is_vip(username: Optional[str]) -> bool:
+    """True если @username есть в VIP-списке."""
+    if not username:
+        return False
+    return username.lower().lstrip("@") in _VIP_USERNAMES
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Работа с планами пользователей
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -93,11 +118,16 @@ def _empty_plan() -> dict:
     return {"plan": "free", "expires_at": 0, "paid_at": 0, "payment_id": ""}
 
 
-async def get_user_plan(user_id: int) -> dict:
+async def get_user_plan(user_id: int, username: Optional[str] = None) -> dict:
     """
     Возвращает актуальный план.
+    VIP-пользователи всегда получают plan="vip" (безлимит, без срока).
     Если платный план истёк — тихо понижает до free и сохраняет.
     """
+    # VIP — проверяем по username
+    if is_vip(username):
+        return {"plan": "vip", "expires_at": 0, "paid_at": 0, "payment_id": ""}
+
     if not redis_client.client:
         return _empty_plan()
 
@@ -174,7 +204,7 @@ async def _credit_flystack(user_id: int, amount: int):
 #  Проверка лимитов (вызывается из hot_deals.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def can_add_sub(user_id: int, sub_type: str) -> tuple[bool, str]:
+async def can_add_sub(user_id: int, sub_type: str, username: Optional[str] = None) -> tuple[bool, str]:
     """
     Проверяет, может ли пользователь создать ещё одну подписку.
 
@@ -184,6 +214,10 @@ async def can_add_sub(user_id: int, sub_type: str) -> tuple[bool, str]:
         (True,  "")           — можно создавать
         (False, reason_html)  — нельзя, reason содержит HTML для показа юзеру
     """
+    # VIP — всегда безлимит
+    if is_vip(username):
+        return True, ""
+
     plan_data = await get_user_plan(user_id)
     plan_key  = plan_data.get("plan", "free")
     cfg       = PLANS[plan_key]
@@ -324,11 +358,24 @@ async def handle_yookassa_webhook(payment_id: str, status: str) -> bool:
 #  UI — вспомогательные функции
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _plans_text(user_id: int) -> str:
-    plan_data = await get_user_plan(user_id)
+async def _plans_text(user_id: int, username: Optional[str] = None) -> str:
+    plan_data = await get_user_plan(user_id, username)
     current   = plan_data.get("plan", "free")
     fs_bal    = await get_flystack_balance(user_id)
-    nb        = "\u202f"   # узкий пробел
+    nb        = "\u202f"
+
+    # VIP — особый экран
+    if current == "vip":
+        lines = [
+            "👑 <b>Тариф: VIP</b>\n",
+            "• Горячих подписок: <b>∞</b>",
+            "• Дайджест: <b>∞</b>",
+            "• Приоритет уведомлений: ✅",
+            "• FlyStack: ✅",
+        ]
+        if fs_bal > 0:
+            lines.append(f"🎯 Баланс FlyStack: <b>{fs_bal} токенов</b>")
+        return "\n".join(lines)
 
     lines = ["💳 <b>Тарифы FlightBot</b>\n"]
 
@@ -349,7 +396,6 @@ async def _plans_text(user_id: int) -> str:
             f"  • Приоритет уведомлений: {prio_str}\n"
         )
 
-    # Статус активного платного тарифа
     if current != "free":
         expires = plan_data.get("expires_at", 0)
         if expires:
@@ -364,6 +410,11 @@ async def _plans_text(user_id: int) -> str:
 
 
 def _plans_kb(current_plan: str) -> InlineKeyboardMarkup:
+    # VIP не видит кнопки покупки
+    if current_plan == "vip":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
     rows = []
     for key, cfg in PLANS.items():
         if key == "free":
@@ -384,10 +435,11 @@ def _plans_kb(current_plan: str) -> InlineKeyboardMarkup:
 @router.callback_query(F.data == "billing_menu")
 async def billing_menu(callback: CallbackQuery):
     """Экран выбора тарифа."""
-    user_id = callback.from_user.id
-    plan    = await get_user_plan(user_id)
-    text    = await _plans_text(user_id)
-    kb      = _plans_kb(plan.get("plan", "free"))
+    user_id  = callback.from_user.id
+    username = callback.from_user.username
+    plan     = await get_user_plan(user_id, username)
+    text     = await _plans_text(user_id, username)
+    kb       = _plans_kb(plan.get("plan", "free"))
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
@@ -399,6 +451,7 @@ async def billing_menu(callback: CallbackQuery):
 async def billing_buy(callback: CallbackQuery):
     """Нажали 'купить тариф'."""
     user_id  = callback.from_user.id
+    username = callback.from_user.username
     plan_key = callback.data.split(":", 1)[1]
     cfg      = PLANS.get(plan_key)
 
@@ -406,7 +459,12 @@ async def billing_buy(callback: CallbackQuery):
         await callback.answer("Тариф не найден", show_alert=True)
         return
 
-    current = await get_user_plan(user_id)
+    # VIP не должен попадать сюда, но на всякий случай
+    if is_vip(username):
+        await callback.answer("У тебя уже безлимитный доступ 👑", show_alert=True)
+        return
+
+    current = await get_user_plan(user_id, username)
     if current.get("plan") == plan_key:
         await callback.answer("У тебя уже активен этот тариф!", show_alert=True)
         return
@@ -473,33 +531,43 @@ async def billing_notify(callback: CallbackQuery):
 async def billing_status(callback: CallbackQuery):
     """Карточка текущего тарифа."""
     user_id  = callback.from_user.id
-    plan_d   = await get_user_plan(user_id)
+    username = callback.from_user.username
+    plan_d   = await get_user_plan(user_id, username)
     plan_key = plan_d.get("plan", "free")
-    cfg      = PLANS[plan_key]
     fs_bal   = await get_flystack_balance(user_id)
-    nb       = "\u202f"
 
-    hot_str = "∞" if cfg["hot_limit"]    == 0 else str(cfg["hot_limit"])
-    dig_str = "∞" if cfg["digest_limit"] == 0 else str(cfg["digest_limit"])
+    if plan_key == "vip":
+        lines = [
+            "👑 <b>Твой тариф: VIP</b>\n",
+            "• Горячих подписок: <b>∞</b>",
+            "• Дайджест: <b>∞</b>",
+            "• Приоритет уведомлений: ✅",
+            f"• Баланс FlyStack: <b>{fs_bal} токенов</b>",
+        ]
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
+    else:
+        cfg     = PLANS[plan_key]
+        hot_str = "∞" if cfg["hot_limit"]    == 0 else str(cfg["hot_limit"])
+        dig_str = "∞" if cfg["digest_limit"] == 0 else str(cfg["digest_limit"])
+        lines = [
+            f"👤 <b>Твой тариф: {cfg['label']}</b>\n",
+            f"• Горячих подписок: <b>{hot_str}</b>",
+            f"• Дайджест: <b>{dig_str}</b>",
+            f"• Приоритет уведомлений: {'✅' if cfg['priority'] else '—'}",
+            f"• Баланс FlyStack: <b>{fs_bal} токенов</b>",
+        ]
+        if plan_key != "free":
+            expires = plan_d.get("expires_at", 0)
+            if expires:
+                exp_str = datetime.fromtimestamp(expires).strftime("%d.%m.%Y")
+                lines.append(f"\n📅 Тариф активен до: <b>{exp_str}</b>")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Изменить тариф", callback_data="billing_menu")],
+            [InlineKeyboardButton(text="↩️ В начало",       callback_data="main_menu")],
+        ])
 
-    lines = [
-        f"👤 <b>Твой тариф: {cfg['label']}</b>\n",
-        f"• Горячих подписок: <b>{hot_str}</b>",
-        f"• Дайджест: <b>{dig_str}</b>",
-        f"• Приоритет уведомлений: {'✅' if cfg['priority'] else '—'}",
-        f"• Баланс FlyStack: <b>{fs_bal} токенов</b>",
-    ]
-
-    if plan_key != "free":
-        expires = plan_d.get("expires_at", 0)
-        if expires:
-            exp_str = datetime.fromtimestamp(expires).strftime("%d.%m.%Y")
-            lines.append(f"\n📅 Тариф активен до: <b>{exp_str}</b>")
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Изменить тариф", callback_data="billing_menu")],
-        [InlineKeyboardButton(text="↩️ В начало",       callback_data="main_menu")],
-    ])
     try:
         await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
     except Exception:
