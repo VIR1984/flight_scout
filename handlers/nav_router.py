@@ -98,8 +98,8 @@ async def nav_subs(message: Message, state: FSMContext):
 @router.message(F.text == "❓ Помощь")
 async def nav_help(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    from handlers.start import nav_help as _handler
-    await _handler(message, state)
+    from handlers.help import show_help
+    await show_help(message)
 
 
 @router.message(F.text == "💬 Обратная связь")
