@@ -387,7 +387,7 @@ async def _plans_text(user_id: int, username: Optional[str] = None) -> str:
             lines.append(f"🎯 Баланс FlyStack: <b>{fs_bal} токенов</b>")
         return "\n".join(lines)
 
-    lines = ["💳 <b>Тарифы FlightBot</b>\n"]
+    lines = ["💳 <b>Тарифы WOW Bilet</b>\n"]
 
     for key, cfg in PLANS.items():
         is_active = key == current
@@ -415,7 +415,7 @@ async def _plans_text(user_id: int, username: Optional[str] = None) -> str:
     if fs_bal > 0:
         lines.append(f"🎯 Баланс FlyStack: <b>{fs_bal} токенов</b>")
 
-    lines.append("\n<i>Оплата через ЮКассу — безопасно и быстро.</i>")
+        lines.append("\n<i>Оплата через ЮКассу — безопасно и быстро.</i>")
     return "\n".join(lines)
 
 
