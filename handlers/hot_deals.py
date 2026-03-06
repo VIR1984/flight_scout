@@ -132,8 +132,7 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
             text = (
                 f"🛫 <b>Город вылета</b>\n\n"
                 f"Выбран: <b>{names}</b>\n\n"
-                f"<i>На бесплатном тарифе доступен только 1 город вылета.\n"
-                f"⚡️ Плюс и 💎 Премиум открывают поиск из нескольких городов.</i>"
+                
             )
     else:
         if multi_allowed:

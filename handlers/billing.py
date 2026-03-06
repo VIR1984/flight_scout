@@ -313,7 +313,7 @@ async def _plans_text(user_id: int, username: Optional[str] = None) -> str:
         prio  = "⚡️ мгновенно" if cfg.get("priority") else "⏰ +30 мин"
         block += f"  · Приоритет уведомлений: <b>{prio}</b>\n"
         multi = "✅" if cfg.get("multi_origin") else "—"
-        block += f"  · Несколько городов вылета: <b>{multi}</b>\n"
+        block += f"  · Мульти-поиск городов и дат <b>{multi}</b>\n"
 
         # FlyStack — только в Премиуме
         if key == "premium":

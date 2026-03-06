@@ -51,7 +51,7 @@ async def fsm_nav_button(message: Message, state: FSMContext):
     if message.text == "🔥 Горячие":
         from handlers.start import nav_hot
         await nav_hot(message, state)
-    elif message.text == "🗺 Маршрут":
+    elif message.text == "🗺 Сложный маршрут":
         from handlers.start import nav_multi_search
         await nav_multi_search(message, state)
     elif message.text == "💬 Обратная связь":
