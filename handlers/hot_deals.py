@@ -745,12 +745,24 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(travel_months=selected)
 
-    # Free: первый выбранный месяц сразу подтверждается, переходим дальше
+    # Free: показываем галочку на выбранном месяце, затем следующий шаг новым сообщением
     if not multi_allowed and selected:
-        first = selected[0].split("_")
+        first  = selected[0].split("_")
+        m_key  = first[0]
+        m_year = first[1]
+        m_label = MONTHS_LABELS.get(m_key, m_key)
+        # 1. Обновляем клавиатуру — выбранный месяц получает ✅
+        await _ask_months(callback, selected=selected, multi_allowed=False)
+        # 2. Фиксируем выбор в чате отдельным сообщением (как у платных)
+        await callback.message.answer(
+            f"📅 Месяц вылета: <b>{m_label} {m_year}</b>",
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        # 3. Переходим к следующему шагу
         await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
         await state.set_state(HotDealsSub.choose_budget)
-        await _ask_budget(callback)
+        await _ask_budget(callback.message)
         return
 
     await _ask_months(callback, selected=selected, multi_allowed=multi_allowed)

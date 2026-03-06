@@ -13,7 +13,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 class RedisClient:
     def __init__(self):
         self.client: Optional[redis.Redis] = None
-        self.prefix = "flight_bot:"
+        env = os.getenv("BOT_ENV", "prod")  # "dev" или "prod"
+        self.prefix = f"flight_bot:{env}:"
 
     async def connect(self):
         """Подключение к Redis"""
