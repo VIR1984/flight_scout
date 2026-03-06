@@ -5,6 +5,14 @@
 """
 import os
 import aiohttp
+
+_tr_connector: aiohttp.TCPConnector | None = None  # noqa
+
+def _make_transfersearch_session() -> aiohttp.ClientSession:
+    global _tr_connector
+    if _tr_connector is None or _tr_connector.closed:
+        _tr_connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300, enable_cleanup_closed=True)
+    return aiohttp.ClientSession(connector=_tr_connector, connector_owner=False)
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -39,7 +47,7 @@ async def search_transfers(
     }
     
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _make_transfersearchsession() as session:
             async with session.get(url, params=params, timeout=10) as response:
                 data = await response.json()
                 

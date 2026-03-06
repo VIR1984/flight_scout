@@ -490,8 +490,10 @@ async def handle_flight_request(message: Message) -> None:
     if not fallback_link.startswith(("http://", "https://")):
         fallback_link = f"https://www.aviasales.ru{fallback_link}"
 
-    booking_link  = await convert_to_partner_link(booking_link)
-    fallback_link = await convert_to_partner_link(fallback_link)
+    booking_link, fallback_link = await asyncio.gather(
+        convert_to_partner_link(booking_link),
+        convert_to_partner_link(fallback_link),
+    )
 
     kb_buttons = []
     if booking_link:

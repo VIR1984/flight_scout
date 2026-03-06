@@ -1,6 +1,14 @@
 # services/flystack_client.py
 import os
 import aiohttp
+
+_fs_connector: aiohttp.TCPConnector | None = None  # noqa
+
+def _make_flystackclient_session() -> aiohttp.ClientSession:
+    global _fs_connector
+    if _fs_connector is None or _fs_connector.closed:
+        _fs_connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300, enable_cleanup_closed=True)
+    return aiohttp.ClientSession(connector=_fs_connector, connector_owner=False)
 from typing import Optional, Dict, Any, List
 from utils.logger import logger
 
@@ -32,7 +40,7 @@ class FlyStackClient:
         self.logger.debug(f"🔑 [FlyStack] Используем API ключ: {self.api_key[:4]}...{self.api_key[-4:]}")
         
         try:
-            async with aiohttp.ClientSession() as session:
+            async with _make_flystackclientsession() as session:
                 self.logger.info(f"📡 [FlyStack] Отправляем запрос к {url}")
                 async with session.get(url, params=params, timeout=10) as resp:
                     self.logger.info(f"📥 [FlyStack] Получен ответ: {resp.status}")

@@ -212,25 +212,36 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     progress_task = asyncio.create_task(_update_progress())
 
+    # Собираем все пары маршрутов
+    _search_pairs = [(o, d) for o in origins for d in destinations if o != d]
+
+    async def _fetch_pair(orig: str, dest: str):
+        """Один запрос пары маршрут — вызывается параллельно через gather."""
+        result = await search_flights_realtime(
+            origin=orig, destination=dest,
+            depart_date=normalize_date(data["depart_date"]),
+            return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
+            adults=rt_adults, children=rt_children, infants=rt_infants,
+        )
+        for f in result:
+            f["origin"] = orig
+            f["destination"] = dest
+        return result
+
     try:
-        for orig in origins:
-            for dest in destinations:
-                if orig == dest:
-                    continue
-                flights = await search_flights_realtime(
-                    origin=orig, destination=dest,
-                    depart_date=normalize_date(data["depart_date"]),
-                    return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
-                    adults=rt_adults, children=rt_children, infants=rt_infants,
-                )
-                if direct_only:
-                    flights = [f for f in flights if f.get("transfers", 999) == 0]
-                elif transfers_only:
-                    flights = [f for f in flights if f.get("transfers", 0) > 0]
-                for f in flights:
-                    f["origin"] = orig
-                    f["destination"] = dest
-                all_flights.extend(flights)
+        # Все пары маршрутов запускаются ПАРАЛЛЕЛЬНО
+        # Москва (SVO+DME+VKO+ZIA) → Бангкок = 4 запроса одновременно вместо последовательно
+        results = await asyncio.gather(*[_fetch_pair(o, d) for o, d in _search_pairs], return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning(f"[Search] Ошибка в паре: {r}")
+                continue
+            flights = r
+            if direct_only:
+                flights = [f for f in flights if f.get("transfers", 999) == 0]
+            elif transfers_only:
+                flights = [f for f in flights if f.get("transfers", 0) > 0]
+            all_flights.extend(flights)
     finally:
         progress_task.cancel()
         try:
@@ -242,17 +253,16 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
 
     # ── Нет прямых → предлагаем с пересадками ──────────────────
     if direct_only and not all_flights:
-        all_any = []
-        for orig in origins:
-            for dest in destinations:
-                if orig == dest:
-                    continue
-                all_any.extend(await search_flights_realtime(
-                    origin=orig, destination=dest,
-                    depart_date=normalize_date(data["depart_date"]),
-                    return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
-                    adults=rt_adults, children=rt_children, infants=rt_infants,
-                ))
+        _fb_results = await asyncio.gather(*[
+            search_flights_realtime(
+                origin=o, destination=d,
+                depart_date=normalize_date(data["depart_date"]),
+                return_date=normalize_date(data["return_date"]) if data.get("return_date") else None,
+                adults=rt_adults, children=rt_children, infants=rt_infants,
+            )
+            for o, d in _search_pairs
+        ], return_exceptions=True)
+        all_any = [f for r in _fb_results if not isinstance(r, Exception) for f in r]
 
         if all_any:
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -399,8 +409,11 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     if not fallback_link.startswith(("http://", "https://")):
         fallback_link = f"https://www.aviasales.ru{fallback_link}"
 
-    booking_link  = await convert_to_partner_link(booking_link, context="search_results")
-    fallback_link = await convert_to_partner_link(fallback_link, context="search_results_fallback")
+    # Оба запроса к Travelpayouts API параллельно — экономим ~1-2с
+    booking_link, fallback_link = await asyncio.gather(
+        convert_to_partner_link(booking_link, context="search_results"),
+        convert_to_partner_link(fallback_link, context="search_results_fallback"),
+    )
 
     kb_buttons = []
     if booking_link:

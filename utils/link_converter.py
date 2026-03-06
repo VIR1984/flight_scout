@@ -4,6 +4,17 @@ import aiohttp
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from utils.logger import logger
 
+# Глобальный коннектор — переиспользуем TCP для Travelpayouts API
+_lc_connector: aiohttp.TCPConnector | None = None
+
+def _lc_session() -> aiohttp.ClientSession:
+    global _lc_connector
+    if _lc_connector is None or _lc_connector.closed:
+        _lc_connector = aiohttp.TCPConnector(
+            limit=10, ttl_dns_cache=300, enable_cleanup_closed=True
+        )
+    return aiohttp.ClientSession(connector=_lc_connector, connector_owner=False)
+
 async def convert_to_partner_link(clean_link: str, context: str = "unknown") -> str:
     """
     Единая точка преобразования ссылок через Travelpayouts API.
@@ -45,7 +56,7 @@ async def convert_to_partner_link(clean_link: str, context: str = "unknown") -> 
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _lc_session() as session:
             async with session.post(
                 "https://api.travelpayouts.com/links/v1/create",
                 headers={"X-Access-Token": api_token},

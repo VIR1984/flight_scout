@@ -24,6 +24,30 @@ AVIASALES_TOKEN  = os.getenv("AVIASALES_TOKEN", "").strip()
 AVIASALES_MARKER = os.getenv("AVIASALES_MARKER", "").strip()
 AVIASALES_HOST   = os.getenv("AVIASALES_HOST", "beta.aviasales.ru").strip()
 
+# ── Глобальный HTTP-коннектор ─────────────────────────────────────────────────
+# Вместо нового ClientSession() на каждый запрос переиспользуем TCP-соединения.
+# Экономит ~150-300ms (TCP handshake + TLS) на каждом вызове search_flights*.
+_http_connector: Optional[aiohttp.TCPConnector] = None
+
+def _get_http_connector() -> aiohttp.TCPConnector:
+    """Возвращает (или создаёт) глобальный TCPConnector."""
+    global _http_connector
+    if _http_connector is None or _http_connector.closed:
+        _http_connector = aiohttp.TCPConnector(
+            limit=30,              # макс. параллельных соединений
+            limit_per_host=10,     # до 10 на один хост
+            ttl_dns_cache=300,     # DNS кеш 5 минут
+            enable_cleanup_closed=True,
+        )
+    return _http_connector
+
+def _http_session() -> aiohttp.ClientSession:
+    """Создаёт сессию с общим коннектором (не закрывает его при выходе)."""
+    return aiohttp.ClientSession(
+        connector=_get_http_connector(),
+        connector_owner=False,
+    )
+
 
 # ══════════════════════════════════════════════════════════════════
 # Утилиты: даты
@@ -325,7 +349,7 @@ async def search_flights_realtime(
     trip_class: str = "Y",
     locale: str = "ru",
     poll_timeout: int = 45,
-    poll_interval: float = 3.0,
+    poll_interval: float = 2.0,
 ) -> List[Dict]:
     """
     Real-time поиск через Travelpayouts v1/flight_search.
@@ -364,7 +388,7 @@ async def search_flights_realtime(
         "segments":   segments,
     }
 
-    async with aiohttp.ClientSession() as session:
+    async with _http_session() as session:
 
         # ── 1. Запуск поиска ────────────────────────────────────
         try:
@@ -498,7 +522,7 @@ async def search_flights(
             pass
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _http_session() as session:
             async with session.get(
                 AVIASALES_GROUPED_URL,
                 params=params,
@@ -547,7 +571,7 @@ async def search_flights_multi(
     trip_class: str = "Y",
     locale: str = "ru",
     poll_timeout: int = 45,
-    poll_interval: float = 3.0,
+    poll_interval: float = 2.0,
 ) -> Optional[str]:
     """
     Поиск составного маршрута через Travelpayouts v1/flight_search.
@@ -581,7 +605,7 @@ async def search_flights_multi(
         "segments":   segments,
     }
 
-    async with aiohttp.ClientSession() as session:
+    async with _http_session() as session:
 
         # ── 1. Запуск поиска ────────────────────────────────────
         try:

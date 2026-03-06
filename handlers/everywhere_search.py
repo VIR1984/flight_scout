@@ -287,7 +287,20 @@ async def process_everywhere_search(
         )
         if not booking_link.startswith(("http://", "https://")):
             booking_link = f"https://www.aviasales.ru{booking_link}"
-    booking_link = await convert_to_partner_link(booking_link, context="everywhere")
+    # Запрашиваем booking_link и map_link параллельно
+    _raw_map = (
+        f"https://www.aviasales.ru/map?params={data['origin_iata']}"
+        f"{format_avia_link_date(data['depart_date'])}{passengers_code}"
+    ) if is_dest_everywhere else None
+
+    if _raw_map:
+        booking_link, map_link = await asyncio.gather(
+            convert_to_partner_link(booking_link, context="everywhere"),
+            convert_to_partner_link(_raw_map),
+        )
+    else:
+        booking_link = await convert_to_partner_link(booking_link, context="everywhere")
+        map_link = None
 
     # ── Кнопки ────────────────────────────────────────────────────────────────
     kb_buttons = []
@@ -296,10 +309,7 @@ async def process_everywhere_search(
         url=booking_link,
     )])
 
-    if is_dest_everywhere:
-        d1       = format_avia_link_date(data["depart_date"])
-        map_link = f"https://www.aviasales.ru/map?params={data['origin_iata']}{d1}{passengers_code}"
-        map_link = await convert_to_partner_link(map_link)
+    if is_dest_everywhere and map_link:
         kb_buttons.append([InlineKeyboardButton(text="🌍 Все направления на карте", url=map_link)])
 
     if rest_flights:
