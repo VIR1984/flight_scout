@@ -11,11 +11,10 @@
        → Месяцы (несколько) → Бюджет → Пассажиры → [Частота] → Подтверждение
 """
 
-import json
 import time
 import logging
 from datetime import date
-from typing import Optional, List
+from typing import Optional
 
 from aiogram import Router, F
 from aiogram.types import (

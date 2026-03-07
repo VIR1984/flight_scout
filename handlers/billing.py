@@ -148,25 +148,6 @@ async def get_user_plan(user_id: int, username: Optional[str] = None) -> dict:
     return plan
 
 
-async def activate_plan(user_id: int, plan_key: str, payment_id: str = "") -> dict:
-    cfg = PLANS.get(plan_key, PLANS["free"])
-    now = int(time.time())
-    plan = {
-        "plan":       plan_key,
-        "expires_at": 0 if plan_key == "free" else now + PLAN_DURATION_DAYS * 86400,
-        "paid_at":    now if plan_key != "free" else 0,
-        "payment_id": payment_id,
-    }
-    await _persist_plan(user_id, plan)
-
-    if cfg["flystack_tokens"] > 0:
-        await _credit_flystack(user_id, cfg["flystack_tokens"])
-        logger.info(f"[Billing] user={user_id}: +{cfg['flystack_tokens']} FlyStack")
-
-    logger.info(f"[Billing] user={user_id}: план={plan_key} до {plan['expires_at']}")
-    return plan
-
-
 async def _persist_plan(user_id: int, plan: dict):
     if redis_client.client:
         await redis_client.client.set(

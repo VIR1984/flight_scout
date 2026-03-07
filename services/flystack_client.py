@@ -4,17 +4,6 @@ import aiohttp
 
 _fs_connector: aiohttp.TCPConnector | None = None  # noqa
 
-def _make_flystackclient_session() -> aiohttp.ClientSession:
-    global _fs_connector
-    if _fs_connector is None or _fs_connector.closed:
-        _fs_connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300, enable_cleanup_closed=True)
-    return aiohttp.ClientSession(connector=_fs_connector, connector_owner=False)
-from typing import Optional, Dict, Any, List
-from utils.logger import logger
-
-FLYSTACK_BASE_URL = "https://api.flystack.dev/v1"
-API_KEY = os.getenv("FLYSTACK_API_KEY", "").strip()
-
 class FlyStackClient:
     """Клиент для FlyStack API с полным набором методов"""
     

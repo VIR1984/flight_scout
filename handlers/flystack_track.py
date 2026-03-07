@@ -8,7 +8,6 @@ import re
 import os
 from services.flystack_client import flystack_client, format_flight_details
 from utils.redis_client import redis_client
-from utils.cities_loader import get_city_name
 from utils.logger import logger
 
 router = Router()

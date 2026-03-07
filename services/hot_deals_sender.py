@@ -21,7 +21,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
 
 from utils.redis_client import redis_client
-from handlers.billing import get_user_plan, PLANS
+from handlers.billing import get_user_plan
 from utils.api_limiter import BACKGROUND_SEMAPHORE
 from utils.link_converter import convert_to_partner_link
 from services.flight_search import search_flights, generate_booking_link

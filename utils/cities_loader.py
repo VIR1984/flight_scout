@@ -1,6 +1,5 @@
 # utils/cities_loader.py
 import json
-import os
 import aiohttp
 from pathlib import Path
 from typing import Dict, Optional, List

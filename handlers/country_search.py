@@ -126,40 +126,6 @@ _WMO_EMOJI: dict[int, str] = {
 }
 
 
-async def _fetch_weather(iso: str) -> str:
-    """Возвращает '☀️ +28°C' для столицы страны или '' при ошибке/таймауте."""
-    coords = _CAPITAL_COORDS.get(iso)
-    if not coords:
-        return ""
-    lat, lon = coords
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={lat}&longitude={lon}"
-        "&current=temperature_2m,weathercode&forecast_days=1"
-    )
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=4)) as r:
-                if r.status != 200:
-                    return ""
-                j    = await r.json()
-                cur  = j.get("current", {})
-                temp = cur.get("temperature_2m")
-                code = int(cur.get("weathercode", 0))
-                if temp is None:
-                    return ""
-                icon = _WMO_EMOJI.get(code, "🌡️")
-                sign = "+" if temp >= 0 else ""
-                return f"{icon} {sign}{round(temp)}°C"
-    except Exception as exc:
-        logger.debug(f"[weather] {iso}: {exc}")
-        return ""
-
-
-# ════════════════════════════════════════════════════════════════
-# Выбор города из страны
-# ════════════════════════════════════════════════════════════════
-
 async def _ask_country_city(
     message: Message,
     state: FSMContext,

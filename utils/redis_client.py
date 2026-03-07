@@ -38,16 +38,6 @@ class RedisClient:
         if self.client:
             await self.client.close()
 
-    def is_enabled(self) -> bool:
-        return self.client is not None
-
-    # ===== Кэш поиска =====
-    async def get_search_cache(self, cache_id: str) -> Optional[Dict[str, Any]]:
-        if not self.client:
-            return None
-        data = await self.client.get(f"{self.prefix}search:{cache_id}")
-        return json.loads(data) if data else None
-
     async def set_search_cache(self, cache_id: str, data: Dict[str, Any], ttl: int = 3600):
         if not self.client:
             return
@@ -56,53 +46,6 @@ class RedisClient:
             ttl,
             json.dumps(data, ensure_ascii=False),
         )
-
-    async def delete_search_cache(self, cache_id: str):
-        if self.client:
-            await self.client.delete(f"{self.prefix}search:{cache_id}")
-
-    # ===== Первый запуск пользователя =====
-    async def is_first_time_user(self, user_id: int) -> bool:
-        if not self.client:
-            return True
-        key = f"{self.prefix}first_time_users"
-        exists = await self.client.sismember(key, str(user_id))
-        if not exists:
-            await self.client.sadd(key, str(user_id))
-        return not exists
-
-    # ===== Отслеживание цен =====
-    async def save_price_watch(
-        self,
-        user_id: int,
-        origin: str,
-        dest: str,
-        depart_date: str,
-        return_date: Optional[str],
-        current_price: int,
-        passengers: str = "1",
-        threshold: int = 0
-    ) -> str:
-        """Сохранить отслеживание цены. Возвращает ключ"""
-        if not self.client:
-            return ""
-        key = f"{self.prefix}watch:{user_id}:{origin}:{dest}:{depart_date}"
-        if return_date:
-            key += f":{return_date}"
-        data = {
-            "origin": origin,
-            "dest": dest,
-            "depart_date": depart_date,
-            "return_date": return_date,
-            "current_price": current_price,
-            "passengers": passengers,
-            "user_id": user_id,
-            "threshold": threshold,
-            "created_at": int(time.time())
-        }
-        await self.client.setex(key, 86400 * 30, json.dumps(data, ensure_ascii=False))
-        await self.client.sadd(f"{self.prefix}user:watches:{user_id}", key)
-        return key
 
     async def get_user_watches(self, user_id: int) -> List[Dict[str, Any]]:
         """Получить все отслеживания пользователя (с watch_key для удаления)"""
@@ -191,21 +134,6 @@ class RedisClient:
         await self.client.hset(key, mapping=data)
         await self.client.expire(key, 86400 * 7)
         return sub_id
-
-    async def get_flight_track_subscriptions(self, user_id: int) -> list[dict]:
-        """Получить все активные подписки на отслеживание рейсов пользователя."""
-        if not self.client:
-            return []
-        pattern = f"{self.prefix}flight_track:{user_id}:*"
-        keys = await self.client.keys(pattern)
-        result = []
-        for key in keys:
-            data = await self.client.hgetall(key)
-            if data:
-                result.append(dict(data))  # decode_responses=True — строки уже декодированы
-        return result
-
-    # ===== Горячие предложения / Дайджест =====
 
     async def save_hot_sub(self, user_id: int, sub: dict) -> str:
         """Сохранить горячую/дайджест-подписку. Возвращает sub_id."""
@@ -379,80 +307,6 @@ class RedisClient:
     # ════════════════════════════════════════════════════════════════
     # Analytics
     # ════════════════════════════════════════════════════════════════
-
-    async def track_search(
-        self,
-        user_id: int,
-        origin_iata: str,
-        origin_name: str,
-        dest_iata: str,
-        dest_name: str,
-        depart_date: str,
-        return_date: str | None,
-        price: int,
-        passengers_code: str,
-        flight_type: str,
-        transfers: int,
-        found_count: int,
-    ) -> None:
-        """Записывает одну запись поиска для аналитики."""
-        if not self.client:
-            return
-        p = self.prefix
-        ts = int(time.time())
-        route = f"{origin_iata}-{dest_iata}"
-
-        # Счётчики маршрутов (sorted set: route → count)
-        await self.client.zincrby(f"{p}analytics:routes", 1, route)
-
-        # Счётчики городов назначения
-        await self.client.zincrby(f"{p}analytics:dest_cities", 1, dest_name or dest_iata)
-
-        # Счётчики городов вылета
-        await self.client.zincrby(f"{p}analytics:origin_cities", 1, origin_name or origin_iata)
-
-        # Диапазоны цен (sorted set: price bucket → count)
-        bucket = f"{(price // 5000) * 5000}-{(price // 5000 + 1) * 5000}" if price else "unknown"
-        await self.client.zincrby(f"{p}analytics:price_buckets", 1, bucket)
-
-        # Тип рейса
-        await self.client.hincrby(f"{p}analytics:flight_types", flight_type or "all", 1)
-
-        # Пересадки
-        stops_key = "direct" if transfers == 0 else ("1_stop" if transfers == 1 else "2plus_stops")
-        await self.client.hincrby(f"{p}analytics:transfers", stops_key, 1)
-
-        # Количество пассажиров
-        try:
-            pax = int(passengers_code[0]) if passengers_code else 1
-        except (ValueError, IndexError):
-            pax = 1
-        await self.client.hincrby(f"{p}analytics:passengers", str(pax), 1)
-
-        # Обратный билет vs только туда
-        rt_key = "roundtrip" if return_date else "oneway"
-        await self.client.hincrby(f"{p}analytics:trip_type", rt_key, 1)
-
-        # Общий счётчик поисков
-        await self.client.incr(f"{p}analytics:total_searches")
-
-        # Уникальные пользователи выполнившие поиск
-        await self.client.sadd(f"{p}analytics:searching_users", str(user_id))
-
-        # Временная метка последнего поиска
-        await self.client.set(f"{p}analytics:last_search_at", ts)
-
-        # Поиски по дням (YYYY-MM-DD → count, живут 90 дней)
-        from datetime import datetime, timezone
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        await self.client.hincrby(f"{p}analytics:searches_by_day", day, 1)
-
-        # Цены по маршруту для понимания диапазона (list, последние 50)
-        if price:
-            price_key = f"{p}analytics:prices:{route}"
-            await self.client.lpush(price_key, price)
-            await self.client.ltrim(price_key, 0, 49)
-            await self.client.expire(price_key, 86400 * 30)
 
     async def track_no_results(self, origin_iata: str, dest_iata: str, depart_date: str) -> None:
         """Маршруты по которым ничего не нашлось — тоже интересно."""

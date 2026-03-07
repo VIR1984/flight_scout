@@ -203,22 +203,3 @@ def build_passenger_code(adults: int, children: int = 0, infants: int = 0) -> st
     if children > 0: code += str(children)
     if infants  > 0: code += str(infants)
     return code
-
-
-def _format_datetime(dt_str: str) -> str:
-    if not dt_str:
-        return "??:??"
-    try:
-        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        return dt.strftime("%H:%M")
-    except Exception:
-        return dt_str.split('T')[1][:5] if 'T' in dt_str else "??:??"
-
-
-def _format_duration(minutes: int) -> str:
-    if not minutes:
-        return "—"
-    parts = []
-    if minutes // 60: parts.append(f"{minutes // 60}ч")
-    if minutes %  60: parts.append(f"{minutes % 60}м")
-    return " ".join(parts) or "—"

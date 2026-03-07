@@ -14,6 +14,7 @@
 Доступно ТОЛЬКО для ADMIN_USER_ID.
 """
 import os
+from utils.admin import is_admin
 import logging
 from aiogram import Router, F
 from aiogram.types import Message
@@ -32,15 +33,10 @@ DOC_ENV_HINTS = {
 }
 
 
-def _is_admin(user_id: int) -> bool:
-    admin_id = os.getenv("ADMIN_USER_ID", "").strip()
-    return bool(admin_id) and str(user_id) == admin_id
-
-
 @router.message(F.document)
 async def handle_document_upload(message: Message):
     """Принимает любой документ от ADMIN и возвращает file_id."""
-    if not _is_admin(message.from_user.id):
+    if not is_admin(message.from_user.id):
         return  # не мешаем другим хендлерам
 
     doc = message.document

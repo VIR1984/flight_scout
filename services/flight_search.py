@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime, date
 from utils.logger import logger
+from utils.flight_utils import parse_passengers
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -153,28 +154,6 @@ def update_passengers_in_link(link: str, passengers_code: str) -> str:
 # ══════════════════════════════════════════════════════════════════
 # Утилиты: пассажиры и форматирование
 # ══════════════════════════════════════════════════════════════════
-
-def parse_passengers(s: str) -> str:
-    """'2 взр, 1 реб' → '21'"""
-    if not s:
-        return "1"
-    if s.isdigit():
-        return s
-    adults = children = infants = 0
-    for part in s.split(","):
-        part = part.strip().lower()
-        n = int(re.search(r"\d+", part).group()) if re.search(r"\d+", part) else 1
-        if "взр" in part or "взросл" in part:
-            adults = n
-        elif "реб" in part or "дет" in part:
-            children = n
-        elif "мл" in part or "млад" in part:
-            infants = n
-    code = str(max(adults, 1))
-    if children > 0: code += str(children)
-    if infants  > 0: code += str(infants)
-    return code
-
 
 def format_passenger_desc(code: str) -> str:
     """'211' → '2 взр., 1 реб., 1 мл.'"""
@@ -562,150 +541,3 @@ async def search_flights(
 # ══════════════════════════════════════════════════════════════════
 # Multi-segment (составной маршрут) — real-time API
 # ══════════════════════════════════════════════════════════════════
-
-async def search_flights_multi(
-    segments: List[Dict],  # [{"origin": "MOW", "destination": "IST", "date": "2025-03-05"}, ...]
-    adults: int = 1,
-    children: int = 0,
-    infants: int = 0,
-    trip_class: str = "Y",
-    locale: str = "ru",
-    poll_timeout: int = 45,
-    poll_interval: float = 2.0,
-) -> Optional[str]:
-    """
-    Поиск составного маршрута через Travelpayouts v1/flight_search.
-    Возвращает booking URL из лучшего proposal, или None при неудаче.
-
-    Шаги:
-      1. POST /v1/flight_search с несколькими сегментами → search_id
-      2. Поллинг GET /v1/flight_search_results?uuid=...
-      3. Берём proposal с минимальной ценой → извлекаем URL
-    """
-    if not AVIASALES_TOKEN or not AVIASALES_MARKER:
-        logger.warning("⚠️ [Multi] TOKEN или MARKER не заданы — только fallback URL")
-        return None
-
-    pax_code   = str(adults) + (str(children) if children else "") + (str(infants) if infants else "")
-    passengers = {"adults": adults, "children": children, "infants": infants}
-
-    signature = _build_rt_signature(
-        token=AVIASALES_TOKEN, marker=AVIASALES_MARKER,
-        host=AVIASALES_HOST,   locale=locale,
-        passengers=passengers, segments=segments,
-    )
-    payload = {
-        "signature":  signature,
-        "marker":     AVIASALES_MARKER,
-        "host":       AVIASALES_HOST,
-        "user_ip":    "127.0.0.1",
-        "locale":     locale,
-        "trip_class": trip_class,
-        "passengers": passengers,
-        "segments":   segments,
-    }
-
-    async with _http_session() as session:
-
-        # ── 1. Запуск поиска ────────────────────────────────────
-        try:
-            async with session.post(
-                AVIASALES_SEARCH_URL,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status != 200:
-                    logger.error(f"❌ [Multi] POST {resp.status}: {(await resp.text())[:300]}")
-                    return None
-
-                init      = await resp.json()
-                search_id = init.get("search_id") or init.get("meta", {}).get("uuid")
-                if not search_id:
-                    logger.error(f"❌ [Multi] Нет search_id: {str(init)[:200]}")
-                    return None
-
-                logger.info(f"✅ [Multi] search_id={search_id}, сегментов={len(segments)}")
-
-        except asyncio.TimeoutError:
-            logger.error("❌ [Multi] Таймаут старта поиска")
-            return None
-        except Exception as e:
-            logger.error(f"❌ [Multi] Ошибка запуска: {e}")
-            return None
-
-        # ── 2. Поллинг ──────────────────────────────────────────
-        all_proposals: List[Dict] = []
-        currency_rates: Dict      = {}
-        deadline = asyncio.get_event_loop().time() + poll_timeout
-
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(poll_interval)
-            try:
-                async with session.get(
-                    AVIASALES_SEARCH_RESULTS_URL,
-                    params={"uuid": search_id},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
-                    if r.status != 200:
-                        continue
-
-                    chunk = await r.json(content_type=None)
-
-                    if isinstance(chunk, dict):
-                        if "currency_rates" in chunk:
-                            currency_rates = chunk["currency_rates"]
-                        if list(chunk.keys()) == ["search_id"]:
-                            logger.info(f"✅ [Multi] Поиск завершён, proposals={len(all_proposals)}")
-                            break
-                        proposals = chunk.get("proposals", [])
-                    elif isinstance(chunk, list):
-                        proposals = chunk
-                    else:
-                        proposals = []
-
-                    if proposals:
-                        all_proposals.extend(proposals)
-
-            except asyncio.TimeoutError:
-                continue
-            except Exception as e:
-                logger.error(f"❌ [Multi] Поллинг: {e}")
-                continue
-
-    if not all_proposals:
-        logger.warning("⚠️ [Multi] Нет proposals от API")
-        return None
-
-    # ── 3. Берём самый дешёвый → вытаскиваем URL ────────────────
-    rub_rate = float(currency_rates.get("rub", 1.0) or 1.0)
-
-    best_url   = None
-    best_price = float("inf")
-
-    for p in all_proposals:
-        try:
-            raw = p.get("min_price") or p.get("price", 0)
-            price_rub = int(
-                (list(raw.values())[0] * rub_rate) if isinstance(raw, dict)
-                else (float(raw) * rub_rate)
-            )
-            if price_rub <= 0 or price_rub >= best_price:
-                continue
-
-            url = p.get("url") or p.get("link")
-            if url:
-                best_price = price_rub
-                best_url   = url
-        except Exception:
-            continue
-
-    if best_url:
-        # Гарантируем абсолютный URL
-        if not best_url.startswith(("http://", "https://")):
-            best_url = f"https://www.aviasales.ru{best_url}"
-        logger.info(f"✅ [Multi] Лучший URL: {best_url[:80]}...")
-    else:
-        logger.warning("⚠️ [Multi] URL не найден в proposals")
-
-    return best_url

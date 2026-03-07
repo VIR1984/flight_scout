@@ -1,9 +1,6 @@
 # handlers/everywhere_search.py
-import json
 import asyncio
-import os
-import re
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
 from uuid import uuid4
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -22,6 +19,7 @@ from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
 from handlers.flight_constants import COUNTRY_NAMES_RU, iso_flag, iata_country_iso, AIRPORT_NAMES as _AIRPORT_NAMES, AIRLINE_NAMES as _AIRLINE_NAMES, AIRPORT_TO_METRO
+from utils.flight_utils import _format_duration
 
 # ← ДОБАВЛЕНО: CANCEL_KB для кнопок отмены
 CANCEL_KB = InlineKeyboardMarkup(inline_keyboard=[

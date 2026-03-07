@@ -44,6 +44,7 @@ from handlers.flight_constants import (
     MULTI_AIRPORT_CITIES,
 )
 
+from utils.flight_utils import _format_datetime, _format_duration, parse_passengers
 logger = logging.getLogger(__name__)
 
 _DATE_RE = re.compile(r'^\d{1,2}\.\d{1,2}$')
@@ -70,71 +71,6 @@ def _resolve_city(city_str: str) -> tuple[str | None, str | None]:
         name = get_city_name(iata) or IATA_TO_CITY.get(iata, c.capitalize())
         return iata, name
     return None, None
-
-
-def parse_passengers(s: str) -> str:
-    """
-    Парсит строку пассажиров в код для API.
-
-    Поддерживаемые форматы:
-      ''           → '1'        (1 взрослый по умолчанию)
-      '3'          → '3'        (3 взрослых)
-      '211'        → '211'      (2 взр, 1 реб, 1 млад) — компактный код
-      '21'         → '21'       (2 взр, 1 реб)
-      '2 взр, 1 реб, 1 млад'   → '211'
-      '2 взр'      → '2'
-    """
-    if not s:
-        return "1"
-    s = s.strip()
-
-    # Компактный числовой код: только цифры, 1-3 символа, первая ≥ 1
-    # Примеры: "1", "2", "21", "211", "311"
-    if re.match(r'^\d{1,3}$', s):
-        digits = s
-        adults = int(digits[0])
-        if adults < 1:
-            adults = 1
-        # Если вся строка — 1 цифра, это просто кол-во взрослых
-        if len(digits) == 1:
-            return str(adults)
-        # 2 цифры: взрослые + дети
-        if len(digits) == 2:
-            children = int(digits[1])
-            result = str(adults)
-            if children:
-                result += str(children)
-            return result
-        # 3 цифры: взрослые + дети + младенцы
-        if len(digits) == 3:
-            children = int(digits[1])
-            infants  = int(digits[2])
-            result = str(adults)
-            if children:
-                result += str(children)
-            if infants:
-                result += str(infants)
-            return result
-
-    # Текстовый формат: "2 взр, 1 реб, 1 млад"
-    adults = children = infants = 0
-    for part in re.split(r'[,;]+', s):
-        part = part.strip().lower()
-        m = re.search(r"\d+", part)
-        n = int(m.group()) if m else 1
-        if "взр" in part or "взросл" in part:
-            adults = n
-        elif "реб" in part or "дет" in part:
-            children = n
-        elif "мл" in part or "млад" in part:
-            infants = n
-    adults = adults or 1
-    result = str(adults)
-    if children:
-        result += str(children)
-    if infants:
-        result += str(infants)
-    return result
 
 
 def _parse_quick_search(text: str) -> tuple | None:
@@ -205,30 +141,6 @@ def _parse_quick_search(text: str) -> tuple | None:
 
     return None
 
-
-def _format_datetime(dt_str: str) -> str:
-    if not dt_str:
-        return "??:??"
-    try:
-        from datetime import datetime
-        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        return dt.strftime("%H:%M")
-    except Exception:
-        return dt_str.split('T')[1][:5] if 'T' in dt_str else "??:??"
-
-
-def _format_duration(minutes: int) -> str:
-    if not minutes:
-        return "—"
-    hours = minutes // 60
-    mins  = minutes % 60
-    parts = []
-    if hours: parts.append(f"{hours}ч")
-    if mins:  parts.append(f"{mins}м")
-    return " ".join(parts) if parts else "—"
-
-
-# ── Основной обработчик ───────────────────────────────────────────────────────
 
 async def handle_flight_request(message: Message) -> None:
     """

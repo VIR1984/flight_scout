@@ -17,15 +17,14 @@ from utils.cities_loader import (
 )
 from utils.smart_reminder import schedule_inactivity, cancel_inactivity, mark_fsm_inactive
 from utils.logger import logger
-from handlers.flight_constants import CANCEL_KB, MULTI_AIRPORT_CITIES, AIRPORT_NAMES
-from handlers.everywhere_search import format_user_date, build_passenger_desc
+from handlers.flight_constants import CANCEL_KB, MULTI_AIRPORT_CITIES
 from handlers.flight_fsm import (
     FlightSearch, validate_route, validate_date,
     _get_metro, _has_multi_airports, _airport_keyboard,
-    build_choices_summary, build_passenger_code, _flight_type_text_to_code,
+    build_choices_summary, build_passenger_code,
     _genitive,
 )
-from handlers.country_search import _ask_country_city, _finalize_route
+from handlers.country_search import _ask_country_city
 from services.flight_search import normalize_date
 from utils.date_hints import hint_depart, hint_return
 from utils.redis_client import redis_client

@@ -15,9 +15,10 @@
 
 import logging
 from typing import Optional
+from utils.flight_utils import _format_duration
 from aiogram import Router, F
 from aiogram.types import (
-    CallbackQuery, Message,
+    CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from aiogram.fsm.context import FSMContext
@@ -40,13 +41,6 @@ def _threshold_label(threshold: int) -> str:
         100:  "изменении на сотни ₽",
         1000: "изменении на тысячи ₽",
     }.get(threshold, f"изменении ≥ {threshold} ₽")
-
-
-def _format_duration(minutes: int) -> str:
-    if not minutes:
-        return ""
-    h, m = divmod(minutes, 60)
-    return f"{h}ч {m}м" if h else f"{m}м"
 
 
 def _watch_key_from_data(w: dict) -> str:

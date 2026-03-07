@@ -4,14 +4,13 @@
 confirm_search, _do_confirm_search, watch_price, трансферы,
 retry_with_transfers, edit_from_results, _show_no_flights.
 """
-import json
 import asyncio
 import os
 from uuid import uuid4
 
 from aiogram import Router, F
 from aiogram.types import (
-    Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
 )
 from aiogram.fsm.context import FSMContext
 
@@ -28,7 +27,7 @@ from utils.link_converter import convert_to_partner_link
 from utils.trip_link import build_trip_link, is_trip_supported
 from utils.smart_reminder import cancel_inactivity, mark_fsm_inactive, remind_after_search, schedule_inactivity
 from handlers.flight_constants import (
-    CANCEL_KB, MULTI_AIRPORT_CITIES, AIRPORT_NAMES,
+    AIRPORT_NAMES,
     SUPPORTED_TRANSFER_AIRPORTS, AIRLINE_NAMES,
 )
 from handlers.everywhere_search import (
@@ -36,9 +35,8 @@ from handlers.everywhere_search import (
     process_everywhere_search, format_user_date, build_passenger_desc,
 )
 from handlers.flight_fsm import (
-    FlightSearch, _format_datetime, _format_duration, build_choices_summary, _get_metro,
+    FlightSearch, build_choices_summary, _get_metro,
 )
-from handlers.flight_wizard import show_summary
 from handlers.billing import can_add_sub, show_paywall
 from handlers.start import _SEARCH_SEMAPHORE
 

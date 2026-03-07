@@ -8,16 +8,6 @@ import aiohttp
 
 _tr_connector: aiohttp.TCPConnector | None = None  # noqa
 
-def _make_transfersearch_session() -> aiohttp.ClientSession:
-    global _tr_connector
-    if _tr_connector is None or _tr_connector.closed:
-        _tr_connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300, enable_cleanup_closed=True)
-    return aiohttp.ClientSession(connector=_tr_connector, connector_owner=False)
-import logging
-from typing import List, Dict, Any, Optional
-
-logger = logging.getLogger(__name__)
-
 async def search_transfers(
     airport_iata: str,
     transfer_date: str,

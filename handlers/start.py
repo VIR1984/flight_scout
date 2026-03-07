@@ -47,7 +47,6 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     # Для админа добавляем кнопку статистики прямо на главный экран
     if _is_admin(message.from_user.id):
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Отправить статистику в канал", callback_data="admin_sendstats")]
         ])

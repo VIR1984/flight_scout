@@ -127,7 +127,7 @@ async def health_check() -> dict:
     Вызывается раз в сутки, результат идёт в канал как отдельный блок.
     """
     from utils.redis_client import redis_client
-    from services.flight_search import search_flights, normalize_date
+    from services.flight_search import search_flights
     from datetime import date, timedelta
     import time
 
