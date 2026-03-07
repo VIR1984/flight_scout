@@ -637,6 +637,9 @@ async def handle_watch_price(callback: CallbackQuery):
         is_origin_everywhere = data.get("origin_everywhere", False)
         is_dest_everywhere   = data.get("dest_everywhere", False)
         flights = data["flights"]
+        if not flights:
+            await callback.answer("Нет данных о рейсах", show_alert=True)
+            return
         if is_dest_everywhere:
             origin, dest = flights[0]["origin"], None
         elif is_origin_everywhere:
@@ -686,6 +689,10 @@ async def handle_set_threshold(callback: CallbackQuery):
 
     is_origin_everywhere = data.get("origin_everywhere", False)
     is_dest_everywhere   = data.get("dest_everywhere",   False)
+
+    if not data.get("flights"):
+        await callback.answer("Нет данных о рейсах", show_alert=True)
+        return
 
     top    = min(data["flights"], key=lambda f: f.get("value") or f.get("price") or 999999)
     origin = None if is_origin_everywhere else (top.get("origin") or data.get("origin_iata", ""))

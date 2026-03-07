@@ -901,7 +901,7 @@ class TestMoreFlightsHandler:
         call_kwargs = cb.message.answer.call_args_list[-1].kwargs
         kb = call_kwargs.get("reply_markup")
         if kb:
-            flat = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+            flat = [btn.callback_data or "" for row in kb.inline_keyboard for btn in row]
             assert any("more_flights" in s and "_2" in s for s in flat)
 
 
