@@ -47,6 +47,17 @@ class RedisClient:
             json.dumps(data, ensure_ascii=False),
         )
 
+    async def get_search_cache(self, cache_id: str) -> Optional[Dict[str, Any]]:
+        if not self.client:
+            return None
+        raw = await self.client.get(f"{self.prefix}search:{cache_id}")
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+
     async def get_user_watches(self, user_id: int) -> List[Dict[str, Any]]:
         """Получить все отслеживания пользователя (с watch_key для удаления)"""
         if not self.client:

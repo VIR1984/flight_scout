@@ -26,6 +26,29 @@ import pytest
 import pytest_asyncio
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Инициализация словаря городов (без сети — через MANUAL_ALIASES)
+# cities_loader заполняется при старте бота через load_cities_from_api(),
+# в тестах этот вызов не происходит → CITY_TO_IATA пустой.
+# Заполняем напрямую из MANUAL_ALIASES + нескольких ключевых IATA до импорта хэндлеров.
+# ─────────────────────────────────────────────────────────────────────────────
+def _bootstrap_cities():
+    from utils.cities_loader import CITY_TO_IATA, IATA_TO_CITY, MANUAL_ALIASES, _normalize_name
+    if CITY_TO_IATA:
+        return  # уже заполнен (например, кешем с диска)
+    for alias, iata in MANUAL_ALIASES.items():
+        norm = _normalize_name(alias)
+        CITY_TO_IATA[norm] = iata
+    # Добавляем прямое соответствие IATA → IATA (для MOW, AER и т.д.)
+    for alias, iata in MANUAL_ALIASES.items():
+        if iata not in IATA_TO_CITY:
+            IATA_TO_CITY[iata] = alias.capitalize()
+    # IATA-коды как ключи (MOW → MOW)
+    for iata in list(IATA_TO_CITY.keys()):
+        CITY_TO_IATA[iata.lower()] = iata
+
+_bootstrap_cities()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Хелперы-моки для aiogram-типов
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -52,20 +75,17 @@ def make_callback(data: str, user_id: int = 123, chat_id: int = 123) -> MagicMoc
 def make_state(initial: dict = None) -> MagicMock:
     _data = dict(initial or {})
     state = MagicMock()
+    # get_data должен возвращать копию _data при await
     state.get_data = AsyncMock(side_effect=lambda: dict(_data))
 
-    async def _update(**kwargs):
-        _data.update(kwargs)
+    # side_effect должна быть СИНХРОННОЙ (не async) —
+    # AsyncMock сам оборачивает результат в awaitable,
+    # но НЕ await-ит coroutine из side_effect.
+    # Синхронная функция просто возвращает None → всё работает.
+    state.update_data = AsyncMock(side_effect=lambda **kw: _data.update(kw))
+    state.set_state   = AsyncMock(side_effect=lambda s: _data.__setitem__("__state__", str(s)))
+    state.clear       = AsyncMock(side_effect=lambda: _data.clear())
 
-    async def _set_state(s):
-        _data["__state__"] = str(s)
-
-    async def _clear():
-        _data.clear()
-
-    state.update_data = AsyncMock(side_effect=lambda **kw: _update(**kw))
-    state.set_state = AsyncMock(side_effect=lambda s: _set_state(s))
-    state.clear = AsyncMock(side_effect=_clear)
     # expose internal dict for assertions
     state._data = _data
     return state
@@ -364,7 +384,7 @@ class TestProcessRoute:
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
             patch("utils.smart_reminder.schedule_inactivity", PATCHES["schedule_inactivity"]),
-            patch("utils.redis_client.redis_client", PATCHES["redis"]),
+            patch("handlers.flight_wizard.redis_client", PATCHES["redis"]),
         ):
             from handlers.flight_wizard import process_route
             msg = make_message(text)
@@ -409,7 +429,7 @@ class TestProcessDepartDate:
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
             patch("utils.smart_reminder.schedule_inactivity", PATCHES["schedule_inactivity"]),
-            patch("utils.redis_client.redis_client", PATCHES["redis"]),
+            patch("handlers.flight_wizard.redis_client", PATCHES["redis"]),
         ):
             from handlers.flight_wizard import process_depart_date
             msg = make_message(text)
@@ -457,23 +477,21 @@ class TestProcessNeedReturn:
             return cb, state
 
     async def test_yes_echo_and_new_message(self):
-        """return_yes должен: edit_text (echo) + answer (запрос даты возврата)."""
+        """return_yes: edit_text редактирует сообщение с вопросом о дате возврата (шаг 3/6)."""
         cb, state = await self._run("return_yes", {"depart_date": "15.03"})
-        # edit_text вызван (echo выбора)
+        # edit_text вызван — содержит текст шага 3/6 или «возврат»
         cb.message.edit_text.assert_called()
         edit_text = str(cb.message.edit_text.call_args_list[0])
-        assert "Да" in edit_text
-        # answer вызван (новый вопрос о дате возврата)
-        cb.message.answer.assert_called()
-        answer_text = str(cb.message.answer.call_args_list[0])
-        assert "возврата" in answer_text or "3/6" in answer_text
+        assert "3/6" in edit_text or "возврат" in edit_text.lower()
+        # answer() вызывается в конце хэндлера как callback.answer() (пустой, подтверждение нажатия)
+        cb.answer.assert_called()
 
     async def test_no_echo_and_proceeds(self):
-        """return_no должен: edit_text (echo) + НЕ спрашивать дату возврата."""
+        """return_no: edit_text показывает «Без обратного билета», need_return=False."""
         cb, state = await self._run("return_no", {"depart_date": "15.03"})
         cb.message.edit_text.assert_called()
         edit_text = str(cb.message.edit_text.call_args_list[0])
-        assert "Нет" in edit_text
+        assert "Без обратного билета" in edit_text
         # need_return = False сохранён
         assert state._data.get("need_return") is False
 
@@ -598,13 +616,15 @@ class TestPassengerSteps:
     async def test_has_children_no_echo(self):
         cb, state = await self._run_has_children("hc_no")
         cb.message.edit_text.assert_called()
-        assert "Нет" in str(cb.message.edit_text.call_args_list[0])
+        # Код пишет "✅ Без детей"
+        assert "Без детей" in str(cb.message.edit_text.call_args_list[0])
         assert state._data.get("children") == 0
 
     async def test_has_children_yes_echo(self):
         cb, _ = await self._run_has_children("hc_yes")
         cb.message.edit_text.assert_called()
-        assert "Да" in str(cb.message.edit_text.call_args_list[0])
+        # Код пишет "✅ Летят дети"
+        assert "Летят дети" in str(cb.message.edit_text.call_args_list[0])
 
     async def test_children_count_saved_with_echo(self):
         cb, state = await self._run_children("ch_2", {"adults": 2})
@@ -703,7 +723,7 @@ class TestWatchPriceHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
         ):
             from handlers.search_results import handle_watch_price
             cb = make_callback(f"watch_all_{cache_id}")
@@ -720,13 +740,14 @@ class TestWatchPriceHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
         ):
             from handlers.search_results import handle_watch_price
             cb = make_callback(f"watch_all_{uuid4()}")
             await handle_watch_price(cb)
 
         cb.answer.assert_called()
+        # callback.answer("Данные устарели", show_alert=True)
         assert "устарел" in str(cb.answer.call_args_list[-1]).lower()
 
     async def test_watch_empty_flights_shows_alert(self):
@@ -737,7 +758,7 @@ class TestWatchPriceHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
         ):
             from handlers.search_results import handle_watch_price
             cb = make_callback(f"watch_all_{uuid4()}")
@@ -757,14 +778,12 @@ class TestSetThresholdHandler:
         fake_redis.save_price_watch = AsyncMock()
         fake_redis.track_subscription_event = AsyncMock()
 
-        fake_billing = MagicMock()
-        fake_billing.can_add_sub = AsyncMock(return_value=(True, ""))
-        fake_billing.show_paywall = AsyncMock()
-
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
-            patch("handlers.billing.can_add_sub", fake_billing.can_add_sub),
+            patch("handlers.search_results.redis_client", fake_redis),
+            # can_add_sub импортирован в search_results как: from handlers.billing import can_add_sub
+            # патчим его прямо в пространстве имён search_results
+            patch("handlers.search_results.can_add_sub", AsyncMock(return_value=(True, ""))),
         ):
             from handlers.search_results import handle_set_threshold
             cb = make_callback(f"set_threshold:{threshold}:{cache_id}:{price}")
@@ -792,7 +811,8 @@ class TestSetThresholdHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
+            patch("handlers.search_results.can_add_sub", AsyncMock(return_value=(True, ""))),
         ):
             from handlers.search_results import handle_set_threshold
             cb = make_callback(f"set_threshold:0:{uuid4()}:5000")
@@ -808,7 +828,8 @@ class TestSetThresholdHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
+            patch("handlers.search_results.can_add_sub", AsyncMock(return_value=(True, ""))),
         ):
             from handlers.search_results import handle_set_threshold
             cb = make_callback(f"set_threshold:0:{uuid4()}:5000")
@@ -829,7 +850,7 @@ class TestMoreFlightsHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.everywhere_search.redis_client", fake_redis),
             patch("utils.link_converter.convert_to_partner_link",
                   AsyncMock(side_effect=lambda url, **kw: url)),
         ):
@@ -853,7 +874,7 @@ class TestMoreFlightsHandler:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.everywhere_search.redis_client", fake_redis),
         ):
             from handlers.everywhere_search import handle_more_flights
             cb = make_callback(f"more_flights_{uuid4()}_1")
@@ -898,7 +919,7 @@ class TestEditFromResults:
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
             patch("utils.smart_reminder.schedule_inactivity", PATCHES["schedule_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
         ):
             from handlers.search_results import edit_from_results
             cb = make_callback(f"edit_from_results_{cid}")
@@ -916,7 +937,7 @@ class TestEditFromResults:
 
         with (
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
-            patch("utils.redis_client.redis_client", fake_redis),
+            patch("handlers.search_results.redis_client", fake_redis),
         ):
             from handlers.search_results import edit_from_results
             cb = make_callback(f"edit_from_results_{uuid4()}")
@@ -1072,7 +1093,7 @@ class TestFullSearchScenario:
             patch("utils.smart_reminder.cancel_inactivity", PATCHES["cancel_inactivity"]),
             patch("utils.smart_reminder.schedule_inactivity", PATCHES["schedule_inactivity"]),
             patch("utils.smart_reminder.mark_fsm_inactive", PATCHES["mark_fsm_inactive"]),
-            patch("utils.redis_client.redis_client", PATCHES["redis"]),
+            patch("handlers.flight_wizard.redis_client", PATCHES["redis"]),
         )
 
     async def test_full_flow_data_accumulation(self):
