@@ -15,7 +15,10 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 
 from utils.smart_reminder import cancel_inactivity, mark_fsm_inactive
-from handlers.start import cmd_feedback_log, cmd_sendstats, cmd_start, cmd_stats, nav_feedback, nav_hot, nav_multi_search, nav_search, nav_subs
+from handlers.start import (
+    cmd_start, cmd_stats, cmd_sendstats, cmd_feedback_log,
+    nav_search, nav_multi_search, nav_hot, nav_subs, nav_feedback,
+)
 from handlers.help import show_help
 
 router = Router()
@@ -32,13 +35,10 @@ async def _reset_state(message: Message, state: FSMContext):
 
 # ════════════════════════════════════════════════════════════════
 # Команды — перехватываем при ЛЮБОМ состоянии FSM
-# Без этого /start при активном FlightSearch.route попадает в
-# process_route → "Неверный формат маршрута"
 # ════════════════════════════════════════════════════════════════
 
 @router.message(CommandStart())
 async def nav_cmd_start(message: Message, state: FSMContext):
-    """Всегда сбрасываем FSM и запускаем /start."""
     await _reset_state(message, state)
     await cmd_start(message, state)
 
@@ -46,19 +46,19 @@ async def nav_cmd_start(message: Message, state: FSMContext):
 @router.message(Command("stats"))
 async def nav_cmd_stats(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message)
+    await cmd_stats(message)
 
 
 @router.message(Command("sendstats"))
 async def nav_cmd_sendstats(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message)
+    await cmd_sendstats(message)
 
 
 @router.message(Command("feedback_log"))
 async def nav_cmd_feedback_log(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message)
+    await cmd_feedback_log(message)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -66,56 +66,64 @@ async def nav_cmd_feedback_log(message: Message, state: FSMContext):
 # ════════════════════════════════════════════════════════════════
 
 @router.message(F.text == "✈️ Поиск")
-async def nav_search(message: Message, state: FSMContext):
+async def _nav_search(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_search(message, state)
 
 
 @router.message(F.text == "🗺 Маршрут")
-async def nav_multi(message: Message, state: FSMContext):
+async def _nav_multi(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_multi_search(message, state)
 
 
 @router.message(F.text == "🔥 Горячие")
-async def nav_hot(message: Message, state: FSMContext):
+async def _nav_hot(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_hot(message, state)
 
 
 @router.message(F.text == "📋 Подписки")
-async def nav_subs(message: Message, state: FSMContext):
+async def _nav_subs(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_subs(message, state)
 
 
 @router.message(F.text == "❓ Помощь")
-async def nav_help(message: Message, state: FSMContext):
+async def _nav_help(message: Message, state: FSMContext):
     await _reset_state(message, state)
     await show_help(message)
 
 
 @router.message(F.text == "💬 Обратная связь")
-async def nav_feedback(message: Message, state: FSMContext):
+async def _nav_feedback(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_feedback(message, state)
+
+
+# ════════════════════════════════════════════════════════════════
+# Команды из меню Telegram
+# ════════════════════════════════════════════════════════════════
 
 @router.message(Command("search"))
 async def nav_cmd_search(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_search(message, state)
+
 
 @router.message(Command("hot"))
 async def nav_cmd_hot(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_hot(message, state)
+
 
 @router.message(Command("subs"))
 async def nav_cmd_subs(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_subs(message, state)
+
 
 @router.message(Command("feedback"))
 async def nav_cmd_feedback(message: Message, state: FSMContext):
     await _reset_state(message, state)
-    await cmd_start(message, state)
+    await nav_feedback(message, state)
