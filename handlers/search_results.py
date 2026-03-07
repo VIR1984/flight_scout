@@ -21,6 +21,7 @@ from services.flight_search import (
 )
 from services.transfer_search import search_transfers, generate_transfer_link
 from utils.cities_loader import get_city_name, IATA_TO_CITY
+from utils.flight_utils import _format_duration
 from utils.redis_client import redis_client
 from utils.logger import logger
 from utils.link_converter import convert_to_partner_link
@@ -417,7 +418,7 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     kb_buttons = []
     if booking_link:
         kb_buttons.append([InlineKeyboardButton(text=f"🔍 Посмотреть детали за  {price_per_pax:,} ₽".replace(",", "\u202f"), url=booking_link)])
-    kb_buttons.append([InlineKeyboardButton(text="Все варианты на эти даты", url=fallback_link)])
+    kb_buttons.append([InlineKeyboardButton(text="🌐 Посмотреть ещё варианты", url=fallback_link)])
 
     # Кнопка Trip.com — альтернативная площадка
     _trip_url = build_trip_link(
@@ -430,8 +431,8 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     if _trip_url and is_trip_supported(origin_iata, dest_iata):
         kb_buttons.append([InlineKeyboardButton(text="🌐 Сравнить на Trip.com", url=_trip_url)])
 
-    kb_buttons.append([InlineKeyboardButton(text="Следить за ценой", callback_data=f"watch_all_{cache_id}")])
-    kb_buttons.append([InlineKeyboardButton(text="Изменить запрос", callback_data=f"edit_from_results_{cache_id}")])
+    kb_buttons.append([InlineKeyboardButton(text="🔔 Следить за ценой", callback_data=f"watch_all_{cache_id}")])
+    kb_buttons.append([InlineKeyboardButton(text="✏️ Изменить запрос", callback_data=f"edit_from_results_{cache_id}")])
 
     if dest_iata in SUPPORTED_TRANSFER_AIRPORTS:
         transfer_link = os.getenv("GETTRANSFER_LINK", "https://gettransfer.tpx.gr/Rr2KJIey?erid=2VtzqwJZYS7")

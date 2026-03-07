@@ -171,6 +171,11 @@ async def process_route(message: Message, state: FSMContext):
         origin_name=origin_name, dest_name=dest_name,
     )
 
+    # Дублируем выбор пользователя
+    _orig_display = "Везде" if origin == "везде" else origin_name
+    _dest_display = "Везде" if dest == "везде" else dest_name
+    await message.answer(f"✅ {_orig_display} — {_dest_display}", parse_mode="HTML")
+
     data = await state.get_data()
     cancel_inactivity(message.chat.id)
 
@@ -284,6 +289,7 @@ async def process_depart_date(message: Message, state: FSMContext):
 
     cancel_inactivity(message.chat.id)
     await state.update_data(depart_date=message.text)
+    await message.answer(f"✅ Дата вылета: {message.text}")
     data = await state.get_data()
     is_everywhere = data["origin"] == "везде" or data["dest"] == "везде"
 
@@ -305,6 +311,10 @@ async def process_depart_date(message: Message, state: FSMContext):
 
     if is_everywhere:
         await state.update_data(need_return=False, return_date=None)
+        await message.answer(
+            "<i>ℹ️ Для поиска «Везде» обратный билет не поддерживается — пропускаем этот шаг.</i>",
+            parse_mode="HTML"
+        )
         await ask_flight_type(message, state)
         return
 
@@ -335,6 +345,7 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
         )
         await state.set_state(FlightSearch.return_date)
     else:
+        await callback.message.edit_text("✅ Без обратного билета")
         await state.update_data(return_date=None)
         await ask_flight_type(callback.message, state)
     await callback.answer()
@@ -374,6 +385,7 @@ async def process_return_date(message: Message, state: FSMContext):
 
     cancel_inactivity(message.chat.id)
     await state.update_data(return_date=message.text)
+    await message.answer(f"✅ Дата возврата: {message.text}")
 
     data = await state.get_data()
     if data.get("_edit_mode"):
@@ -403,7 +415,9 @@ async def ask_flight_type(message: Message, state: FSMContext):
 async def process_flight_type(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     code_map = {"ft_direct": "direct", "ft_transfer": "transfer", "ft_all": "all"}
+    label_map = {"ft_direct": "✈️ Прямые", "ft_transfer": "🔀 С пересадкой", "ft_all": "🔍 Все варианты"}
     await state.update_data(flight_type=code_map[callback.data])
+    await callback.message.edit_text(f"✅ {label_map[callback.data]}")
     data = await state.get_data()
     if data.get("_edit_mode"):
         await state.update_data(_edit_mode=False)
@@ -442,6 +456,7 @@ async def process_adults(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     adults = int(callback.data.split("_")[1])
     await state.update_data(adults=adults)
+    await callback.message.edit_text(f"✅ Взрослых: {adults}")
     if adults == 9:
         await state.update_data(children=0, infants=0, passenger_desc="9 взр.", passenger_code="9")
         await show_summary(callback.message, state)
@@ -471,8 +486,10 @@ async def ask_has_children(message: Message, state: FSMContext):
 async def process_has_children(callback: CallbackQuery, state: FSMContext):
     cancel_inactivity(callback.message.chat.id)
     if callback.data == "hc_yes":
+        await callback.message.edit_text("✅ Летят дети")
         await ask_children(callback.message, state)
     else:
+        await callback.message.edit_text("✅ Без детей")
         data = await state.get_data()
         adults = data["adults"]
         pd = f"{adults} взр."
@@ -514,6 +531,7 @@ async def process_children(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     await state.update_data(children=children)
+    await callback.message.edit_text(f"✅ Детей (2–11 лет): {children}")
     if 9 - adults - children == 0:
         pd = f"{adults} взр." + (f", {children} дет." if children else "")
         await state.update_data(infants=0, passenger_desc=pd,
@@ -556,6 +574,7 @@ async def process_infants(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     await state.update_data(infants=infants)
+    await callback.message.edit_text(f"✅ Младенцев (до 2 лет): {infants}")
     await show_summary(callback.message, state)
     await callback.answer()
 
