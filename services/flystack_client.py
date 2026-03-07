@@ -12,7 +12,7 @@ class FlyStackClient:
         self.base_url = FLYSTACK_BASE_URL
         self.logger = logger
     
-    async def _request(self, endpoint: str, params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+    async def _request(self, endpoint: str, params: dict = None) -> dict | None:
         """Базовый метод для HTTP запросов с полным логированием"""
         self.logger.info(f"🔍 [FlyStack] Запрос к API: {endpoint}")
         self.logger.debug(f"📝 [FlyStack] Параметры запроса: {params}")
@@ -59,7 +59,7 @@ class FlyStackClient:
         airline: str,
         flight_number: str,
         departure_date: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict | None:
         """Получить детальную информацию о рейсе с полным логированием"""
         self.logger.info(f"✈️ [FlyStack] Запрос информации о рейсе: {airline}{flight_number} на {departure_date}")
         self.logger.debug(f"📝 [FlyStack] Параметры: airline={airline}, flight_number={flight_number}, departure_date={departure_date}")
@@ -75,12 +75,12 @@ class FlyStackClient:
         origin: str,
         destination: str,
         departure_date: str,
-        return_date: Optional[str] = None,
+        return_date: str | None = None,
         adults: int = 1,
         children: int = 0,
         infants: int = 0,
         cabin_class: str = "economy"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict]:
         """Поиск рейсов с ценами с полным логированием"""
         self.logger.info(f"🔍 [FlyStack] Поиск рейсов: {origin} → {destination} на {departure_date}")
         self.logger.debug(f"📝 [FlyStack] Параметры поиска: adults={adults}, children={children}, infants={infants}, cabin_class={cabin_class}")
@@ -101,18 +101,18 @@ class FlyStackClient:
         return result if isinstance(result, list) else []
     
     # ========== AIRLINES ==========
-    async def get_airline(self, iata_code: str) -> Optional[Dict[str, Any]]:
+    async def get_airline(self, iata_code: str) -> dict | None:
         """Получить информацию об авиакомпании с логированием"""
         self.logger.info(f"✈️ [FlyStack] Запрос информации об авиакомпании: {iata_code}")
         return await self._request("airlines", {"iata_code": iata_code})
     
-    async def get_airline_fleet(self, iata_code: str) -> List[Dict[str, Any]]:
+    async def get_airline_fleet(self, iata_code: str) -> list[dict]:
         """Получить флот авиакомпании с логированием"""
         self.logger.info(f"🛩️ [FlyStack] Запрос флота авиакомпании: {iata_code}")
         return await self._request("fleets", {"airline_iata": iata_code}) or []
     
     # ========== AIRPORTS ==========
-    async def get_airport(self, iata_code: str) -> Optional[Dict[str, Any]]:
+    async def get_airport(self, iata_code: str) -> dict | None:
         """Получить информацию об аэропорте с логированием"""
         self.logger.info(f"🛫 [FlyStack] Запрос информации об аэропорте: {iata_code}")
         return await self._request("airports", {"iata_code": iata_code})
@@ -122,7 +122,7 @@ class FlyStackClient:
         latitude: float,
         longitude: float,
         radius: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict]:
         """Найти аэропорты поблизости с логированием"""
         self.logger.info(f"📍 [FlyStack] Поиск аэропортов рядом: {latitude}, {longitude} (радиус: {radius} км)")
         return await self._request("airports-nearby", {
@@ -132,12 +132,12 @@ class FlyStackClient:
         }) or []
     
     # ========== CITIES & COUNTRIES ==========
-    async def get_city(self, iata_code: str) -> Optional[Dict[str, Any]]:
+    async def get_city(self, iata_code: str) -> dict | None:
         """Получить информацию о городе с логированием"""
         self.logger.info(f"🏙️ [FlyStack] Запрос информации о городе: {iata_code}")
         return await self._request("cities", {"iata_code": iata_code})
     
-    async def get_country(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_country(self, code: str) -> dict | None:
         """Получить информацию о стране с логированием"""
         self.logger.info(f"🌍 [FlyStack] Запрос информации о стране: {code}")
         return await self._request("countries", {"code": code})
@@ -145,10 +145,10 @@ class FlyStackClient:
     # ========== ROUTES & SCHEDULES ==========
     async def get_routes(
         self,
-        airline_iata: Optional[str] = None,
-        origin_iata: Optional[str] = None,
-        destination_iata: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        airline_iata: str | None = None,
+        origin_iata: str | None = None,
+        destination_iata: str | None = None
+    ) -> list[dict]:
         """Получить маршруты с логированием"""
         self.logger.info("🗺️ [FlyStack] Запрос маршрутов")
         self.logger.debug(f"📝 [FlyStack] Параметры: airline={airline_iata}, origin={origin_iata}, destination={destination_iata}")
@@ -168,7 +168,7 @@ class FlyStackClient:
         airport_iata: str,
         date: str,
         flight_type: str = "departure"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict]:
         """Получить расписание рейсов аэропорта с логированием"""
         self.logger.info(f"📅 [FlyStack] Запрос расписания для аэропорта {airport_iata} на {date}")
         return await self._request("schedules", {
@@ -183,7 +183,7 @@ class FlyStackClient:
         airport_iata: str,
         date: str,
         flight_type: str = "departure"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict]:
         """Получить информацию о задержках рейсов с логированием"""
         self.logger.info(f"⏳ [FlyStack] Запрос задержек для аэропорта {airport_iata} на {date}")
         return await self._request("delays", {
@@ -193,7 +193,7 @@ class FlyStackClient:
         }) or []
     
     # ========== TIMEZONES ==========
-    async def get_timezone(self, timezone: str) -> Optional[Dict[str, Any]]:
+    async def get_timezone(self, timezone: str) -> dict | None:
         """Получить информацию о часовом поясе с логированием"""
         self.logger.info(f"🕒 [FlyStack] Запрос информации о часовом поясе: {timezone}")
         return await self._request("timezones", {"timezone": timezone})
@@ -201,7 +201,7 @@ class FlyStackClient:
 # Singleton
 flystack_client = FlyStackClient()
 
-def format_flight_details(data: Dict[str, Any]) -> str:
+def format_flight_details(data: dict) -> str:
     """Форматирует информацию о рейсе для Telegram с логированием"""
     logger.debug(f"📝 [FlyStack] Форматируем данные рейса: {data}")
     

@@ -12,7 +12,7 @@ async def search_transfers(
     airport_iata: str,
     transfer_date: str,
     adults: int = 1
-) -> List[Dict[str, Any]]:
+) -> list[dict]:
     """
     Ищет трансферы из аэропорта через GetTransfer API
     
@@ -63,8 +63,8 @@ async def search_transfers(
 
 def generate_transfer_link(
     transfer_id: str,
-    marker: Optional[str] = None,
-    sub_id: Optional[str] = None
+    marker: str | None = None,
+    sub_id: str | None = None
 ) -> str:
     """
     Генерирует партнёрскую ссылку на бронирование трансфера
