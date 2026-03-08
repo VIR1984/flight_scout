@@ -434,8 +434,13 @@ class TestMsDest:
             return msg, state
 
     async def test_known_city_saves_iata(self):
-        _, state = await self._run("Стамбул")
-        assert state._data.get("_cur_dest_iata") is not None
+        # Сочи (AER) — гарантированно есть в MANUAL_ALIASES (без API)
+        _, state = await self._run("Сочи", {
+            "segments": [],
+            "_cur_origin_iata": "MOW",
+            "_cur_origin_name": "Москва",
+        })
+        assert state._data.get("_cur_dest_iata") == "AER"
 
     async def test_known_city_transitions_to_date(self):
         _, state = await self._run("Сочи")
