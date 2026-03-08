@@ -146,6 +146,44 @@ class RedisClient:
         await self.client.expire(key, 86400 * 7)
         return sub_id
 
+    async def save_price_watch(
+        self,
+        user_id: int,
+        origin: str,
+        dest: str,
+        depart_date: str,
+        return_date: str | None,
+        current_price: int,
+        passengers: str = "1",
+        threshold: int = 0,
+    ) -> str:
+        """
+        Сохранить отслеживание цены на маршрут.
+        Возвращает watch_key.
+        Хранится 90 дней.
+        """
+        if not self.client:
+            return ""
+        import uuid as _uuid
+        watch_id = str(_uuid.uuid4())[:8]
+        watch_key = f"{self.prefix}watch:{user_id}:{watch_id}"
+        data = {
+            "user_id":       str(user_id),
+            "origin":        origin or "",
+            "dest":          dest or "",
+            "depart_date":   depart_date or "",
+            "return_date":   return_date or "",
+            "current_price": current_price,
+            "passengers":    passengers,
+            "threshold":     threshold,
+            "created_at":    __import__("time").time(),
+            "watch_key":     watch_key,
+        }
+        await self.client.set(watch_key, json.dumps(data, ensure_ascii=False), ex=86400 * 90)
+        await self.client.sadd(f"{self.prefix}user:watches:{user_id}", watch_key)
+        logger.info(f"✅ [PriceWatch] {origin}→{dest} {depart_date} порог={threshold} user={user_id}")
+        return watch_key
+
     async def save_hot_sub(self, user_id: int, sub: dict) -> str:
         """Сохранить горячую/дайджест-подписку. Возвращает sub_id."""
         if not self.client:
