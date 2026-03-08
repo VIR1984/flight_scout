@@ -3,27 +3,26 @@ test_multi_search.py
 ====================
 Тесты для составного (мульти-сегментного) поиска авиабилетов.
 
-Запуск из корня проекта:
-    pytest tests/ -v
-    pytest tests/test_multi_search.py -v
+Покрывает:
+  - Вспомогательные функции (_resolve_city, _validate_date, _build_multi_link,
+    _segments_summary, _build_pax_code, _build_pax_desc)
+  - FSM-шаги: ввод города вылета (ms_origin), прибытия (ms_dest), даты (ms_date)
+  - Кнопки управления: ms_add_segment, ms_done_segments
+  - Пассажиры: ms_adults, ms_has_children, ms_children, ms_infants
+  - Экран подтверждения: _show_multi_summary, ms_edit_pax
+  - Финальный шаг: ms_confirm (генерация ссылки)
+  - Интеграционный сценарий: полный маршрут из 2 сегментов
 
-Запуск напрямую:
-    python tests/test_multi_search.py
+Запуск:
+    pytest test_multi_search.py -v
 
 Не требует Redis и реальных API — все зависимости мокируются.
 """
 
 import asyncio
 import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-
-# Корень проекта в sys.path — нужно при запуске напрямую (python tests/test_multi_search.py)
-# При запуске через pytest корень добавляет conftest.py
-_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pytest
 

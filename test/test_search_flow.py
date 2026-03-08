@@ -4,11 +4,12 @@ test_search_flow.py
 Тесты для FSM-поиска, быстрого поиска (quick_search),
 поиска «Везде», кнопок результатов и слежения за ценой.
 
-Запуск:
-    pytest test_search_flow.py -v
+Запуск из корня проекта:
+    pytest tests/ -v
+    pytest tests/test_search_flow.py -v
 
-Зависимости (сверх стандартных):
-    pip install pytest pytest-asyncio aiogram
+Запуск напрямую:
+    python tests/test_search_flow.py
 
 Файл НЕ требует реального Redis и НЕ делает реальных запросов к API —
 все внешние зависимости мокируются.
@@ -19,8 +20,15 @@ import json
 import re
 import sys
 import types
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from uuid import uuid4
+
+# Корень проекта в sys.path — нужно при запуске напрямую (python tests/test_search_flow.py)
+# При запуске через pytest корень добавляет conftest.py
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pytest
 import pytest_asyncio

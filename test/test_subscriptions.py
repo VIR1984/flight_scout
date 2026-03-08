@@ -2,11 +2,11 @@
 """
 test_subscriptions.py — тест подписочной системы FlightBot Scout.
 
-Запуск локально (тест-бот):
-    cd "ТЕСТ WOW Bilet" && python test_subscriptions.py
+Запуск локально (из корня проекта):
+    python tests/test_subscriptions.py
 
 Запуск на сервере:
-    cd /app && python test_subscriptions.py
+    cd /app && python tests/test_subscriptions.py
 
 Что проверяет:
   Блок 1: Redis — соединение, prefix (dev/prod)
@@ -19,6 +19,14 @@ test_subscriptions.py — тест подписочной системы FlightB
 
 import asyncio, os, sys, time, json, calendar
 from datetime import date, timedelta, datetime
+from pathlib import Path
+
+# ── sys.path: корень проекта ───────────────────────────────────────────────────
+# Файл живёт в tests/ — добавляем родительскую папку чтобы импорты
+# вида "from utils.redis_client import redis_client" работали.
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 # ── Цвета ─────────────────────────────────────────────────────────────────────
 G = "\033[92m"; Y = "\033[93m"; R = "\033[91m"; B = "\033[96m"
