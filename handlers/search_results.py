@@ -113,12 +113,19 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         if success:
             await state.clear()
         else:
+            _o = data.get('origin_iata', 'MOW')
+            _d = country_iatas[0] if country_iatas else ''
+            _d1 = format_avia_link_date(data.get('depart_date', ''))
+            _pax = data.get('passenger_code', '1')
+            _url = await convert_to_partner_link(f"https://www.aviasales.ru/search/{_o}{_d1}{_d}{_pax}")
             await callback.message.edit_text(
-                f"😔 <b>Ничего не найдено</b>\n\nИз <b>{data.get('origin_name', '')}</b> в <b>{country_name}</b> "
-                f"на <b>{data.get('depart_date', '')}</b> рейсов не нашлось.\n\n"
-                "Попробуйте другую дату.",
+                f"😔 <b>К сожалению, нет данных по этому маршруту</b>\n\n"
+                f"Из <b>{data.get('origin_name', '')}</b> в <b>{country_name}</b> "
+                f"на <b>{data.get('depart_date', '')}</b> данных нет.\n\n"
+                "Актуальные цены смотри на Aviasales 👇",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔍 Найти на Aviasales", url=_url)],
                     [InlineKeyboardButton(text="🔄 Новый поиск", callback_data="start_search")],
                     [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
                 ]),
@@ -139,12 +146,18 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         if success:
             await state.clear()
         else:
+            _d = data.get('dest_iata', '')
+            _d1 = format_avia_link_date(data.get('depart_date', ''))
+            _pax = data.get('passenger_code', '1')
+            _url = await convert_to_partner_link(f"https://www.aviasales.ru/search/MOW{_d1}{_d}{_pax}")
             await callback.message.edit_text(
-                f"😔 <b>Ничего не найдено</b>\n\nПо направлению <b>Везде → {data.get('dest_name', '')}</b> "
-                f"на <b>{data.get('depart_date', '')}</b> рейсов не нашлось.\n\n"
-                "Попробуйте другую дату или направление.",
+                f"😔 <b>К сожалению, нет данных по этому маршруту</b>\n\n"
+                f"По направлению <b>Везде → {data.get('dest_name', '')}</b> "
+                f"на <b>{data.get('depart_date', '')}</b> данных нет.\n\n"
+                "Актуальные цены смотри на Aviasales 👇",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔍 Найти на Aviasales", url=_url)],
                     [InlineKeyboardButton(text="🔄 Новый поиск", callback_data="start_search")],
                     [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
                 ]),
@@ -164,12 +177,18 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
         if success:
             await state.clear()
         else:
+            _o = data.get('origin_iata', 'MOW')
+            _d1 = format_avia_link_date(data.get('depart_date', ''))
+            _pax = data.get('passenger_code', '1')
+            _url = await convert_to_partner_link(f"https://www.aviasales.ru/search/{_o}{_d1}MOW{_pax}")
             await callback.message.edit_text(
-                f"😔 <b>Ничего не найдено</b>\n\nИз <b>{data.get('origin_name', '')}</b> "
-                f"на <b>{data.get('depart_date', '')}</b> рейсов не нашлось.\n\n"
-                "Попробуйте другую дату или направление.",
+                f"😔 <b>К сожалению, нет данных по этому маршруту</b>\n\n"
+                f"Из <b>{data.get('origin_name', '')}</b> "
+                f"на <b>{data.get('depart_date', '')}</b> данных нет.\n\n"
+                "Актуальные цены смотри на Aviasales 👇",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔍 Найти на Aviasales", url=_url)],
                     [InlineKeyboardButton(text="🔄 Новый поиск", callback_data="start_search")],
                     [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
                 ]),
@@ -512,7 +531,8 @@ async def _show_no_flights(callback: CallbackQuery, data: dict,
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     await callback.message.edit_text(
-        "😔 <b>Билеты не найдены.</b>\n\nПопробуйте изменить даты или маршрут.",
+        "😔 <b>К сожалению, нет данных по этому маршруту</b>\n\n"
+        "Актуальные цены смотри напрямую на Aviasales 👇",
         parse_mode="HTML", reply_markup=kb,
     )
 

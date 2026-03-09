@@ -60,7 +60,20 @@ class HotDealsSub(StatesGroup):
 CATEGORIES = {
     "sea":    ("🏖️ Морские курорты",    ["AYT","HRG","SSH","RHO","DLM","LCA","TFS","PMI","CFU","HER","PFO","AER","SIP","BUS"]),
     "world":  ("🌍 Путешествия по миру", ["DXB","BKK","SIN","KUL","HKT","CMB","NBO","GRU","JFK","LAX","YYZ","ICN","TYO","PEK","DEL"]),
-    "russia": ("🇷🇺 По России",          ["AER","LED","KZN","OVB","SVX","ROV","UFA","CEK","KRR","VOG","MCX","GRV","KUF","IKT","VVO"]),
+    "russia": ("🇷🇺 По России",          [
+        # Юг и курорты
+        "AER","KRR","MRV","NAL","MCX","GRV","ESL","ASF",
+        # Центр и Поволжье
+        "LED","KZN","KUF","VOG","PEE","ULY","GOJ","RTW",
+        # Урал и Сибирь
+        "SVX","UFA","CEK","OVB","KJA","OMS","TJM","TOF",
+        # Дальний Восток
+        "VVO","IKT","UUS","PKC","GDX","UUD",
+        # Северо-Запад
+        "KGD","MMK","ARH","PES",
+        # Уже были
+        "ROV",
+    ]),
     "custom": ("🔍 Свой маршрут",   []),  # пользователь вводит сам
 }
 
@@ -83,10 +96,12 @@ CATEGORY_PRESETS = {
     ],
     "russia": [
         ("🏙️ Москва",               ["SVO","DME","VKO"]),
-        ("🌊 Сочи",                  ["AER"]),
+        ("🌊 Сочи / Юг",            ["AER","KRR","MRV","NAL","ASF"]),
         ("🏛️ Санкт-Петербург",      ["LED"]),
-        ("🕌 Казань",                ["KZN"]),
+        ("🕌 Казань / Поволжье",    ["KZN","KUF","GOJ","ULY"]),
         ("🌊 Калининград",           ["KGD"]),
+        ("🏔️ Урал / Сибирь",        ["SVX","UFA","CEK","OVB","KJA","OMS"]),
+        ("🌏 Дальний Восток",        ["VVO","IKT","UUS","PKC"]),
         ("✏️ Свой вариант",         None),
     ],
 }

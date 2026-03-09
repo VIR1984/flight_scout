@@ -26,6 +26,7 @@ from utils.api_limiter import BACKGROUND_SEMAPHORE
 from utils.link_converter import convert_to_partner_link
 from services.flight_search import search_flights, generate_booking_link
 from utils.cities_loader import get_city_name
+from utils.trip_link import build_trip_link, is_trip_supported
 
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
@@ -583,11 +584,19 @@ class HotDealsSender:
             flight=flight, origin=origin_iata, dest=dest_iata,
             depart_date=depart_str, passengers_code=str(passengers), return_date=None,
         ))
-        kb = InlineKeyboardMarkup(inline_keyboard=[
+        kb_rows = [
             [InlineKeyboardButton(text=f"✈️ Забронировать за {price:,} ₽".replace(",", "\u202f"), url=booking_link)],
-            [InlineKeyboardButton(text="❌ Отписаться", callback_data=f"hd_del_{sub_id}")],
-            [InlineKeyboardButton(text="↩️ В начало",  callback_data="main_menu")],
-        ])
+        ]
+        # Кнопка Trip.com — альтернативная площадка
+        _trip_url = build_trip_link(
+            origin=origin_iata, dest=dest_iata,
+            depart_date=depart_str, passengers_code=str(passengers),
+        )
+        if _trip_url and is_trip_supported(origin_iata, dest_iata):
+            kb_rows.append([InlineKeyboardButton(text="🌐 Сравнить на Trip.com", url=_trip_url)])
+        kb_rows.append([InlineKeyboardButton(text="❌ Отписаться", callback_data=f"hd_del_{sub_id}")])
+        kb_rows.append([InlineKeyboardButton(text="↩️ В начало",  callback_data="main_menu")])
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
         try:
             await self.bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb)
@@ -769,6 +778,16 @@ class HotDealsSender:
                 text=f"✈️ {dest_name} — {price:,} ₽".replace(",", "\u202f"),
                 url=booking_link,
             )])
+            # Trip.com для каждого направления дайджеста
+            _trip_url = build_trip_link(
+                origin=orig_iata, dest=dest_iata,
+                depart_date=depart_date, passengers_code=str(passengers),
+            )
+            if _trip_url and is_trip_supported(orig_iata, dest_iata):
+                kb_buttons.append([InlineKeyboardButton(
+                    text=f"🌐 {dest_name} на Trip.com",
+                    url=_trip_url,
+                )])
 
         text += "⚠️ <i>Цены актуальны на момент отправки и могут изменяться.</i>"
         kb_buttons.append([InlineKeyboardButton(text="❌ Отписаться от дайджеста", callback_data=f"hd_del_{sub_id}")])

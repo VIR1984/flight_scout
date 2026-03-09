@@ -219,17 +219,13 @@ def build_trip_link(
 
 def is_trip_supported(origin: str, dest: str) -> bool:
     """
-    Проверяет что оба города есть в базе Trip.com.
-    Если IATA не в маппинге — скорее всего небольшой региональный аэропорт
-    которого нет на Trip.com. Возвращаем True только для известных кодов.
-    Для городов не в маппинге — всё равно пробуем (большинство IATA работает).
+    Проверяет что маршрут поддерживается Trip.com.
+    Trip.com покрывает большинство российских маршрутов включая внутренние.
+    Отключаем только для совсем маленьких региональных аэропортов.
     """
-    # Trip.com покрывает большинство международных маршрутов
-    # Не показываем кнопку только для явно внутренних/региональных маршрутов России
-    # где Trip.com заведомо не работает
-    UNSUPPORTED_DOMESTIC = {
-        # Небольшие региональные аэропорты России без международного трафика
-        "UFA", "KZN", "ROV", "KRR", "MRV", "NAL", "MCX",
-        "GRV", "STW", "IGT", "ESL", "GDZ",
+    # Очень маленькие аэропорты без представительства на Trip.com
+    UNSUPPORTED = {
+        "NAL", "ESL", "IGT", "STW", "GDZ", "MRV",
+        "GDX", "UUS", "PKC", "UUD", "PES", "MMK", "ARH",
     }
-    return origin.upper() not in UNSUPPORTED_DOMESTIC and dest.upper() not in UNSUPPORTED_DOMESTIC
+    return origin.upper() not in UNSUPPORTED and dest.upper() not in UNSUPPORTED

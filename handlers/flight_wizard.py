@@ -299,8 +299,9 @@ async def process_depart_date(message: Message, state: FSMContext):
             await show_summary(message, state)
             return
         if data.get("need_return"):
+            _dep_hint = data.get("depart_date") or hint_depart()
             await message.answer(
-                f"✏️ Введи новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
+                f"✏️ Введи новую дату обратного рейса в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(_dep_hint)}</i>",
                 parse_mode="HTML", reply_markup=CANCEL_KB,
             )
             await state.set_state(FlightSearch.return_date)
@@ -337,9 +338,11 @@ async def process_need_return(callback: CallbackQuery, state: FSMContext):
     need_return = callback.data == "return_yes"
     await state.update_data(need_return=need_return)
     if need_return:
+        data = await state.get_data()
+        _dep_hint = data.get("depart_date") or hint_depart()
         await callback.message.edit_text(
             f"✈️ <b>3/6</b> — Дата возврата\n\n"
-            f"Введи дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(hint_depart())}</i>",
+            f"Введи дату возврата в формате <code>ДД.ММ</code>\n<i>Пример: {hint_return(_dep_hint)}</i>",
             parse_mode="HTML",
             reply_markup=CANCEL_KB,
         )
@@ -366,8 +369,10 @@ async def need_return_to_menu(message: Message, state: FSMContext):
 @router.message(FlightSearch.return_date)
 async def process_return_date(message: Message, state: FSMContext):
     if not validate_date(message.text):
+        data = await state.get_data()
+        _dep_hint = data.get("depart_date") or hint_depart()
         await message.answer(
-            f"❌ Неверный формат даты.\n<i>Пример: {hint_return(hint_depart())}</i>",
+            f"❌ Неверный формат даты.\n<i>Пример: {hint_return(_dep_hint)}</i>",
             parse_mode="HTML", reply_markup=CANCEL_KB,
         )
         return

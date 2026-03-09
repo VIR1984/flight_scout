@@ -26,16 +26,17 @@ def hint_depart(gap_days: int = 7) -> str:
 def hint_return(depart_hint: str, gap_days: int = 7) -> str:
     """
     Пример даты возврата — через gap_days дней после даты вылета.
-    depart_hint — строка ДД.ММ, возвращённая hint_depart().
+    depart_hint — строка ДД.ММ (либо введённая пользователем, либо из hint_depart()).
     Формат: ДД.ММ
     """
-    day, month = map(int, depart_hint.split("."))
-    year = date.today().year
+    today = date.today()
+    year  = today.year
     try:
+        day, month = map(int, depart_hint.split("."))
         dep = date(year, month, day)
-    except ValueError:
-        dep = date.today() + timedelta(days=7)
+    except (ValueError, AttributeError):
+        dep = today + timedelta(days=7)
     # Если дата уже в прошлом — берём следующий год
-    if dep < date.today():
+    if dep < today:
         dep = dep.replace(year=year + 1)
     return (dep + timedelta(days=gap_days)).strftime("%d.%m")
