@@ -22,20 +22,14 @@ from typing import Optional
 from aiogram import Router, F
 from aiogram.types import (
     CallbackQuery,
-    Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    LabeledPrice,
-    PreCheckoutQuery,
 )
 
 from utils.redis_client import redis_client
 from utils.logger import logger
 
 router = Router()
-
-# Токен провайдера ЮКасса из BotFather (Payments → ЮКасса Live)
-PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "").strip()
 
 # ══════════════════════════════════════════════════════════════════
 #  КОНФИГУРАЦИЯ ТАРИФОВ  ← меняй только здесь
@@ -57,7 +51,7 @@ PLANS: dict[str, dict] = {
     "plus": {
         "label":           "Плюс",
         "emoji":           "⚡️",
-        "price_rub":       1,
+        "price_rub":       149,
         "hot_limit":       10,
         "digest_limit":    10,
         "watch_limit":     10,
@@ -230,7 +224,7 @@ async def can_add_sub(
         reason = (
             f"Использовано <b>{current} из {limit}</b> {tl} на бесплатном тарифе.\n\n"
             f"Хочешь больше?\n"
-            f"⚡️ <b>Плюс</b> — до 10 каждого типа · 1\u202f\u20bd/мес\n"
+            f"⚡️ <b>Плюс</b> — до 10 каждого типа · 149\u202f\u20bd/мес\n"
             f"💎 <b>Премиум</b> — безлимит + FlyStack · 349\u202f\u20bd/мес"
         )
     elif plan_key == "plus":
@@ -363,7 +357,6 @@ async def billing_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("billing_buy:"))
 async def billing_buy(callback: CallbackQuery):
-    """Отправляем инвойс ЮКасса через Telegram Payments."""
     user_id  = callback.from_user.id
     username = callback.from_user.username
     plan_key = callback.data.split(":", 1)[1]
@@ -382,164 +375,17 @@ async def billing_buy(callback: CallbackQuery):
         await callback.answer("У тебя уже активен этот тариф!", show_alert=True)
         return
 
-    if not PAYMENT_PROVIDER_TOKEN:
-        await callback.answer("Оплата временно недоступна", show_alert=True)
-        logger.error("[Billing] PAYMENT_PROVIDER_TOKEN не задан")
-        return
-
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ Назад к тарифам", callback_data="billing_menu")],
+    ])
+    await callback.message.edit_text(
+        f"{cfg['emoji']} <b>Тариф {cfg['label']}</b>\n\n"
+        f"Стоимость: <b>{cfg['price_rub']}\u202f\u20bd/мес</b>\n\n"
+        "Оплата в разработке — скоро появится возможность оформить подписку.\n\n"
+        "<i>Сообщим, как только будет готово.</i>",
+        parse_mode="HTML", reply_markup=kb,
+    )
     await callback.answer()
-
-    price_kopecks = cfg["price_rub"] * 100  # ЮКасса принимает в копейках
-
-    # payload = plan_key:user_id — используем при подтверждении оплаты
-    payload = f"{plan_key}:{user_id}"
-
-    benefits = {
-        "plus": (
-            "✅ До 10 горячих предложений\n"
-            "✅ До 10 дайджест-подписок\n"
-            "✅ До 10 слежений за ценой\n"
-            "✅ Приоритетные уведомления\n"
-            "✅ Мульти-поиск по городам и датам"
-        ),
-        "premium": (
-            "✅ Безлимитные подписки\n"
-            "✅ 20 токенов FlyStack\n"
-            "✅ Приоритетные уведомления\n"
-            "✅ Мульти-поиск по городам и датам\n"
-            "✅ Все возможности бота без ограничений"
-        ),
-    }
-    description = benefits.get(plan_key, f"Тариф {cfg['label']} на 30 дней")
-
-    try:
-        await callback.message.answer_invoice(
-            title=f"{cfg['emoji']} WOW Bilet {cfg['label']}",
-            description=description,
-            payload=payload,
-            provider_token=PAYMENT_PROVIDER_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice(label=f"Тариф {cfg['label']} (30 дней)", amount=price_kopecks)],
-            need_email=False,
-            need_phone_number=False,
-            need_shipping_address=False,
-            is_flexible=False,
-            protect_content=False,
-        )
-    except Exception as e:
-        logger.error(f"[Billing] Ошибка отправки инвойса: {e}")
-        await callback.message.answer(
-            "❌ Не удалось создать платёж. Попробуй позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="↩️ Назад к тарифам", callback_data="billing_menu")],
-            ]),
-        )
-
-
-# ══════════════════════════════════════════════════════════════════
-#  Telegram Payments: pre_checkout и successful_payment
-# ══════════════════════════════════════════════════════════════════
-
-@router.pre_checkout_query()
-async def pre_checkout_handler(pre_checkout: PreCheckoutQuery):
-    """
-    Telegram вызывает этот хендлер перед списанием.
-    Нужно ответить ok в течение 10 секунд.
-    """
-    try:
-        payload = pre_checkout.invoice_payload  # "plan_key:user_id"
-        parts   = payload.split(":", 1)
-        if len(parts) != 2 or parts[0] not in PLANS:
-            await pre_checkout.answer(ok=False, error_message="Неверный платёж. Попробуй снова.")
-            return
-
-        # Idempotency: проверяем не обработан ли уже этот платёж
-        pay_id  = str(pre_checkout.id)
-        already = await redis_client.client.get(f"{redis_client.prefix}payment_done:{pay_id}")
-        if already:
-            await pre_checkout.answer(ok=False, error_message="Этот платёж уже обработан.")
-            return
-
-        await pre_checkout.answer(ok=True)
-        logger.info(f"[Billing] pre_checkout OK: payload={payload} amount={pre_checkout.total_amount}")
-
-    except Exception as e:
-        logger.error(f"[Billing] pre_checkout error: {e}")
-        await pre_checkout.answer(ok=False, error_message="Внутренняя ошибка. Попробуй позже.")
-
-
-@router.message(F.successful_payment)
-async def successful_payment_handler(message: Message):
-    """
-    Telegram присылает это сообщение после успешного списания.
-    Активируем тариф в Redis.
-    """
-    payment  = message.successful_payment
-    payload  = payment.invoice_payload          # "plan_key:user_id"
-    pay_id   = payment.telegram_payment_charge_id
-    amount   = payment.total_amount // 100      # копейки → рубли
-    user_id  = message.from_user.id
-
-    try:
-        parts    = payload.split(":", 1)
-        plan_key = parts[0]
-        cfg      = PLANS.get(plan_key)
-
-        if not cfg:
-            logger.error(f"[Billing] successful_payment: неизвестный план {plan_key}")
-            await message.answer("⚠️ Платёж получен, но план не распознан. Напиши в поддержку.")
-            return
-
-        # Idempotency: помечаем платёж обработанным (TTL 90 дней)
-        idem_key = f"{redis_client.prefix}payment_done:{pay_id}"
-        already  = await redis_client.client.get(idem_key)
-        if already:
-            logger.warning(f"[Billing] Дубликат платежа {pay_id} — игнорируем")
-            return
-        await redis_client.client.set(idem_key, "1", ex=90 * 86400)
-
-        # Активируем тариф
-        now      = int(time.time())
-        expires  = now + PLAN_DURATION_DAYS * 86400
-        plan_rec = {
-            "plan":       plan_key,
-            "expires_at": expires,
-            "paid_at":    now,
-            "payment_id": pay_id,
-            "amount_rub": amount,
-        }
-        await _persist_plan(user_id, plan_rec)
-
-        # Начисляем FlyStack токены если есть в тарифе
-        fs_tokens = cfg.get("flystack_tokens", 0)
-        if fs_tokens > 0:
-            await _credit_flystack(user_id, fs_tokens)
-
-        exp_str = datetime.fromtimestamp(expires).strftime("%d.%m.%Y")
-        fs_line = f"\n🎯 Начислено <b>{fs_tokens} токенов FlyStack</b>" if fs_tokens else ""
-
-        logger.info(f"[Billing] ✅ user={user_id} план={plan_key} pay_id={pay_id} сумма={amount}₽")
-
-        await message.answer(
-            f"✅ <b>Оплата прошла успешно!</b>\n\n"
-            f"{cfg['emoji']} Тариф <b>{cfg['label']}</b> активирован.\n"
-            f"📅 Действует до: <b>{exp_str}</b>\n"
-            f"💰 Списано: <b>{amount} ₽</b>"
-            f"{fs_line}\n\n"
-            f"Спасибо, что выбрал WOW Bilet! ✈️",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Мои подписки", callback_data="subs_menu")],
-                [InlineKeyboardButton(text="↩️ В начало",    callback_data="main_menu")],
-            ]),
-        )
-
-    except Exception as e:
-        logger.error(f"[Billing] successful_payment error: {e}")
-        await message.answer(
-            "✅ Платёж получен, но возникла ошибка активации.\n"
-            "Напиши нам — разберёмся в течение часа.",
-        )
 
 
 @router.callback_query(F.data == "billing_status")
