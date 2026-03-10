@@ -57,7 +57,7 @@ PLANS: dict[str, dict] = {
     "plus": {
         "label":           "Плюс",
         "emoji":           "⚡️",
-        "price_rub":       149,
+        "price_rub":       1,
         "hot_limit":       10,
         "digest_limit":    10,
         "watch_limit":     10,
@@ -230,7 +230,7 @@ async def can_add_sub(
         reason = (
             f"Использовано <b>{current} из {limit}</b> {tl} на бесплатном тарифе.\n\n"
             f"Хочешь больше?\n"
-            f"⚡️ <b>Плюс</b> — до 10 каждого типа · 149\u202f\u20bd/мес\n"
+            f"⚡️ <b>Плюс</b> — до 10 каждого типа · 1\u202f\u20bd/мес\n"
             f"💎 <b>Премиум</b> — безлимит + FlyStack · 349\u202f\u20bd/мес"
         )
     elif plan_key == "plus":
