@@ -415,6 +415,7 @@ async def billing_buy(callback: CallbackQuery):
     }
     description = benefits.get(plan_key, f"Тариф {cfg['label']} на 30 дней")
 
+    logger.info(f"[Billing] 📤 отправляем инвойс: user={user_id} plan={plan_key} amount={cfg['price_rub']}₽ token={PAYMENT_PROVIDER_TOKEN[:15]}...")
     try:
         await callback.message.answer_invoice(
             title=f"{cfg['emoji']} WOW Bilet {cfg['label']}",
@@ -456,9 +457,15 @@ async def pre_checkout_handler(pre_checkout: PreCheckoutQuery):
             return
         # Отвечаем сразу — не ждём Redis
         await pre_checkout.answer(ok=True)
-        logger.info(f"[Billing] pre_checkout OK payload={pre_checkout.invoice_payload}")
+        logger.info(
+            f"[Billing] ✅ pre_checkout OK "
+            f"payload={pre_checkout.invoice_payload} "
+            f"amount={pre_checkout.total_amount} "
+            f"currency={pre_checkout.currency} "
+            f"user={pre_checkout.from_user.id}"
+        )
     except Exception as e:
-        logger.error(f"[Billing] pre_checkout error: {e}")
+        logger.error(f"[Billing] ❌ pre_checkout error: {e}", exc_info=True)
         try:
             await pre_checkout.answer(ok=True)  # лучше пропустить чем таймаут
         except Exception:
@@ -473,6 +480,13 @@ async def successful_payment_handler(message: Message):
     pay_id   = payment.telegram_payment_charge_id
     amount   = payment.total_amount // 100
     user_id  = message.from_user.id
+
+    logger.info(
+        f"[Billing] 💳 successful_payment получен: "
+        f"user={user_id} payload={payload} "
+        f"pay_id={pay_id} amount={amount}₽ "
+        f"provider_charge_id={payment.provider_payment_charge_id}"
+    )
 
     try:
         plan_key = payload.split(":", 1)[0]
@@ -526,7 +540,7 @@ async def successful_payment_handler(message: Message):
             ]),
         )
     except Exception as e:
-        logger.error(f"[Billing] successful_payment error: {e}")
+        logger.error(f"[Billing] ❌ successful_payment error: {e}", exc_info=True)
         await message.answer("✅ Платёж получен, но возникла ошибка активации. Напиши нам — разберёмся.")
 
 
