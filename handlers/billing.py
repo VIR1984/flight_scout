@@ -401,18 +401,16 @@ async def billing_buy(callback: CallbackQuery):
 
     benefits = {
         "plus": (
-            "✅ До 20 горячих предложений\n"
-            "✅ До 10 дайджест-подписок\n"
-            "✅ До 15 слежений за ценой\n"
-            "✅ Мгновенные уведомления\n"
-            "✅ Мульти-поиск по городам и датам"
+            "20 горячих · 10 дайджест · 15 слежений\n"
+            "⚡️ Мгновенные уведомления\n"
+            "🗺 Мульти-поиск по городам и датам\n"
+            "Подписка на 30 дней"
         ),
         "premium": (
-            "✅ Безлимитные подписки\n"
-            "✅ 20 токенов FlyStack\n"
-            "✅ Мгновенные уведомления\n"
-            "✅ Мульти-поиск по городам и датам\n"
-            "✅ Все возможности без ограничений"
+            "∞ Горячих · ∞ Дайджест · ∞ Слежений\n"
+            "⚡️ Мгновенные уведомления\n"
+            "🗺 Мульти-поиск · 🎯 20 токенов FlyStack\n"
+            "Все возможности без ограничений · 30 дней"
         ),
     }
     description = benefits.get(plan_key, f"Тариф {cfg['label']} на 30 дней")
@@ -446,22 +444,25 @@ async def billing_buy(callback: CallbackQuery):
 
 @router.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout: PreCheckoutQuery):
-    """Отвечаем ok в течение 10 секунд — иначе платёж отменится."""
+    """
+    Отвечаем ok НЕМЕДЛЕННО — Telegram даёт только 10 секунд.
+    Любые проверки (Redis и т.д.) делаем ПОСЛЕ ответа, в successful_payment.
+    """
     try:
+        # Минимальная проверка — payload корректен
         parts = pre_checkout.invoice_payload.split(":", 1)
         if len(parts) != 2 or parts[0] not in PLANS:
             await pre_checkout.answer(ok=False, error_message="Неверный платёж. Попробуй снова.")
             return
-        pay_id  = str(pre_checkout.id)
-        already = await redis_client.client.get(f"{redis_client.prefix}payment_done:{pay_id}")
-        if already:
-            await pre_checkout.answer(ok=False, error_message="Этот платёж уже обработан.")
-            return
+        # Отвечаем сразу — не ждём Redis
         await pre_checkout.answer(ok=True)
         logger.info(f"[Billing] pre_checkout OK payload={pre_checkout.invoice_payload}")
     except Exception as e:
         logger.error(f"[Billing] pre_checkout error: {e}")
-        await pre_checkout.answer(ok=False, error_message="Внутренняя ошибка. Попробуй позже.")
+        try:
+            await pre_checkout.answer(ok=True)  # лучше пропустить чем таймаут
+        except Exception:
+            pass
 
 
 @router.message(F.successful_payment)
