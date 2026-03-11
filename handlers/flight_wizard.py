@@ -185,7 +185,7 @@ async def process_route(message: Message, state: FSMContext):
             metro = _get_metro(orig_iata)
             await state.update_data(_edit_mode=True, origin_airports=None, origin_airport_label=None)
             await message.answer(
-                f"Ты выбрал: <b>{origin_name}</b>\n\n"
+                
                 f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выбери нужный:",
                 parse_mode="HTML",
                 reply_markup=_airport_keyboard(metro, origin_name),
@@ -200,7 +200,7 @@ async def process_route(message: Message, state: FSMContext):
         metro = _get_metro(orig_iata)
         await state.update_data(origin_airports=None, origin_airport_label=None)
         await message.answer(
-            f"Ты выбрал: <b>{origin_name}</b>\n\n"
+            
             f"Из {_genitive(origin_name)} летают из нескольких аэропортов — выбери нужный:",
             parse_mode="HTML",
             reply_markup=_airport_keyboard(metro, origin_name),
@@ -380,13 +380,19 @@ async def process_return_date(message: Message, state: FSMContext):
     data = await state.get_data()
     norm_depart = normalize_date(data.get("depart_date", ""))
     norm_return = normalize_date(message.text)
-    if norm_return and norm_depart and norm_return <= norm_depart:
-        await message.answer(
-            "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
-            "Укажи правильную дату возврата.",
-            reply_markup=CANCEL_KB,
-        )
-        return
+
+    # Если return перенёсся на следующий год а depart нет — сравниваем честно:
+    # берём год из norm_depart и подставляем в return для сравнения
+    if norm_return and norm_depart:
+        dep_year = norm_depart[:4]
+        ret_comparable = dep_year + norm_return[4:]  # тот же год что у вылета
+        if ret_comparable <= norm_depart:
+            await message.answer(
+                "❌ Дата возврата не может быть раньше или равна дате вылета.\n"
+                "Укажи правильную дату возврата.",
+                reply_markup=CANCEL_KB,
+            )
+            return
 
     cancel_inactivity(message.chat.id)
     await state.update_data(return_date=message.text)

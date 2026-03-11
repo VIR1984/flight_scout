@@ -31,7 +31,7 @@ from utils.trip_link import build_trip_link, is_trip_supported
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
-DROP_THRESHOLD = 0.10      # уведомлять только при снижении >= 10% от базовой
+DROP_THRESHOLD = 0.05      # уведомлять только при снижении >= 5% от базовой
 ROUTE_COOLDOWN = 86400     # кулдаун на маршрут: 24 часа
 SUB_COOLDOWN   = 12 * 3600 # общий таймер подписки: не чаще 12 ч
 
@@ -233,11 +233,22 @@ class HotDealsSender:
                     baseline = await redis_client.get_baseline_price(origin, dest)
                     await redis_client.update_baseline_price(origin, dest, price)
 
-                    if max_price and price * passengers > max_price * passengers:
-                        continue
-                    if baseline is not None and (baseline - price) / baseline < DROP_THRESHOLD:
-                        logger.debug(f"[HotDeals] {origin}→{dest}: снижение < {DROP_THRESHOLD:.0%}")
-                        continue
+                    # ── Фильтр по бюджету и порогу снижения ───────────────────
+                    # Если пользователь указал бюджет:
+                    #   - цена <= бюджет+10% → всегда уведомляем (близко к желаемому)
+                    #   - цена > бюджет+10% → пропускаем
+                    # Если бюджета нет → применяем DROP_THRESHOLD (защита от спама)
+                    if max_price:
+                        budget_limit = max_price * 1.10  # +10% от бюджета
+                        if price > budget_limit:
+                            logger.debug(f"[HotDeals] {origin}→{dest}: {price}₽ > бюджет+10% ({budget_limit:.0f}₽)")
+                            continue
+                        # Цена близка к бюджету или ниже — уведомляем без проверки %
+                    else:
+                        # Нет бюджета — проверяем порог снижения
+                        if baseline is not None and (baseline - price) / baseline < DROP_THRESHOLD:
+                            logger.debug(f"[HotDeals] {origin}→{dest}: снижение < {DROP_THRESHOLD:.0%}")
+                            continue
 
                     candidates.append((price, origin, dest, cheapest, baseline))
                     await asyncio.sleep(0.5)
@@ -402,24 +413,31 @@ class HotDealsSender:
         history_note = ""
         if baseline:
             diff_pct = int(abs(baseline - price) / baseline * 100)
-            if price < baseline:
+            if price < baseline and diff_pct >= 5:
                 history_note = (
-                    f"\n📉 Обычно от <b>{int(baseline):,} ₽</b> — "
-                    f"сейчас на {diff_pct}% дешевле".replace(",", nb)
+                    f"\n📉 Ниже обычного на <b>{diff_pct}%</b> "
+                    f"(обычно от {int(baseline):,} ₽)".replace(",", nb)
                 )
-            elif price > baseline:
+            elif price > baseline and diff_pct >= 5:
                 history_note = (
-                    f"\n📈 Обычно от <b>{int(baseline):,} ₽</b> — "
-                    f"сейчас на {diff_pct}% дороже".replace(",", nb)
+                    f"\n📈 Немного выше обычного "
+                    f"(обычно от {int(baseline):,} ₽)".replace(",", nb)
                 )
 
         # ── Общий блок: пометка о бюджете ─────────────────────────────────────
         budget_note = ""
         if over_budget:
-            budget_note = (
-                f"\n\n⚠️ Цена выше твоего бюджета <b>{max_price:,} ₽</b> — "
-                f"возможно, стоит скорректировать лимит.".replace(",", nb)
-            )
+            over_pct = int((price - max_price) / max_price * 100)
+            if over_pct <= 10:
+                budget_note = (
+                    f"\n\n💡 Немного выше твоего бюджета <b>{max_price:,} ₽</b> "
+                    f"(на {over_pct}%) — возможно, стоит рассмотреть.".replace(",", nb)
+                )
+            else:
+                budget_note = (
+                    f"\n\n⚠️ Цена выше твоего бюджета <b>{max_price:,} ₽</b> "
+                    f"на {over_pct}%.".replace(",", nb)
+                )
 
         # ══════════════════════════════════════════════════════════════════════
         # ШАГ 0 (день 3): «живой знак» — бот работает, вот лучшая цена
@@ -430,9 +448,10 @@ class HotDealsSender:
                 f"✈️ <b>{origin_name} → {dest_name}</b>\n"
                 f"📅 Примерно: {depart_str}\n"
                 f"💰 Лучшая цена сейчас: <b>{price:,} ₽</b> / чел.".replace(",", nb)
+                + (f"\n🧮 За {passengers} чел.: <b>{price * passengers:,} ₽</b>".replace(",", nb) if passengers > 1 else "")
                 + history_note
                 + budget_note
-                + "\n\nКак только появится выгодное предложение — сразу пришлю! 🔔"
+                + "\n\nЖду выгодного момента — как только цена упадёт, сразу сообщу! 🔔"
             )
 
         # ══════════════════════════════════════════════════════════════════════
@@ -567,7 +586,8 @@ class HotDealsSender:
         discount_line = ""
         if baseline and baseline > price:
             drop_pct = int((baseline - price) / baseline * 100)
-            discount_line = f"\n📉 Обычно от <b>{int(baseline):,} ₽</b> — дешевле на <b>{drop_pct}%</b>".replace(",", "\u202f")
+            if drop_pct >= 5:
+                discount_line = f"\n📉 Дешевле обычного на <b>{drop_pct}%</b> (обычно от {int(baseline):,} ₽)".replace(",", "\u202f")
 
         text = (
             f"🔥 <b>Горячее предложение!</b>\n\n"
