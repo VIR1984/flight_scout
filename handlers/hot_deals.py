@@ -838,7 +838,7 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
     if month_val == "any":
         await state.update_data(travel_months=[], travel_month=None, travel_year=None)
         await state.set_state(HotDealsSub.choose_budget)
-        _bstep = "3 из 4" if data.get("category") == "custom" else "3 из 3"
+        _bstep = "4 из 4" if data.get("category") == "custom" else "3 из 3"
         await _ask_budget(callback, step_label=_bstep)
         await callback.answer()
         return
@@ -872,7 +872,9 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
         # 3. Переходим к следующему шагу
         await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
         await state.set_state(HotDealsSub.choose_budget)
-        await _ask_budget(callback.message)
+        _cat = data.get("category", "")
+        _bstep = "4 из 4" if _cat == "custom" else "3 из 3"
+        await _ask_budget(callback.message, step_label=_bstep)
         return
 
     await _ask_months(callback, selected=selected, multi_allowed=multi_allowed)
@@ -897,7 +899,7 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(HotDealsSub.choose_budget)
-    await _ask_budget(callback.message)
+    await _ask_budget(callback.message, step_label="5 из 5")
     await callback.answer()
 
 
@@ -929,7 +931,8 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
     _pax_cfg  = PLANS.get(_pax_plan.get("plan", "free")) or PLANS["free"]
     _pax_data = await state.get_data()
     if _pax_cfg.get("multi_origin"):
-        _pax_step = "5 из 5"  # plus/premium: всегда 5 из 5 нет — пассажиры отдельно
+        # Plus/Premium: бюджет уже 5 из 5, пассажиры без номера
+        _pax_step = ""
     elif _pax_data.get("category") == "custom":
         _pax_step = "4 из 4"
     else:
