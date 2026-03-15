@@ -112,18 +112,18 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
     user_id = data.get("user_id_fsm")
     cat     = data.get("category", "")
 
-    # Номер шага: для custom — шаг 1 из 5 (прилёт после), для остальных — шаг 3 из 5
-    if cat == "custom":
-        step_header = "🗺 <b>Шаг 1 из 4 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 1 из 5 — Откуда летим</b>\n\n"
-    else:
-        step_header = "🗺 <b>Шаг 2 из 3 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 3 из 5 — Откуда летим</b>\n\n"
-
     # Определяем разрешён ли мультигород для этого пользователя
     multi_allowed = True
     if user_id:
         plan_data     = await get_user_plan(user_id)
         plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
         multi_allowed = plan_cfg.get("multi_origin", False)
+
+    # Номер шага зависит от тарифа и категории
+    if cat == "custom":
+        step_header = "🗺 <b>Шаг 1 из 4 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 1 из 5 — Откуда летим</b>\n\n"
+    else:
+        step_header = "🗺 <b>Шаг 2 из 3 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 3 из 5 — Откуда летим</b>\n\n"
 
     if origins:
         names = ", ".join(o["name"] for o in origins)
