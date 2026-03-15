@@ -121,9 +121,9 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
 
     # Номер шага зависит от тарифа и категории
     if cat == "custom":
-        step_header = "🗺 <b>Шаг 1 из 4 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 1 из 5 — Откуда летим</b>\n\n"
+        step_header = "🗺 <b>Шаг 1 из 6 — Откуда летим</b>\n\n"
     else:
-        step_header = "🗺 <b>Шаг 2 из 3 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 3 из 5 — Откуда летим</b>\n\n"
+        step_header = "🗺 <b>Шаг 1 из 6 — Откуда летим</b>\n\n"
 
     if origins:
         names = ", ".join(o["name"] for o in origins)
@@ -214,7 +214,7 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True, step_l
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
-    _step = step_label or ("4 из 5" if multi_allowed else "3 из 4")
+    _step = step_label or "3 из 6"
     if multi_allowed:
         text = f"🗺 <b>Шаг {_step} — Период вылета</b>\n\nВыбери <b>месяц вылета</b>. Можно выбрать несколько."
         if selected:
@@ -232,7 +232,7 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True, step_l
     await send(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
-async def _ask_budget(target, step_label: str = "5 из 5"):
+async def _ask_budget(target, step_label: str = "4 из 6"):
     """Ввод бюджета: только ручной ввод числом."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
@@ -247,14 +247,14 @@ async def _ask_budget(target, step_label: str = "5 из 5"):
     await send(text, parse_mode="HTML", reply_markup=kb)
 
 
-async def _ask_passengers(target, step_label: str = ""):
+async def _ask_passengers(target, step_label: str = "5 из 6"):
     """Выбор количества пассажиров."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(1, 5)],
         [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(5, 10)],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
-    step_str = f"🗺 <b>Шаг {step_label} — Пассажиры</b>\n\n" if step_label else ""
+    step_str = f"🗺 <b>Шаг {step_label} — Пассажиры</b>\n\n"
     send = target.answer if isinstance(target, Message) else target.message.edit_text
     await send(
         step_str +
@@ -365,7 +365,7 @@ async def _show_confirm(target, data: dict):
         type_str = "🔥 Горячие предложения"
 
     text = (
-        f"✅ <b>Проверьте настройки подписки:</b>\n\n"
+        f"🗺 <b>Шаг 6 из 6 — Проверьте настройки подписки</b>\n\n"
         f"Тип: {type_str}\n"
         f"Куда: {dest_str}\n"
         f"Откуда: {origins_str}\n"
@@ -698,7 +698,7 @@ async def hd_origins_text(message: Message, state: FSMContext):
                 [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
             ])
             await message.answer(
-                "🗺 <b>Шаг 2 из 4 — Куда летим</b>\n\n"
+                "🗺 <b>Шаг 2 из 6 — Куда летим</b>\n\n"
                 "Введи <b>город или страну прилёта</b>:\n\n"
                 "<i>Примеры:\n"
                 "• Вьетнам\n"
@@ -709,7 +709,7 @@ async def hd_origins_text(message: Message, state: FSMContext):
             )
         else:
             await state.set_state(HotDealsSub.choose_months)
-            await _ask_months(message, selected=[], multi_allowed=False, step_label="2 из 3")
+            await _ask_months(message, selected=[], multi_allowed=False, step_label="3 из 6")
         return
 
     await _ask_origins(message, state, edit=False)
@@ -731,7 +731,7 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
         ])
         await callback.message.edit_text(
-            "🗺 <b>Шаг 2 из 5 — Куда летим</b>\n\n"
+            "🗺 <b>Шаг 2 из 6 — Куда летим</b>\n\n"
             "Введи <b>город или страну прилёта</b>:\n\n"
             "<i>Примеры:\n"
             "• Вьетнам\n"
@@ -839,7 +839,7 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
         await state.update_data(travel_months=[], travel_month=None, travel_year=None)
         await state.set_state(HotDealsSub.choose_budget)
         _bstep = "4 из 4" if data.get("category") == "custom" else "3 из 3"
-        await _ask_budget(callback, step_label=_bstep)
+        await _ask_budget(callback, step_label="4 из 6")
         await callback.answer()
         return
 
@@ -874,7 +874,7 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
         await state.set_state(HotDealsSub.choose_budget)
         _cat = data.get("category", "")
         _bstep = "4 из 4" if _cat == "custom" else "3 из 3"
-        await _ask_budget(callback.message, step_label=_bstep)
+        await _ask_budget(callback.message, step_label="4 из 6")
         return
 
     await _ask_months(callback, selected=selected, multi_allowed=multi_allowed)
@@ -899,7 +899,7 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(HotDealsSub.choose_budget)
-    await _ask_budget(callback.message, step_label="5 из 5")
+    await _ask_budget(callback.message, step_label="4 из 6")
     await callback.answer()
 
 
@@ -930,14 +930,7 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
     _pax_plan = await get_user_plan(message.from_user.id)
     _pax_cfg  = PLANS.get(_pax_plan.get("plan", "free")) or PLANS["free"]
     _pax_data = await state.get_data()
-    if _pax_cfg.get("multi_origin"):
-        # Plus/Premium: бюджет уже 5 из 5, пассажиры без номера
-        _pax_step = ""
-    elif _pax_data.get("category") == "custom":
-        _pax_step = "4 из 4"
-    else:
-        _pax_step = "3 из 3"
-    await _ask_passengers(message, step_label=_pax_step)
+    await _ask_passengers(message)  # всегда шаг 5 из 6
 
 
 # ════════════════════════════════════════════════════════════════
