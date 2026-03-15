@@ -110,6 +110,13 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
     data    = await state.get_data()
     origins = data.get("origins", [])
     user_id = data.get("user_id_fsm")
+    cat     = data.get("category", "")
+
+    # Номер шага: для custom — шаг 1 из 5 (прилёт после), для остальных — шаг 3 из 5
+    if cat == "custom":
+        step_header = "🗺 <b>Шаг 1 из 5 — Откуда летим</b>\n\n"
+    else:
+        step_header = "🗺 <b>Шаг 3 из 5 — Откуда летим</b>\n\n"
 
     # Определяем разрешён ли мультигород для этого пользователя
     multi_allowed = True
@@ -122,20 +129,20 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
         names = ", ".join(o["name"] for o in origins)
         if multi_allowed:
             text = (
-                f"🛫 <b>Города вылета</b>\n\n"
-                f"Добавлено: <b>{names}</b>\n\n"
+                step_header +
+                f"🛫 Добавлено: <b>{names}</b>\n\n"
                 f"Допиши ещё города через запятую или нажми «Готово».\n"
                 f"Чтобы убрать город — нажми ❌ рядом с ним."
             )
         else:
             text = (
-                f"🛫 <b>Город вылета</b>\n\n"
-                f"Выбран: <b>{names}</b>\n\n"
-                
+                step_header +
+                f"🛫 Выбран: <b>{names}</b>"
             )
     else:
         if multi_allowed:
             text = (
+                step_header +
                 "Введи <b>город(а) вылета</b>.\n\n"
                 "Можно сразу несколько — через запятую или пробел:\n"
                 "<i>Москва, Казань, Екатеринбург</i>\n\n"
@@ -143,6 +150,7 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
             )
         else:
             text = (
+                step_header +
                 "Введи <b>город вылета</b>.\n\n"
                 "<i>На бесплатном тарифе доступен только 1 город.\n"
                 "⚡️ Плюс и 💎 Премиум открывают мультигород.</i>"
@@ -207,12 +215,13 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True):
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
     if multi_allowed:
-        text = "Выбери <b>месяц вылета</b>. Можно выбрать несколько."
+        text = "🗺 <b>Шаг 4 из 5 — Период вылета</b>\n\nВыбери <b>месяц вылета</b>. Можно выбрать несколько."
         if selected:
             labels = [MONTHS_LABELS.get(k.split("_")[0], k) for k in selected]
             text += f"\n\n<i>Выбрано: {', '.join(labels)}</i>"
     else:
         text = (
+            "🗺 <b>Шаг 4 из 5 — Период вылета</b>\n\n"
             "Выбери <b>месяц вылета</b>.\n\n"
             "<i>На бесплатном тарифе доступен только 1 месяц.\n"
             "⚡️ Плюс и 💎 Премиум открывают мультивыбор месяцев.</i>"
@@ -228,6 +237,7 @@ async def _ask_budget(target):
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     text = (
+        "🗺 <b>Шаг 5 из 5 — Бюджет</b>\n\n"
         "Укажи <b>максимальную цену на человека</b> (в рублях).\n\n"
         "Напиши сумму числом — или <b>0</b> для поиска без ограничений.\n"
         "<i>Пример: 12000</i>"
@@ -245,7 +255,8 @@ async def _ask_passengers(target):
     ])
     send = target.answer if isinstance(target, Message) else target.message.edit_text
     await send(
-        "Сколько <b>взрослых</b> пассажиров (от 12 лет)?",
+        "👥 <b>Пассажиры — Взрослые</b>\n\n"
+        "Сколько <b>взрослых</b> (от 12 лет)?",
         parse_mode="HTML", reply_markup=kb
     )
 
@@ -258,7 +269,7 @@ async def _ask_hd_has_children(target):
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send("С вами летят дети?", reply_markup=kb)
+    await send("👥 <b>Пассажиры — Дети</b>\n\nС вами летят дети?", parse_mode="HTML", reply_markup=kb)
 
 
 async def _ask_hd_children(target, adults: int):
@@ -271,8 +282,9 @@ async def _ask_hd_children(target, adults: int):
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     send = target.answer if isinstance(target, Message) else target.message.edit_text
     await send(
+        "👥 <b>Пассажиры — Дети (2–11 лет)</b>\n\n"
         "Сколько <b>детей</b> (от 2 до 11 лет)?\n"
-        "Если есть младенцы — укажете на следующем шаге.",
+        "<i>Если есть младенцы — укажешь на следующем шаге.</i>",
         parse_mode="HTML", reply_markup=kb
     )
 
@@ -286,7 +298,11 @@ async def _ask_hd_infants(target, adults: int, children: int):
     rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send("Сколько <b>младенцев</b>? (до 2 лет, без места)", parse_mode="HTML", reply_markup=kb)
+    await send(
+        "👥 <b>Пассажиры — Младенцы</b>\n\n"
+        "Сколько <b>младенцев</b>? (до 2 лет, без места)",
+        parse_mode="HTML", reply_markup=kb
+    )
 
 
 def _hd_build_pax_desc(adults: int, children: int = 0, infants: int = 0) -> str:
@@ -518,8 +534,7 @@ async def hd_custom_dest_text(message: Message, state: FSMContext):
         category="custom",
     )
     await message.answer(
-        f"✅ Направление: <b>{dest_name}</b>\n"
-        f"<i>Аэропорты: {', '.join(dest_iata_list)}</i>",
+        f"✅ Прилёт: <b>{dest_name}</b>",
         parse_mode="HTML"
     )
     # Origins уже собраны на предыдущем шаге — идём к месяцам
@@ -663,7 +678,7 @@ async def hd_origins_text(message: Message, state: FSMContext):
 
     feedback = []
     if added:
-        feedback.append(f"✅ Добавлен: <b>{', '.join(added)}</b>")
+        feedback.append(f"✅ Вылет: <b>{', '.join(added)}</b>")
     if dupes:
         feedback.append(f"Уже есть: {', '.join(dupes)}")
     if not_found:
@@ -690,7 +705,7 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
         ])
         await callback.message.edit_text(
-            "✈️ <b>Свой маршрут — Шаг 2 из 2</b>\n\n"
+            "🗺 <b>Шаг 2 из 5 — Куда летим</b>\n\n"
             "Введи <b>город или страну прилёта</b>:\n\n"
             "<i>Примеры:\n"
             "• Вьетнам\n"
@@ -843,8 +858,17 @@ async def hd_months_done(callback: CallbackQuery, state: FSMContext):
         return
     first = selected[0].split("_")
     await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
+    # Echo выбранных месяцев
+    labels = [
+        f"{MONTHS_LABELS.get(mk.split('_')[0], mk)} {mk.split('_')[1]}"
+        for mk in selected
+    ]
+    await callback.message.answer(
+        f"✅ Период: <b>{', '.join(labels)}</b>",
+        parse_mode="HTML"
+    )
     await state.set_state(HotDealsSub.choose_budget)
-    await _ask_budget(callback)
+    await _ask_budget(callback.message)
     await callback.answer()
 
 
@@ -862,7 +886,14 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
             reply_markup=BACK_TO_MAIN
         )
         return
-    await state.update_data(max_price=int(raw))
+    budget_val = int(raw)
+    await state.update_data(max_price=budget_val)
+    # Echo бюджета
+    if budget_val:
+        budget_echo = f"{budget_val:,} ₽".replace(",", " ")
+    else:
+        budget_echo = "без ограничений"
+    await message.answer(f"✅ Бюджет: <b>{budget_echo}</b> / чел.", parse_mode="HTML")
     await state.set_state(HotDealsSub.choose_passengers)
     await _ask_passengers(message)
 
@@ -875,6 +906,7 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
 async def hd_step6_adults(callback: CallbackQuery, state: FSMContext):
     adults = int(callback.data.split("_")[-1])
     await state.update_data(hd_adults=adults)
+    await callback.message.edit_text(f"✅ Взрослых: {adults}")
     await callback.answer()
     if adults == 9:
         # 9 взрослых — сразу подтверждение
@@ -897,8 +929,10 @@ async def hd_step6_has_children(callback: CallbackQuery, state: FSMContext):
     data   = await state.get_data()
     adults = data.get("hd_adults", 1)
     if callback.data == "hd_hc_yes":
+        await callback.message.edit_text("✅ Летят дети")
         await _ask_hd_children(callback.message, adults)
     else:
+        await callback.message.edit_text("✅ Без детей")
         pax_desc = _hd_build_pax_desc(adults)
         await state.update_data(passengers=adults, hd_children=0, hd_infants=0, pax_desc=pax_desc)
         data = await state.get_data()
@@ -919,6 +953,7 @@ async def hd_step6_children(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     await state.update_data(hd_children=children)
+    await callback.message.edit_text(f"✅ Детей (2–11 лет): {children}")
     await callback.answer()
     if 9 - adults - children == 0:
         pax_desc = _hd_build_pax_desc(adults, children, 0)
@@ -945,6 +980,7 @@ async def hd_step6_infants(callback: CallbackQuery, state: FSMContext):
         return
     pax_desc = _hd_build_pax_desc(adults, children, infants)
     await state.update_data(passengers=adults + children + infants, hd_infants=infants, pax_desc=pax_desc)
+    await callback.message.edit_text(f"✅ Младенцев (до 2 лет): {infants}")
     await callback.answer()
     data = await state.get_data()
     if data.get("sub_type") == "digest":
