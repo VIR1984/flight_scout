@@ -228,8 +228,11 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True, step_l
             "⚡️ Плюс и 💎 Премиум открывают мультивыбор месяцев.</i>"
         )
 
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    # Редактируем предыдущее сообщение — не засоряем чат
+    if isinstance(target, Message):
+        await target.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    else:
+        await target.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
 async def _ask_budget(target, step_label: str = "4 из 6"):
@@ -243,8 +246,11 @@ async def _ask_budget(target, step_label: str = "4 из 6"):
         "Напиши сумму числом — или <b>0</b> для поиска без ограничений.\n"
         "<i>Пример: 12000</i>"
     )
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send(text, parse_mode="HTML", reply_markup=kb)
+    # Редактируем предыдущее сообщение
+    if isinstance(target, Message):
+        await target.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await target.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def _ask_passengers(target, step_label: str = "5 из 6"):
@@ -861,20 +867,16 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
         m_key  = first[0]
         m_year = first[1]
         m_label = MONTHS_LABELS.get(m_key, m_key)
-        # 1. Обновляем клавиатуру — выбранный месяц получает ✅
-        await _ask_months(callback, selected=selected, multi_allowed=False)
-        # 2. Фиксируем выбор в чате отдельным сообщением (как у платных)
-        await callback.message.answer(
-            f"📅 Месяц вылета: <b>{m_label} {m_year}</b>",
+        # 1. Редактируем сообщение — показываем ✅ выбранного месяца
+        await callback.message.edit_text(
+            f"✅ Месяц вылета: <b>{m_label} {m_year}</b>",
             parse_mode="HTML",
         )
         await callback.answer()
-        # 3. Переходим к следующему шагу
+        # 2. Переходим к следующему шагу
         await state.update_data(travel_month=int(first[0]), travel_year=int(first[1]))
         await state.set_state(HotDealsSub.choose_budget)
-        _cat = data.get("category", "")
-        _bstep = "4 из 4" if _cat == "custom" else "3 из 3"
-        await _ask_budget(callback.message, step_label="4 из 6")
+        await _ask_budget(callback, step_label="4 из 6")
         return
 
     await _ask_months(callback, selected=selected, multi_allowed=multi_allowed)
@@ -924,7 +926,7 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
         budget_echo = f"{budget_val:,} ₽".replace(",", " ")
     else:
         budget_echo = "без ограничений"
-    await message.answer(f"✅ Бюджет: <b>{budget_echo}</b> / чел.", parse_mode="HTML")
+    await message.edit_text(f"✅ Бюджет: <b>{budget_echo}</b> / чел.", parse_mode="HTML")
     await state.set_state(HotDealsSub.choose_passengers)
     # Определяем номер шага для пассажиров
     _pax_plan = await get_user_plan(message.from_user.id)
