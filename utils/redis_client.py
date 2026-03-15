@@ -406,6 +406,38 @@ class RedisClient:
         if action == "created":
             await self.client.incr(f"{p}analytics:total_subs_created")
 
+
+    # ══════════════════════════════════════════════════════════════════
+    #  История поисков
+    # ══════════════════════════════════════════════════════════════════
+
+    async def save_search_history(self, user_id: int, entry: Dict[str, Any]) -> None:
+        """Сохраняет последние 5 поисков пользователя."""
+        if not self.client:
+            return
+        key = f"{self.prefix}search_history:{user_id}"
+        import json as _json
+        import time as _time
+        entry["ts"] = int(_time.time())
+        await self.client.lpush(key, _json.dumps(entry, ensure_ascii=False))
+        await self.client.ltrim(key, 0, 4)   # храним только 5 последних
+        await self.client.expire(key, 30 * 86400)  # TTL 30 дней
+
+    async def get_search_history(self, user_id: int) -> List[Dict[str, Any]]:
+        """Возвращает последние 5 поисков пользователя."""
+        if not self.client:
+            return []
+        key = f"{self.prefix}search_history:{user_id}"
+        import json as _json
+        raw = await self.client.lrange(key, 0, 4)
+        result = []
+        for item in raw:
+            try:
+                result.append(_json.loads(item))
+            except Exception:
+                pass
+        return result
+
     async def get_analytics(self) -> dict:
         """Собирает всю аналитику для /stats."""
         if not self.client:

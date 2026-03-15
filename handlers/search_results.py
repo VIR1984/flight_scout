@@ -463,6 +463,21 @@ async def _do_confirm_search(callback: CallbackQuery, state: FSMContext, data: d
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+    # Сохраняем в историю поисков
+    try:
+        await redis_client.save_search_history(callback.from_user.id, {
+            "origin_name": data.get("origin_name") or data.get("origin", ""),
+            "dest_name":   data.get("dest_name")   or data.get("dest", ""),
+            "origin_iata": data.get("origin_iata", ""),
+            "dest_iata":   data.get("dest_iata", ""),
+            "depart_date": data.get("depart_date", ""),
+            "return_date": data.get("return_date", ""),
+            "pax":         data.get("passenger_code", "1"),
+        })
+    except Exception:
+        pass
+
     await state.clear()
     await callback.answer()
 

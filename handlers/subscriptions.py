@@ -106,6 +106,7 @@ async def build_subs_menu_kb(user_id: int, username: Optional[str] = None) -> tu
             text=f"📉 Слежение за ценой{_cnt(watch_count)}",
             callback_data="subs_section_watches"
         )],
+        [InlineKeyboardButton(text="🕐 История поисков", callback_data="subs_history")],
         [InlineKeyboardButton(text=f"💳 Тарифы  [{cfg.get('emoji', '') or cfg['label']}]", callback_data="billing_menu")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
@@ -315,3 +316,120 @@ async def cb_section_watches(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
     await callback.answer()
+
+# ════════════════════════════════════════════════════════════════
+# История поисков
+# ════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "subs_history")
+async def cb_search_history(callback: CallbackQuery, state: FSMContext):
+    """Показываем последние 5 поисков с кнопками повтора."""
+    from datetime import datetime
+    user_id = callback.from_user.id
+    history = await redis_client.get_search_history(user_id)
+
+    if not history:
+        try:
+            await callback.message.edit_text(
+                "🕐 <b>История поисков</b>\n\nПоисков пока нет. "
+                "Попробуй найти билеты — они появятся здесь.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✈️ Найти билеты", callback_data="start_search")],
+                    [InlineKeyboardButton(text="↩️ Назад", callback_data="subs_menu")],
+                ])
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    lines = ["🕐 <b>История поисков</b>\n"]
+    buttons = []
+
+    for i, entry in enumerate(history, 1):
+        origin = entry.get("origin_name") or entry.get("origin_iata", "?")
+        dest   = entry.get("dest_name")   or entry.get("dest_iata", "?")
+        date   = entry.get("depart_date", "")
+        ret    = entry.get("return_date", "")
+        ts     = entry.get("ts", 0)
+
+        date_str = f" · {date}" if date else ""
+        ret_str  = f"→{ret}" if ret else ""
+        ago_str  = ""
+        if ts:
+            delta = int(datetime.now().timestamp()) - ts
+            if delta < 3600:
+                ago_str = f" <i>({delta // 60} мин назад)</i>"
+            elif delta < 86400:
+                ago_str = f" <i>({delta // 3600} ч назад)</i>"
+            else:
+                ago_str = f" <i>({delta // 86400} дн назад)</i>"
+
+        lines.append(f"{i}. <b>{origin} → {dest}</b>{date_str}{ago_str}")
+
+        # Кнопка повтора
+        btn_text = f"🔁 {origin} → {dest}{date_str}"
+        # Передаём данные через callback_data (компактно)
+        o_iata = entry.get("origin_iata", "")
+        d_iata = entry.get("dest_iata", "")
+        d1     = entry.get("depart_date", "")
+        d2     = entry.get("return_date", "")
+        pax    = entry.get("pax", "1")
+        cb_data = f"hist_repeat:{o_iata}:{d_iata}:{d1}:{d2}:{pax}"
+        if len(cb_data) <= 64:
+            buttons.append([InlineKeyboardButton(text=btn_text[:40], callback_data=cb_data)])
+
+    buttons.append([InlineKeyboardButton(text="↩️ Назад к подпискам", callback_data="subs_menu")])
+
+    try:
+        await callback.message.edit_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+    except Exception:
+        await callback.message.answer(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("hist_repeat:"))
+async def cb_history_repeat(callback: CallbackQuery, state: FSMContext):
+    """Повтор поиска из истории — восстанавливаем FSM и запускаем поиск."""
+    from handlers.flight_fsm import FlightSearch
+    from utils.cities_loader import get_city_name
+
+    parts = callback.data.split(":")
+    # hist_repeat:origin_iata:dest_iata:depart_date:return_date:pax
+    if len(parts) < 6:
+        await callback.answer("Не удалось повторить поиск", show_alert=True)
+        return
+
+    _, o_iata, d_iata, d1, d2, pax = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+
+    o_name = get_city_name(o_iata) or o_iata
+    d_name = get_city_name(d_iata) or d_iata
+
+    await state.set_state(FlightSearch.confirm)
+    await state.update_data(
+        origin=o_name, origin_iata=o_iata, origin_name=o_name,
+        dest=d_name,   dest_iata=d_iata,   dest_name=d_name,
+        depart_date=d1, return_date=d2 or None,
+        passenger_code=pax,
+        flight_type="all",
+    )
+
+    await callback.answer()
+    await callback.message.answer(
+        f"🔁 Повторяю поиск: <b>{o_name} → {d_name}</b>\n"
+        f"📅 {d1}" + (f" — {d2}" if d2 else ""),
+        parse_mode="HTML"
+    )
+
+    # Запускаем поиск
+    from handlers.search_results import confirm_search
+    await confirm_search(callback, state)

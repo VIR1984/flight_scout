@@ -235,16 +235,19 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True, step_l
 async def _ask_budget(target, step_label: str = "4 из 6"):
     """Ввод бюджета: только ручной ввод числом."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚫 Без ограничений по бюджету", callback_data="hd_budget_unlimited")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     text = (
         f"🗺 <b>Шаг {step_label} — Бюджет</b>\n\n"
         "Укажи <b>максимальную цену на человека</b> (в рублях).\n\n"
-        "Напиши сумму числом — или <b>0</b> для поиска без ограничений.\n"
+        "Напиши сумму числом или нажми кнопку ниже.\n"
         "<i>Пример: 12000</i>"
     )
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send(text, parse_mode="HTML", reply_markup=kb)
+    if isinstance(target, Message):
+        await target.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await target.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def _ask_passengers(target, step_label: str = "5 из 6"):
@@ -1051,6 +1054,22 @@ async def hd_step6_infants(callback: CallbackQuery, state: FSMContext):
 # ────────────────────────────────────────────────────────────────
 # Noop — заблокированные кнопки (уже выбранный ответ)
 # ────────────────────────────────────────────────────────────────
+@router.callback_query(F.data == "hd_budget_unlimited")
+async def hd_budget_unlimited(callback: CallbackQuery, state: FSMContext):
+    """Пользователь нажал 'Без ограничений по бюджету'."""
+    await state.update_data(max_price=0)
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Без ограничений по бюджету", callback_data="hd_noop")
+        ]])
+    )
+    await callback.answer()
+    await callback.message.answer("✅ Бюджет: <b>без ограничений</b>", parse_mode="HTML")
+    await state.set_state(HotDealsSub.choose_passengers)
+    await _ask_passengers(callback.message)
+
+
+
 @router.callback_query(F.data == "hd_noop")
 async def hd_noop(callback: CallbackQuery):
     """Нажатие на уже выбранную (заблокированную) кнопку — ничего не делаем."""
