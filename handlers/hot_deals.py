@@ -270,8 +270,8 @@ async def _ask_hd_has_children(target):
          InlineKeyboardButton(text="✅ Нет", callback_data="hd_hc_no")],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send("👥 <b>Пассажиры — Дети</b>\n\nС вами летят дети?", parse_mode="HTML", reply_markup=kb)
+    msg = target if isinstance(target, Message) else target.message
+    await msg.answer("👥 <b>Пассажиры — Дети</b>\n\nС вами летят дети?", parse_mode="HTML", reply_markup=kb)
 
 
 async def _ask_hd_children(target, adults: int):
@@ -282,8 +282,8 @@ async def _ask_hd_children(target, adults: int):
               for i in range(0, len(nums), 5)]
     rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send(
+    msg = target if isinstance(target, Message) else target.message
+    await msg.answer(
         "👥 <b>Пассажиры — Дети (2–11 лет)</b>\n\n"
         "Сколько <b>детей</b> (от 2 до 11 лет)?\n"
         "<i>Если есть младенцы — укажешь на следующем шаге.</i>",
@@ -299,8 +299,8 @@ async def _ask_hd_infants(target, adults: int, children: int):
                for i in range(0, len(nums), 5)]
     rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send(
+    msg = target if isinstance(target, Message) else target.message
+    await msg.answer(
         "👥 <b>Пассажиры — Младенцы</b>\n\n"
         "Сколько <b>младенцев</b>? (до 2 лет, без места)",
         parse_mode="HTML", reply_markup=kb
@@ -322,8 +322,8 @@ async def _ask_frequency(target):
         [InlineKeyboardButton(text="📆 Раз в неделю", callback_data="hd_freq_weekly")],
         [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
     ])
-    send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
-    await send("Как часто присылать <b>дайджест</b>?", parse_mode="HTML", reply_markup=kb)
+    msg = target.message if isinstance(target, CallbackQuery) else target
+    await msg.answer("Как часто присылать <b>дайджест</b>?", parse_mode="HTML", reply_markup=kb)
 
 
 async def _show_confirm(target, data: dict):
@@ -379,8 +379,8 @@ async def _show_confirm(target, data: dict):
         [InlineKeyboardButton(text="❌ Отмена",        callback_data="hot_deals_menu")],
         [InlineKeyboardButton(text="↩️ В начало",     callback_data="main_menu")],
     ])
-    send = target.message.edit_text if isinstance(target, CallbackQuery) else target.answer
-    await send(text, parse_mode="HTML", reply_markup=kb)
+    msg = target.message if isinstance(target, CallbackQuery) else target
+    await msg.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 # ════════════════════════════════════════════════════════════════
