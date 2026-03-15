@@ -941,7 +941,12 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
 async def hd_step6_adults(callback: CallbackQuery, state: FSMContext):
     adults = int(callback.data.split("_")[-1])
     await state.update_data(hd_adults=adults)
-    await callback.message.answer(f"✅ Взрослых: {adults}")
+    # Заменяем клавиатуру на "заблокированную" кнопку с выбором
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"✅ Взрослых: {adults}", callback_data="hd_noop")
+        ]])
+    )
     await callback.answer()
     if adults == 9:
         # 9 взрослых — сразу подтверждение
@@ -964,10 +969,18 @@ async def hd_step6_has_children(callback: CallbackQuery, state: FSMContext):
     data   = await state.get_data()
     adults = data.get("hd_adults", 1)
     if callback.data == "hd_hc_yes":
-        await callback.message.answer("✅ Летят дети")
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Летят дети", callback_data="hd_noop")
+            ]])
+        )
         await _ask_hd_children(callback.message, adults)
     else:
-        await callback.message.answer("✅ Без детей")
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Без детей", callback_data="hd_noop")
+            ]])
+        )
         pax_desc = _hd_build_pax_desc(adults)
         await state.update_data(passengers=adults, hd_children=0, hd_infants=0, pax_desc=pax_desc)
         data = await state.get_data()
@@ -988,7 +1001,11 @@ async def hd_step6_children(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     await state.update_data(hd_children=children)
-    await callback.message.answer(f"✅ Детей (2–11 лет): {children}")
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"✅ Детей (2–11 лет): {children}", callback_data="hd_noop")
+        ]])
+    )
     await callback.answer()
     if 9 - adults - children == 0:
         pax_desc = _hd_build_pax_desc(adults, children, 0)
@@ -1015,7 +1032,11 @@ async def hd_step6_infants(callback: CallbackQuery, state: FSMContext):
         return
     pax_desc = _hd_build_pax_desc(adults, children, infants)
     await state.update_data(passengers=adults + children + infants, hd_infants=infants, pax_desc=pax_desc)
-    await callback.message.answer(f"✅ Младенцев (до 2 лет): {infants}")
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"✅ Младенцев (до 2 лет): {infants}", callback_data="hd_noop")
+        ]])
+    )
     await callback.answer()
     data = await state.get_data()
     if data.get("sub_type") == "digest":
@@ -1024,6 +1045,16 @@ async def hd_step6_infants(callback: CallbackQuery, state: FSMContext):
     else:
         await state.set_state(HotDealsSub.confirm)
         await _show_confirm(callback, data)
+
+
+
+# ────────────────────────────────────────────────────────────────
+# Noop — заблокированные кнопки (уже выбранный ответ)
+# ────────────────────────────────────────────────────────────────
+@router.callback_query(F.data == "hd_noop")
+async def hd_noop(callback: CallbackQuery):
+    """Нажатие на уже выбранную (заблокированную) кнопку — ничего не делаем."""
+    await callback.answer()
 
 
 # ════════════════════════════════════════════════════════════════
