@@ -254,10 +254,10 @@ async def _ask_passengers(target, step_label: str = "5 из 6"):
         [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(5, 10)],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
-    step_str = f"🗺 <b>Шаг {step_label} — Пассажиры</b>\n\n"
-    send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send(
-        step_str +
+    # Всегда answer (не edit) — чтобы шаг 5 остался виден в чате
+    msg = target if isinstance(target, Message) else target.message
+    await msg.answer(
+        f"🗺 <b>Шаг {step_label} — Пассажиры</b>\n\n"
         "👥 Сколько <b>взрослых</b> летит (от 12 лет)?",
         parse_mode="HTML", reply_markup=kb
     )
