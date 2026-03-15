@@ -60,20 +60,7 @@ class HotDealsSub(StatesGroup):
 CATEGORIES = {
     "sea":    ("🏖️ Морские курорты",    ["AYT","HRG","SSH","RHO","DLM","LCA","TFS","PMI","CFU","HER","PFO","AER","SIP","BUS"]),
     "world":  ("🌍 Путешествия по миру", ["DXB","BKK","SIN","KUL","HKT","CMB","NBO","GRU","JFK","LAX","YYZ","ICN","TYO","PEK","DEL"]),
-    "russia": ("🇷🇺 По России",          [
-        # Юг и курорты
-        "AER","KRR","MRV","NAL","MCX","GRV","ESL","ASF",
-        # Центр и Поволжье
-        "LED","KZN","KUF","VOG","PEE","ULY","GOJ","RTW",
-        # Урал и Сибирь
-        "SVX","UFA","CEK","OVB","KJA","OMS","TJM","TOF",
-        # Дальний Восток
-        "VVO","IKT","UUS","PKC","GDX","UUD",
-        # Северо-Запад
-        "KGD","MMK","ARH","PES",
-        # Уже были
-        "ROV",
-    ]),
+    "russia": ("🇷🇺 По России",          ["AER","LED","KZN","OVB","SVX","ROV","UFA","CEK","KRR","VOG","MCX","GRV","KUF","IKT","VVO"]),
     "custom": ("🔍 Свой маршрут",   []),  # пользователь вводит сам
 }
 
@@ -96,12 +83,10 @@ CATEGORY_PRESETS = {
     ],
     "russia": [
         ("🏙️ Москва",               ["SVO","DME","VKO"]),
-        ("🌊 Сочи / Юг",            ["AER","KRR","MRV","NAL","ASF"]),
+        ("🌊 Сочи",                  ["AER"]),
         ("🏛️ Санкт-Петербург",      ["LED"]),
-        ("🕌 Казань / Поволжье",    ["KZN","KUF","GOJ","ULY"]),
+        ("🕌 Казань",                ["KZN"]),
         ("🌊 Калининград",           ["KGD"]),
-        ("🏔️ Урал / Сибирь",        ["SVX","UFA","CEK","OVB","KJA","OMS"]),
-        ("🌏 Дальний Восток",        ["VVO","IKT","UUS","PKC"]),
         ("✏️ Свой вариант",         None),
     ],
 }
@@ -252,15 +237,65 @@ async def _ask_budget(target):
 
 
 async def _ask_passengers(target):
+    """Шаг 1 пассажиров — выбор количества взрослых."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1", callback_data="hd_pax_1"),
-         InlineKeyboardButton(text="2", callback_data="hd_pax_2"),
-         InlineKeyboardButton(text="3", callback_data="hd_pax_3"),
-         InlineKeyboardButton(text="4", callback_data="hd_pax_4")],
+        [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(1, 5)],
+        [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(5, 10)],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     send = target.answer if isinstance(target, Message) else target.message.edit_text
-    await send("Сколько <b>пассажиров</b>?", parse_mode="HTML", reply_markup=kb)
+    await send(
+        "Сколько <b>взрослых</b> пассажиров (от 12 лет)?",
+        parse_mode="HTML", reply_markup=kb
+    )
+
+
+async def _ask_hd_has_children(target):
+    """Есть ли дети?"""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👶 Да", callback_data="hd_hc_yes"),
+         InlineKeyboardButton(text="✅ Нет", callback_data="hd_hc_no")],
+        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+    ])
+    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    await send("С вами летят дети?", reply_markup=kb)
+
+
+async def _ask_hd_children(target, adults: int):
+    """Количество детей (2–11 лет)."""
+    max_ch = 9 - adults
+    nums   = list(range(0, max_ch + 1))
+    rows   = [[InlineKeyboardButton(text=str(n), callback_data=f"hd_ch_{n}") for n in nums[i:i+5]]
+              for i in range(0, len(nums), 5)]
+    rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    await send(
+        "Сколько <b>детей</b> (от 2 до 11 лет)?\n"
+        "Если есть младенцы — укажете на следующем шаге.",
+        parse_mode="HTML", reply_markup=kb
+    )
+
+
+async def _ask_hd_infants(target, adults: int, children: int):
+    """Количество младенцев (до 2 лет, без места)."""
+    max_inf = min(adults, 9 - adults - children)
+    nums    = list(range(0, max_inf + 1))
+    rows    = [[InlineKeyboardButton(text=str(n), callback_data=f"hd_inf_{n}") for n in nums[i:i+5]]
+               for i in range(0, len(nums), 5)]
+    rows.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    send = target.answer if isinstance(target, Message) else target.message.edit_text
+    await send("Сколько <b>младенцев</b>? (до 2 лет, без места)", parse_mode="HTML", reply_markup=kb)
+
+
+def _hd_build_pax_desc(adults: int, children: int = 0, infants: int = 0) -> str:
+    desc = f"{adults} взр."
+    if children:
+        desc += f", {children} дет."
+    if infants:
+        desc += f", {infants} мл."
+    return desc
 
 
 async def _ask_frequency(target):
@@ -318,7 +353,7 @@ async def _show_confirm(target, data: dict):
         f"Откуда: {origins_str}\n"
         f"Период: {month_str}\n"
         f"Бюджет: {price_str} / чел.\n"
-        f"Пассажиры: {passengers} чел."
+        f"Пассажиры: {data.get('pax_desc') or f'{passengers} чел.'}"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подписаться",  callback_data="hd_save")],
@@ -421,23 +456,12 @@ async def hd_step2_category(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "hd_cat_custom")
 async def hd_step3_custom_dest(callback: CallbackQuery, state: FSMContext):
-    """Пользователь выбрал Свой маршрут — просим ввести город или страну."""
+    """Пользователь выбрал Свой маршрут — сначала спрашиваем город вылета."""
     await state.update_data(category="custom", origins=[], dest_iata_list=[], dest_preset_name="")
-    await state.set_state(HotDealsSub.choose_dest_custom)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")],
-        [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
-    ])
-    await callback.message.edit_text(
-        "✈️ <b>Свой маршрут</b>\n\n"
-        "Введи <b>город или страну прилёта</b>:\n\n"
-        "<i>Примеры:\n"
-        "• Вьетнам\n"
-        "• Бали\n"
-        "• Бангкок\n"
-        "• Барселона</i>",
-        parse_mode="HTML", reply_markup=kb
-    )
+    await state.update_data(user_id_fsm=callback.from_user.id)
+    # Сначала — город вылета
+    await state.set_state(HotDealsSub.choose_origins)
+    await _ask_origins(callback.message, state, edit=True)
     await callback.answer()
 
 
@@ -495,11 +519,15 @@ async def hd_custom_dest_text(message: Message, state: FSMContext):
     )
     await message.answer(
         f"✅ Направление: <b>{dest_name}</b>\n"
-        f"<i>Аэропорты: {", ".join(dest_iata_list)}</i>",
+        f"<i>Аэропорты: {', '.join(dest_iata_list)}</i>",
         parse_mode="HTML"
     )
-    await state.set_state(HotDealsSub.choose_origins)
-    await _ask_origins(message, state, edit=False)
+    # Origins уже собраны на предыдущем шаге — идём к месяцам
+    plan_data     = await get_user_plan(message.from_user.id)
+    plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
+    multi_allowed = plan_cfg.get("multi_month", False)
+    await state.set_state(HotDealsSub.choose_months)
+    await _ask_months(message, selected=[], multi_allowed=multi_allowed)
 
 
 @router.callback_query(HotDealsSub.choose_dest_custom, F.data == "hd_new_sub")
@@ -653,6 +681,27 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
     if not origins:
         await callback.answer("Добавь хотя бы один город", show_alert=True)
         return
+
+    # Для «Свой маршрут» — после вылета спрашиваем прилёт
+    if data.get("category") == "custom" and not data.get("dest_iata_list"):
+        await state.set_state(HotDealsSub.choose_dest_custom)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_origins_back")],
+            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+        ])
+        await callback.message.edit_text(
+            "✈️ <b>Свой маршрут — Шаг 2 из 2</b>\n\n"
+            "Введи <b>город или страну прилёта</b>:\n\n"
+            "<i>Примеры:\n"
+            "• Вьетнам\n"
+            "• Бали\n"
+            "• Бангкок\n"
+            "• Барселона</i>",
+            parse_mode="HTML", reply_markup=kb
+        )
+        await callback.answer()
+        return
+
     plan_data     = await get_user_plan(callback.from_user.id)
     plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
     multi_allowed = plan_cfg.get("multi_month", False)
@@ -693,17 +742,20 @@ async def hd_origins_back(callback: CallbackQuery, state: FSMContext):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
     elif cat == "custom":
-        # Назад к вводу своего направления
-        await state.set_state(HotDealsSub.choose_dest_custom)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")],
-            [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
-        ])
+        # Назад к выбору категории (город прилёта спрашиваем ПОСЛЕ вылета)
+        sub_type = data.get("sub_type", "hot")
+        await state.set_state(HotDealsSub.choose_category)
+        buttons = [[InlineKeyboardButton(text=label, callback_data=f"hd_cat_{key}")]
+                   for key, (label, _) in CATEGORIES.items() if key != "custom"]
+        buttons.append([InlineKeyboardButton(
+            text="🔍 Свой маршрут", callback_data="hd_cat_custom"
+        )])
+        buttons.append([InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_new_sub")])
+        buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
         await callback.message.edit_text(
-            "✈️ <b>Свой маршрут</b>\n\n"
-            "Введи <b>город или страну прилёта</b>:\n\n"
-            "<i>Примеры: Вьетнам, Бали, Бангкок, Барселона</i>",
-            parse_mode="HTML", reply_markup=kb
+            "Выбери <b>направление</b> (тематику путешествия):",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
     else:
         # Назад к выбору категории
@@ -816,21 +868,91 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
 
 
 # ════════════════════════════════════════════════════════════════
-# ШАГ 6 — пассажиры
+# ШАГ 6 — пассажиры (взрослые → дети? → дети → младенцы)
 # ════════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data.startswith("hd_pax_"))
-async def hd_step6_pax(callback: CallbackQuery, state: FSMContext):
-    pax = int(callback.data.replace("hd_pax_", ""))
-    await state.update_data(passengers=pax)
+@router.callback_query(F.data.regexp(r"^hd_adults_[1-9]$"))
+async def hd_step6_adults(callback: CallbackQuery, state: FSMContext):
+    adults = int(callback.data.split("_")[-1])
+    await state.update_data(hd_adults=adults)
+    await callback.answer()
+    if adults == 9:
+        # 9 взрослых — сразу подтверждение
+        pax_desc = _hd_build_pax_desc(9)
+        await state.update_data(passengers=9, hd_children=0, hd_infants=0, pax_desc=pax_desc)
+        data = await state.get_data()
+        if data.get("sub_type") == "digest":
+            await state.set_state(HotDealsSub.choose_frequency)
+            await _ask_frequency(callback)
+        else:
+            await state.set_state(HotDealsSub.confirm)
+            await _show_confirm(callback, data)
+    else:
+        await _ask_hd_has_children(callback.message)
+
+
+@router.callback_query(F.data.in_({"hd_hc_yes", "hd_hc_no"}))
+async def hd_step6_has_children(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data   = await state.get_data()
+    adults = data.get("hd_adults", 1)
+    if callback.data == "hd_hc_yes":
+        await _ask_hd_children(callback.message, adults)
+    else:
+        pax_desc = _hd_build_pax_desc(adults)
+        await state.update_data(passengers=adults, hd_children=0, hd_infants=0, pax_desc=pax_desc)
+        data = await state.get_data()
+        if data.get("sub_type") == "digest":
+            await state.set_state(HotDealsSub.choose_frequency)
+            await _ask_frequency(callback)
+        else:
+            await state.set_state(HotDealsSub.confirm)
+            await _show_confirm(callback, data)
+
+
+@router.callback_query(F.data.regexp(r"^hd_ch_\d+$"))
+async def hd_step6_children(callback: CallbackQuery, state: FSMContext):
+    data     = await state.get_data()
+    adults   = data.get("hd_adults", 1)
+    children = int(callback.data.split("_")[-1])
+    if children < 0 or children > 9 - adults:
+        await callback.answer()
+        return
+    await state.update_data(hd_children=children)
+    await callback.answer()
+    if 9 - adults - children == 0:
+        pax_desc = _hd_build_pax_desc(adults, children, 0)
+        await state.update_data(passengers=adults + children, hd_infants=0, pax_desc=pax_desc)
+        data = await state.get_data()
+        if data.get("sub_type") == "digest":
+            await state.set_state(HotDealsSub.choose_frequency)
+            await _ask_frequency(callback)
+        else:
+            await state.set_state(HotDealsSub.confirm)
+            await _show_confirm(callback, data)
+    else:
+        await _ask_hd_infants(callback.message, adults, children)
+
+
+@router.callback_query(F.data.regexp(r"^hd_inf_\d+$"))
+async def hd_step6_infants(callback: CallbackQuery, state: FSMContext):
+    data     = await state.get_data()
+    adults   = data.get("hd_adults", 1)
+    children = data.get("hd_children", 0)
+    infants  = int(callback.data.split("_")[-1])
+    if infants < 0 or infants > min(adults, 9 - adults - children):
+        await callback.answer()
+        return
+    pax_desc = _hd_build_pax_desc(adults, children, infants)
+    await state.update_data(passengers=adults + children + infants, hd_infants=infants, pax_desc=pax_desc)
+    await callback.answer()
     data = await state.get_data()
     if data.get("sub_type") == "digest":
         await state.set_state(HotDealsSub.choose_frequency)
         await _ask_frequency(callback)
     else:
         await state.set_state(HotDealsSub.confirm)
-        await _show_confirm(callback, data | {"passengers": pax})
-    await callback.answer()
+        await _show_confirm(callback, data)
 
 
 # ════════════════════════════════════════════════════════════════
