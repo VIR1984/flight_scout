@@ -114,9 +114,9 @@ async def _ask_origins(target, state: FSMContext, edit: bool = False):
 
     # Номер шага: для custom — шаг 1 из 5 (прилёт после), для остальных — шаг 3 из 5
     if cat == "custom":
-        step_header = "🗺 <b>Шаг 1 из 5 — Откуда летим</b>\n\n"
+        step_header = "🗺 <b>Шаг 1 из 4 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 1 из 5 — Откуда летим</b>\n\n"
     else:
-        step_header = "🗺 <b>Шаг 3 из 5 — Откуда летим</b>\n\n"
+        step_header = "🗺 <b>Шаг 2 из 3 — Откуда летим</b>\n\n" if not multi_allowed else "🗺 <b>Шаг 3 из 5 — Откуда летим</b>\n\n"
 
     # Определяем разрешён ли мультигород для этого пользователя
     multi_allowed = True
@@ -188,7 +188,7 @@ def _city_word(n: int) -> str:
     return "городов"
 
 
-async def _ask_months(target, selected: list, multi_allowed: bool = True):
+async def _ask_months(target, selected: list, multi_allowed: bool = True, step_label: str = ""):
     """Выбор месяца вылета. Free: только один месяц. Plus/Premium: мультиселект."""
     cur_month = date.today().month
     cur_year  = date.today().year
@@ -214,14 +214,15 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True):
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="hd_months_done")])
     buttons.append([InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")])
 
+    _step = step_label or ("4 из 5" if multi_allowed else "3 из 4")
     if multi_allowed:
-        text = "🗺 <b>Шаг 4 из 5 — Период вылета</b>\n\nВыбери <b>месяц вылета</b>. Можно выбрать несколько."
+        text = f"🗺 <b>Шаг {_step} — Период вылета</b>\n\nВыбери <b>месяц вылета</b>. Можно выбрать несколько."
         if selected:
             labels = [MONTHS_LABELS.get(k.split("_")[0], k) for k in selected]
             text += f"\n\n<i>Выбрано: {', '.join(labels)}</i>"
     else:
         text = (
-            "🗺 <b>Шаг 4 из 5 — Период вылета</b>\n\n"
+            f"🗺 <b>Шаг {_step} — Период вылета</b>\n\n"
             "Выбери <b>месяц вылета</b>.\n\n"
             "<i>На бесплатном тарифе доступен только 1 месяц.\n"
             "⚡️ Плюс и 💎 Премиум открывают мультивыбор месяцев.</i>"
@@ -231,13 +232,13 @@ async def _ask_months(target, selected: list, multi_allowed: bool = True):
     await send(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
-async def _ask_budget(target):
+async def _ask_budget(target, step_label: str = "5 из 5"):
     """Ввод бюджета: только ручной ввод числом."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
     text = (
-        "🗺 <b>Шаг 5 из 5 — Бюджет</b>\n\n"
+        f"🗺 <b>Шаг {step_label} — Бюджет</b>\n\n"
         "Укажи <b>максимальную цену на человека</b> (в рублях).\n\n"
         "Напиши сумму числом — или <b>0</b> для поиска без ограничений.\n"
         "<i>Пример: 12000</i>"
@@ -246,17 +247,18 @@ async def _ask_budget(target):
     await send(text, parse_mode="HTML", reply_markup=kb)
 
 
-async def _ask_passengers(target):
-    """Шаг 1 пассажиров — выбор количества взрослых."""
+async def _ask_passengers(target, step_label: str = ""):
+    """Выбор количества пассажиров."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(1, 5)],
         [InlineKeyboardButton(text=str(i), callback_data=f"hd_adults_{i}") for i in range(5, 10)],
         [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
     ])
+    step_str = f"🗺 <b>Шаг {step_label} — Пассажиры</b>\n\n" if step_label else ""
     send = target.answer if isinstance(target, Message) else target.message.edit_text
     await send(
-        "👥 <b>Пассажиры — Взрослые</b>\n\n"
-        "Сколько <b>взрослых</b> (от 12 лет)?",
+        step_str +
+        "👥 Сколько <b>взрослых</b> летит (от 12 лет)?",
         parse_mode="HTML", reply_markup=kb
     )
 
@@ -686,6 +688,30 @@ async def hd_origins_text(message: Message, state: FSMContext):
     if feedback:
         await message.answer("\n".join(feedback), parse_mode="HTML")
 
+    # Free-тариф: 1 город добавлен — сразу переходим к следующему шагу (без подтверждения)
+    if not multi_allowed and origins:
+        data = await state.get_data()
+        if data.get("category") == "custom" and not data.get("dest_iata_list"):
+            await state.set_state(HotDealsSub.choose_dest_custom)
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="↩️ Назад",    callback_data="hd_origins_back")],
+                [InlineKeyboardButton(text="↩️ В начало", callback_data="main_menu")],
+            ])
+            await message.answer(
+                "🗺 <b>Шаг 2 из 4 — Куда летим</b>\n\n"
+                "Введи <b>город или страну прилёта</b>:\n\n"
+                "<i>Примеры:\n"
+                "• Вьетнам\n"
+                "• Бали\n"
+                "• Бангкок\n"
+                "• Барселона</i>",
+                parse_mode="HTML", reply_markup=kb
+            )
+        else:
+            await state.set_state(HotDealsSub.choose_months)
+            await _ask_months(message, selected=[], multi_allowed=False, step_label="2 из 3")
+        return
+
     await _ask_origins(message, state, edit=False)
 
 
@@ -716,6 +742,8 @@ async def hd_origins_done(callback: CallbackQuery, state: FSMContext):
         )
         await callback.answer()
         return
+
+    # Переходим к месяцам
 
     plan_data     = await get_user_plan(callback.from_user.id)
     plan_cfg      = PLANS.get(plan_data.get("plan", "free")) or PLANS["free"]
@@ -810,7 +838,8 @@ async def hd_step4_month(callback: CallbackQuery, state: FSMContext):
     if month_val == "any":
         await state.update_data(travel_months=[], travel_month=None, travel_year=None)
         await state.set_state(HotDealsSub.choose_budget)
-        await _ask_budget(callback)
+        _bstep = "3 из 4" if data.get("category") == "custom" else "3 из 3"
+        await _ask_budget(callback, step_label=_bstep)
         await callback.answer()
         return
 
@@ -895,7 +924,17 @@ async def hd_step5_budget_text(message: Message, state: FSMContext):
         budget_echo = "без ограничений"
     await message.answer(f"✅ Бюджет: <b>{budget_echo}</b> / чел.", parse_mode="HTML")
     await state.set_state(HotDealsSub.choose_passengers)
-    await _ask_passengers(message)
+    # Определяем номер шага для пассажиров
+    _pax_plan = await get_user_plan(message.from_user.id)
+    _pax_cfg  = PLANS.get(_pax_plan.get("plan", "free")) or PLANS["free"]
+    _pax_data = await state.get_data()
+    if _pax_cfg.get("multi_origin"):
+        _pax_step = "5 из 5"  # plus/premium: всегда 5 из 5 нет — пассажиры отдельно
+    elif _pax_data.get("category") == "custom":
+        _pax_step = "4 из 4"
+    else:
+        _pax_step = "3 из 3"
+    await _ask_passengers(message, step_label=_pax_step)
 
 
 # ════════════════════════════════════════════════════════════════
